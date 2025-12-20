@@ -52,14 +52,10 @@ jobs:
 
     - name: Install vcpkg packages
       run: |
-        vcpkg install openssl:x64-windows
-        vcpkg install curl:x64-windows
-        vcpkg install sqlite3:x64-windows
-        vcpkg install libsodium:x64-windows
-        vcpkg install cryptopp:x64-windows
-        vcpkg install icu:x64-windows
-        vcpkg install c-ares:x64-windows
-        vcpkg install zlib:x64-windows
+        vcpkg install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib icu
+      timeout-minutes: 30
+      env:
+        VCPKG_BINARY_SOURCES: "clear;default,readwrite"
 
     - name: Build MEGA SDK
       run: |
