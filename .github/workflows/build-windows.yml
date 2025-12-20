@@ -138,30 +138,12 @@ jobs:
         Copy-Item "resources/icons/*.ico" "$deployDir/resources/icons/" -ErrorAction SilentlyContinue
 
         # Create portable marker
-        @"
-MegaCustomGUI Portable Mode
-
-This file enables portable mode.
-Settings will be stored in this folder instead of AppData.
-Delete this file to use standard Windows settings location.
-"@ | Out-File -FilePath "$deployDir/portable.marker" -Encoding UTF8
+        $markerContent = "MegaCustomGUI Portable Mode`n`nThis file enables portable mode.`nSettings will be stored in this folder instead of AppData.`nDelete this file to use standard Windows settings location."
+        Set-Content -Path "$deployDir/portable.marker" -Value $markerContent -Encoding UTF8
 
         # Create README
-        @"
-MegaCustomGUI Portable
-======================
-
-This is a portable version of MegaCustomGUI.
-
-To run: Double-click MegaCustomGUI.exe
-
-Portable mode is enabled - all settings are stored in this folder.
-To use standard Windows settings (AppData), delete the portable.marker file.
-
-System Requirements:
-- Windows 10 or later (64-bit)
-- No installation required
-"@ | Out-File -FilePath "$deployDir/README.txt" -Encoding UTF8
+        $readmeContent = "MegaCustomGUI Portable`n======================`n`nThis is a portable version of MegaCustomGUI.`n`nTo run: Double-click MegaCustomGUI.exe`n`nPortable mode is enabled - all settings are stored in this folder.`nTo use standard Windows settings (AppData), delete the portable.marker file.`n`nSystem Requirements:`n- Windows 10 or later (64-bit)`n- No installation required"
+        Set-Content -Path "$deployDir/README.txt" -Value $readmeContent -Encoding UTF8
 
         Write-Host "Portable distribution created in $deployDir"
         Get-ChildItem $deployDir
