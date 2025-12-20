@@ -45,17 +45,16 @@ jobs:
         cache: true
 
     - name: Setup vcpkg
-      uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '962e5e39f8a25f42522f51fffc574e05a3efd26b'
-        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git
+        ./vcpkg/bootstrap-vcpkg.bat
+      shell: cmd
 
     - name: Install vcpkg packages
       run: |
-        vcpkg install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib icu
-      timeout-minutes: 30
-      env:
-        VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+        .\vcpkg\vcpkg.exe install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib
+      shell: pwsh
+      timeout-minutes: 45
 
     - name: Build MEGA SDK
       run: |
