@@ -48,3 +48,4 @@ qrc_*.cpp
 
 # External dependencies (cloned separately)
 third_party/
+*:Zone.Identifier
