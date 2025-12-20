@@ -49,3 +49,8 @@ qrc_*.cpp
 # External dependencies (cloned separately)
 third_party/
 *:Zone.Identifier
+qt-gui/MegaCustomGUI-portable/
+qt-gui/MegaCustomGUI-full-portable/
+test_integrated
+file-service/
+bin/
