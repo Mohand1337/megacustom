@@ -1,0 +1,42 @@
+// MegaCustomGUI Windows Resource File
+// This file provides the application icon and version information for Windows
+
+#include <windows.h>
+
+// Application Icon
+// The icon file should be a multi-resolution .ico file (16x16, 32x32, 48x48, 256x256)
+IDI_ICON1 ICON "icons/megacustom.ico"
+
+// Version Information
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"  // US English, Unicode
+        BEGIN
+            VALUE "CompanyName", "MegaCustom"
+            VALUE "FileDescription", "MegaCustom - MEGA Cloud Manager"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "MegaCustomGUI"
+            VALUE "LegalCopyright", "Copyright (C) 2025"
+            VALUE "OriginalFilename", "MegaCustomGUI.exe"
+            VALUE "ProductName", "MegaCustomGUI"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1252  // US English, Windows Multilingual
+    END
+END
+
+// Application Manifest for Windows 10+ features
+// Enables visual styles, DPI awareness, and long path support
+1 RT_MANIFEST "app.manifest"

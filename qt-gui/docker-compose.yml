@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  qt-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: megacustom-qt-builder
+    volumes:
+      - .:/app
+      - build-cache:/app/build-qt
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+    network_mode: host
+    stdin_open: true
+    tty: true
+    command: /bin/bash -c "cd /app && ./build_qt.sh"
+
+volumes:
+  build-cache:

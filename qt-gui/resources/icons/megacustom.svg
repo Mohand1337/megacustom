@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Background circle -->
+  <circle cx="32" cy="32" r="30" fill="#D90007"/>
+  <!-- Cloud shape -->
+  <path d="M48 38c3.3 0 6-2.7 6-6s-2.7-6-6-6c-.3 0-.7 0-1 .1C46.1 22.1 42.4 19 38 19c-3.2 0-6 1.5-7.8 3.8C29 21.7 27.1 21 25 21c-5 0-9 4-9 9 0 .3 0 .7.1 1C12.6 32 10 35 10 38.5c0 3.9 3.1 7 7 7h31z" fill="white"/>
+  <!-- Sync arrows -->
+  <path d="M27 35l-4 4 4 4M37 43l4-4-4-4" stroke="#D90007" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M33 39h8M23 39h8" stroke="#D90007" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

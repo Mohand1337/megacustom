@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=MegaCustom
+Comment=MEGA Cloud Storage Manager
+Exec=bash -c 'cd "$(dirname "%k")" && ./run.sh'
+Icon=megacustom
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;

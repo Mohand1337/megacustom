@@ -1,0 +1,50 @@
+# Build files
+*.o
+*.obj
+*.a
+*.lib
+megacustom
+build/
+build-*/
+cmake-build-*/
+qt-gui/build-qt/
+qt-gui/build-win64/
+qt-gui/MegaCustomGUI-Portable/
+third_party/sdk/build_sdk/
+
+# IDE files
+.vscode/
+.idea/
+*.user
+*.swp
+*.swo
+
+# Credentials and sensitive files
+test_login.sh
+*.key
+*.pem
+*.session
+session.dat
+settings.ini
+.env
+
+# Logs
+*.log
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+*.tar.gz
+
+# Qt generated
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# External dependencies (cloned separately)
+third_party/

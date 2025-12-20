@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=MegaCustom
+GenericName=Cloud Storage Client
+Comment=Custom MEGA cloud storage client with smart sync and file management
+Exec=MegaCustomGUI
+Icon=megacustom
+Categories=Network;FileTransfer;Qt;
+Keywords=mega;cloud;sync;storage;backup;
+Terminal=false
+StartupNotify=true
+StartupWMClass=MegaCustomGUI

@@ -1,0 +1,2061 @@
+/*
+ * MegaCustom Light Theme Stylesheet
+ * Based on official MEGAsync design system
+ *
+ * Color Token Reference (from ColorThemedTokens.json):
+ * - Brand: #DD1405 (MEGA Red)
+ * - Primary Button: #04101E (Dark Navy)
+ * - Page Background: #FFFFFF
+ * - Surface-1: #F7F7F7
+ * - Surface-2: #EFEFF0
+ * - Surface-3: #E4E4E5
+ * - Text Primary: #303233
+ * - Text Secondary: #616366
+ * - Border Strong: #DCDDDD
+ * - Border Subtle: #F6F6F7
+ *
+ * Typography:
+ * - Font Family: Inter (primary), system fallbacks
+ * - Body-2: 12px (default)
+ * - Body-1: 14px
+ * - Label-2: 16px
+ * - Heading-1: 24px
+ * - Font weights: 400 (regular), 600 (semibold), 700 (bold)
+ *
+ * Button Dimensions:
+ * - Small: 26px height, 6px border-radius
+ * - Medium: 36px height, 6px border-radius
+ * - Large: 46px height, 8px border-radius
+ */
+
+/* ============================================
+   GLOBAL STYLES (MEGAsync Typography)
+   ============================================ */
+
+* {
+    font-weight: 400;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+QWidget {
+    font-family: "Inter", "Segoe UI", "Roboto", "Arial", sans-serif;
+    font-size: 12px;
+    color: #303233;
+    /* background-color removed - causes white boxes everywhere in Qt6 */
+    /* Specific widgets define their own backgrounds below */
+}
+
+QMainWindow {
+    background-color: #FFFFFF;
+}
+
+/* ============================================
+   MEGA SIDEBAR (MEGAsync TabSelector Style)
+   ============================================ */
+
+#MegaSidebar {
+    background-color: #F7F7F7;
+    border-right: 1px solid #DCDDDD;
+}
+
+#LogoFrame {
+    background-color: #F7F7F7;
+    border-bottom: 1px solid #DCDDDD;
+}
+
+#LogoIcon {
+    background-color: #DD1405;
+    color: #FAFAFA;
+    font-size: 20px;
+    font-weight: bold;
+    border-radius: 8px;
+    qproperty-alignment: AlignCenter;
+}
+
+#BrandLabel {
+    color: #303233;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+#LogoLabel {
+    color: #DD1405;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+#CloudFrame, #ToolsFrame, #BottomFrame {
+    background-color: transparent;
+}
+
+#SectionLabel {
+    color: #616366;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 8px 8px 4px 8px;
+}
+
+/* Navigation Buttons - MEGAsync TabSelector.sidebar style */
+#NavButton, #CloudDriveButton, #FolderMapperButton,
+#MultiUploaderButton, #SmartSyncButton, #TransfersButton, #SettingsButton,
+#CloudCopierButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 14px;
+    text-align: left;
+    color: #616366;
+    font-size: 13px;
+    font-weight: 500;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+#NavButton:hover, #CloudDriveButton:hover, #FolderMapperButton:hover,
+#MultiUploaderButton:hover, #SmartSyncButton:hover,
+#TransfersButton:hover, #SettingsButton:hover,
+#CloudCopierButton:hover {
+    background-color: #EFEFF0;
+}
+
+#NavButton:checked, #CloudDriveButton:checked, #FolderMapperButton:checked,
+#MultiUploaderButton:checked, #SmartSyncButton:checked,
+#TransfersButton:checked, #SettingsButton:checked,
+#CloudCopierButton:checked {
+    background-color: #FFFFFF;
+    color: #303233;
+    font-weight: 600;
+}
+
+#NavButton:disabled, #CloudDriveButton:disabled, #FolderMapperButton:disabled,
+#MultiUploaderButton:disabled, #SmartSyncButton:disabled,
+#TransfersButton:disabled, #SettingsButton:disabled,
+#CloudCopierButton:disabled {
+    color: #C1C2C4;
+}
+
+/* Storage Section */
+#StorageFrame {
+    background-color: transparent;
+    border-top: 1px solid #DCDDDD;
+}
+
+#StorageLabel {
+    color: #616366;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+#StorageBar {
+    background-color: #E4E4E5;
+    border: none;
+    border-radius: 4px;
+}
+
+#StorageBar::chunk {
+    background-color: #09BF5B;
+    border-radius: 4px;
+}
+
+#StorageDetails {
+    color: #616366;
+    font-size: 10px;
+}
+
+/* ============================================
+   TOP TOOLBAR (MEGAsync Style)
+   ============================================ */
+
+#TopToolbar {
+    background-color: #F7F7F7;
+    border-bottom: 1px solid #DCDDDD;
+}
+
+#ToolbarSeparator {
+    color: #DCDDDD;
+}
+
+/* Tool Buttons - MEGAsync icon-button style */
+#ToolButton, #DownloadButton, #NewFolderButton, #DeleteButton,
+#BackButton, #ForwardButton, #UpButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 6px;
+    color: #303233;
+    min-width: 36px;
+    min-height: 36px;
+    max-width: 36px;
+    max-height: 36px;
+}
+
+#ToolButton:hover, #DownloadButton:hover, #NewFolderButton:hover, #DeleteButton:hover,
+#BackButton:hover, #ForwardButton:hover, #UpButton:hover {
+    background-color: #EFEFF0;
+}
+
+#ToolButton:pressed, #DownloadButton:pressed, #NewFolderButton:pressed, #DeleteButton:pressed,
+#BackButton:pressed, #ForwardButton:pressed, #UpButton:pressed {
+    background-color: #E4E4E5;
+}
+
+#ToolButton:disabled, #DownloadButton:disabled, #NewFolderButton:disabled, #DeleteButton:disabled,
+#BackButton:disabled, #ForwardButton:disabled, #UpButton:disabled {
+    color: #C1C2C4;
+}
+
+/* Upload Button - MEGAsync Primary Button (Brand) */
+#UploadButton {
+    background-color: #DD1405;
+    border: none;
+    border-radius: 6px;
+    color: #FAFAFA;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 8px 16px;
+    min-height: 36px;
+}
+
+#UploadButton:hover {
+    background-color: #B61714;
+}
+
+#UploadButton:pressed {
+    background-color: #931715;
+}
+
+#UploadButton:disabled {
+    background-color: #E5E5E5;
+    color: #C1C2C4;
+}
+
+/* Search Edit - MEGAsync LineEdit style */
+#SearchEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    padding: 8px 16px 8px 36px;
+    selection-background-color: #DD140550;  /* MEGA Red 31% */
+    selection-color: #303233;
+    font-size: 12px;
+    min-height: 36px;
+    color: #303233;
+}
+
+#SearchEdit:focus {
+    border: 1px solid #04101E;
+}
+
+#SearchEdit::placeholder {
+    color: #616366;
+}
+
+/* ============================================
+   BREADCRUMB (MEGAsync Style)
+   ============================================ */
+
+#BreadcrumbWidget {
+    background-color: transparent;
+}
+
+#BreadcrumbSegment {
+    background-color: transparent;
+    border: none;
+    padding: 4px 8px;
+    color: #2C5BEB;
+    font-weight: 400;
+}
+
+#BreadcrumbSegment:hover {
+    color: #233783;
+    text-decoration: underline;
+}
+
+#BreadcrumbCurrent {
+    color: #303233;
+    font-weight: 600;
+}
+
+#BreadcrumbSeparator {
+    color: #616366;
+    padding: 0 2px;
+}
+
+/* ============================================
+   BUTTONS (MEGAsync Design System)
+   ============================================ */
+
+/* Default Button - Secondary style */
+QPushButton {
+    background-color: rgba(97, 99, 102, 0.1);
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: #303233;
+    min-height: 36px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QPushButton:hover {
+    background-color: rgba(97, 99, 102, 0.2);
+}
+
+QPushButton:pressed {
+    background-color: rgba(97, 99, 102, 0.3);
+}
+
+QPushButton:disabled {
+    background-color: #E5E5E5;
+    color: #C1C2C4;
+}
+
+QPushButton:focus {
+    border: 2px solid #BDD9FF;
+    padding: 6px 14px;
+}
+
+/* Primary Button - Dark Navy (MEGAsync button-primary) */
+QPushButton[type="primary"], QPushButton[primary="true"], QPushButton#PrimaryButton {
+    background-color: #04101E;
+    border: none;
+    color: #FAFAFA;
+    font-weight: 600;
+    padding: 8px 16px;
+}
+
+QPushButton[type="primary"]:hover, QPushButton[primary="true"]:hover, QPushButton#PrimaryButton:hover {
+    background-color: #39424E;
+}
+
+QPushButton[type="primary"]:pressed, QPushButton[primary="true"]:pressed, QPushButton#PrimaryButton:pressed {
+    background-color: #535B65;
+}
+
+QPushButton[type="primary"]:disabled, QPushButton[primary="true"]:disabled, QPushButton#PrimaryButton:disabled {
+    background-color: #E5E5E5;
+    color: #C1C2C4;
+}
+
+/* Brand Button - MEGA Red */
+QPushButton[type="brand"] {
+    background-color: #DD1405;
+    border: none;
+    color: #FAFAFA;
+    font-weight: 600;
+}
+
+QPushButton[type="brand"]:hover {
+    background-color: #B61714;
+}
+
+QPushButton[type="brand"]:pressed {
+    background-color: #931715;
+}
+
+/* Outline Button */
+QPushButton[type="outline"] {
+    background-color: transparent;
+    border: 2px solid #04101E;
+    color: #04101E;
+}
+
+QPushButton[type="outline"]:hover {
+    border-color: #39424E;
+    color: #39424E;
+}
+
+QPushButton[type="outline"]:pressed {
+    border-color: #535B65;
+    color: #535B65;
+}
+
+QPushButton[type="outline"]:disabled {
+    border-color: #D8D9DB;
+    color: #C1C2C4;
+}
+
+/* Ghost Button */
+QPushButton[type="ghost"] {
+    background-color: transparent;
+    border: none;
+    color: #04101E;
+    font-weight: 400;
+}
+
+QPushButton[type="ghost"]:hover {
+    color: #39424E;
+}
+
+QPushButton[type="ghost"]:pressed {
+    color: #535B65;
+}
+
+QPushButton[type="ghost"]:disabled {
+    color: #C1C2C4;
+}
+
+/* Link Button */
+QPushButton[type="link"] {
+    background-color: transparent;
+    border: none;
+    color: #2C5BEB;
+    font-weight: 400;
+}
+
+QPushButton[type="link"]:hover {
+    color: #233783;
+    text-decoration: underline;
+}
+
+QPushButton[type="link"]:disabled {
+    color: #C1C2C4;
+}
+
+/* Error/Danger Button */
+QPushButton[type="error"], QPushButton#PanelDangerButton {
+    background-color: #E31B57;
+    border: none;
+    color: #FAFAFA;
+    font-weight: 600;
+}
+
+QPushButton[type="error"]:hover, QPushButton#PanelDangerButton:hover {
+    background-color: #C0104A;
+}
+
+QPushButton[type="error"]:pressed, QPushButton#PanelDangerButton:pressed {
+    background-color: #A11045;
+}
+
+/* Button Sizes */
+QPushButton[dimension="small"] {
+    height: 26px;
+    min-width: 60px;
+    font-size: 12px;
+    padding: 0 8px;
+    border-radius: 6px;
+}
+
+QPushButton[dimension="medium"] {
+    height: 36px;
+    min-width: 80px;
+    font-size: 14px;
+    padding: 0 16px;
+    border-radius: 6px;
+}
+
+QPushButton[dimension="large"] {
+    height: 46px;
+    min-width: 100px;
+    font-size: 16px;
+    padding: 0 24px;
+    border-radius: 8px;
+}
+
+/* ============================================
+   INPUT FIELDS (MEGAsync Style)
+   ============================================ */
+
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    padding: 8px 10px;
+    min-height: 20px;
+    selection-background-color: #DD140550;  /* MEGA Red 31% - visible but not harsh */
+    selection-color: #303233;
+    font-size: 12px;
+    color: #303233;
+}
+
+QLineEdit:hover, QTextEdit:hover, QPlainTextEdit:hover {
+    border-color: #B0B1B3;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border: 1px solid #04101E;
+}
+
+QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
+    background-color: #F7F7F7;
+    border-color: #D8D9DB;
+    color: #C1C2C4;
+}
+
+QLineEdit[error="true"], QTextEdit[error="true"] {
+    border-color: #E31B57;
+}
+
+QLineEdit::placeholder {
+    color: #616366;
+}
+
+/* Input Sizes */
+QLineEdit[dimension="small"] {
+    height: 26px;
+}
+
+QLineEdit[dimension="medium"] {
+    height: 36px;
+}
+
+/* ============================================
+   COMBO BOX (MEGAsync Style)
+   ============================================ */
+
+QComboBox {
+    background-color: #FFFFFF;
+    border: 2px solid #04101E;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 32px;
+    color: #303233;
+    font-weight: 400;
+}
+
+QComboBox:hover {
+    border-color: #39424E;
+}
+
+QComboBox:focus {
+    border-color: #04101E;
+}
+
+QComboBox:disabled {
+    border-color: #E5E5E5;
+    color: #C1C2C4;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    padding-right: 8px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 2px solid #04101E;
+    border-radius: 6px;
+    padding: 5px;
+    selection-background-color: #F7F7F7;
+    selection-color: #303233;
+    outline: none;
+}
+
+QComboBox::item:selected {
+    background-color: #F7F7F7;
+    color: #303233;
+}
+
+/* ============================================
+   CHECKBOXES (MEGAsync Style)
+   ============================================ */
+
+QCheckBox {
+    color: #303233;
+    spacing: 8px;
+    background: none;  /* Use 'none' instead of 'transparent' - stronger in Qt6 */
+    min-height: 16px;
+    max-height: 16px;
+}
+
+QCheckBox:disabled {
+    color: #C1C2C4;
+}
+
+QCheckBox[error="true"] {
+    color: #E31B57;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #9D9E9F;
+    border-radius: 3px;
+    background-color: transparent;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #616366;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #D90007;
+    border-color: #D90007;
+    image: url(:/icons/check-white.svg);
+}
+
+QCheckBox::indicator:checked:hover {
+    background-color: #C00006;
+    border-color: #C00006;
+}
+
+QCheckBox::indicator:disabled {
+    border-color: #E4E4E5;
+    background-color: #F7F7F7;
+}
+
+QCheckBox::indicator:checked:disabled {
+    background-color: #C1C2C4;
+    border-color: #C1C2C4;
+}
+
+/* ============================================
+   RADIO BUTTONS (MEGAsync Style)
+   ============================================ */
+
+QRadioButton {
+    color: #303233;
+    background: none;  /* Use 'none' instead of 'transparent' - stronger in Qt6 */
+    spacing: 6px;
+}
+
+QRadioButton:disabled {
+    color: #C1C2C4;
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #9D9E9F;
+    border-radius: 9px;
+    background-color: transparent;
+    margin-right: 6px;
+}
+
+QRadioButton::indicator:hover {
+    border-color: #616366;
+}
+
+QRadioButton::indicator:checked {
+    background-color: transparent;
+    border-color: #D90007;
+    border-width: 5px;
+}
+
+QRadioButton::indicator:checked:hover {
+    border-color: #C00006;
+}
+
+QRadioButton::indicator:disabled {
+    border-color: #E4E4E5;
+    background-color: #F7F7F7;
+}
+
+QRadioButton::indicator:checked:disabled {
+    border-color: #C1C2C4;
+}
+
+/* ============================================
+   PROGRESS BAR (MEGAsync Style)
+   ============================================ */
+
+QProgressBar {
+    background-color: #E4E4E5;
+    border: none;
+    border-radius: 4px;
+    max-height: 8px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #09BF5B;
+    border-radius: 4px;
+}
+
+/* ============================================
+   SCROLL BARS (MEGAsync Style)
+   ============================================ */
+
+QScrollBar {
+    background: transparent;
+}
+
+QScrollBar:vertical {
+    width: 18px;
+    padding: 4px;
+}
+
+QScrollBar:horizontal {
+    height: 18px;
+    padding: 4px;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background-color: transparent;
+}
+
+QScrollBar::handle:vertical {
+    background: #04101E;
+    border-radius: 5px;
+    min-height: 60px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #39424E;
+}
+
+QScrollBar::handle:vertical:pressed {
+    background: #535B65;
+}
+
+QScrollBar::handle:horizontal {
+    background: #04101E;
+    border-radius: 5px;
+    min-width: 60px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #39424E;
+}
+
+QScrollBar::handle:horizontal:pressed {
+    background: #535B65;
+}
+
+QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical,
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal,
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    border-style: none;
+    width: 0px;
+    height: 0px;
+}
+
+/* ============================================
+   TABLES (MEGAsync Style)
+   ============================================ */
+
+QTableWidget, QTableView {
+    background-color: transparent;
+    border: 1px solid #DCDDDD;
+    border-radius: 5px;
+    gridline-color: #F6F6F7;
+    selection-background-color: transparent;
+    selection-color: #FAFAFB;
+    color: #303233;
+    outline: 0;
+}
+
+QTableWidget::item, QTableView::item {
+    padding: 6px 8px;
+    border: none;
+}
+
+QTableWidget::item:selected, QTableView::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+    color: #303233;  /* Keep dark text readable */
+}
+
+QTableWidget::item:hover:!selected, QTableView::item:hover:!selected {
+    background-color: #F7F7F7;
+}
+
+/* Header View (MEGAsync Style) */
+QHeaderView {
+    background: #FFFFFF;
+}
+
+QHeaderView::section {
+    background: #FFFFFF;
+    color: #303233;
+    border: none;
+    padding: 8px 6px;
+}
+
+QHeaderView::section:hover {
+    background-color: #F7F7F7;
+}
+
+/* ============================================
+   TREE VIEW (MEGAsync Style)
+   ============================================ */
+
+QTreeView {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 5px;
+    alternate-background-color: #FAFAFA;
+    outline: 0;
+}
+
+QTreeView::item {
+    padding: 4px;
+    border-radius: 4px;
+}
+
+QTreeView::item:hover {
+    background-color: #F7F7F7;
+}
+
+QTreeView::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+    color: #303233;  /* Keep dark text readable */
+}
+
+QTreeView::item:selected:hover {
+    background-color: rgba(221, 20, 5, 0.2);  /* MEGA Red 20% on hover - use rgba() for alpha */
+    color: #303233;
+}
+
+/* ============================================
+   LIST VIEW (MEGAsync Style)
+   ============================================ */
+
+QListView, QListWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 5px;
+}
+
+QListView::item, QListWidget::item {
+    padding: 8px;
+    border-radius: 4px;
+}
+
+QListView::item:hover, QListWidget::item:hover {
+    background-color: #F7F7F7;
+}
+
+QListView::item:selected, QListWidget::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+    color: #303233;  /* Keep dark text readable */
+}
+
+QListView::item:selected:hover, QListWidget::item:selected:hover {
+    background-color: rgba(221, 20, 5, 0.2);  /* MEGA Red 20% on hover - use rgba() for alpha */
+    color: #303233;
+}
+
+/* ============================================
+   SPIN BOX (MEGAsync Style)
+   ============================================ */
+
+QSpinBox {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    padding: 6px 10px;
+    min-height: 25px;
+    color: #303233;
+}
+
+QSpinBox:focus {
+    border-color: #04101E;
+}
+
+QSpinBox:disabled {
+    color: #C1C2C4;
+    border-color: #D8D9DB;
+}
+
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: transparent;
+}
+
+/* ============================================
+   TABS (MEGAsync TabSelector Style)
+   ============================================ */
+
+QTabWidget::pane {
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    background-color: #FFFFFF;
+    margin-top: -1px;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 20px;
+    margin-right: 4px;
+    color: #616366;
+    font-weight: 500;
+}
+
+QTabBar::tab:selected {
+    background-color: transparent;
+    border-bottom: 2px solid #DD1405;
+    color: #DD1405;
+    font-weight: 600;
+}
+
+QTabBar::tab:hover:!selected {
+    color: #303233;
+    border-bottom: 2px solid #DCDDDD;
+}
+
+/* ============================================
+   MENU (MEGAsync Style)
+   ============================================ */
+
+QMenuBar {
+    background-color: #F7F7F7;
+    border-bottom: 1px solid #DCDDDD;
+    padding: 4px;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+    color: #7B2118;
+}
+
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 8px 24px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+    color: #303233;
+}
+
+QMenu::item:disabled {
+    color: #C1C2C4;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #EFEFF0;
+    margin: 4px 8px;
+}
+
+/* ============================================
+   TOOLTIPS (MEGAsync Style)
+   ============================================ */
+
+QToolTip {
+    color: #FAFAFA;
+    background-color: #2A2B2C;
+    border: 1px solid #2A2B2C;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+/* ============================================
+   STATUS BAR
+   ============================================ */
+
+QStatusBar {
+    background-color: #F7F7F7;
+    border-top: 1px solid #DCDDDD;
+    color: #616366;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+/* ============================================
+   SPLITTER
+   ============================================ */
+
+QSplitter::handle {
+    background-color: #DCDDDD;
+}
+
+QSplitter::handle:horizontal {
+    width: 4px;
+}
+
+QSplitter::handle:vertical {
+    height: 4px;
+}
+
+QSplitter::handle:hover {
+    background-color: #DD1405;
+}
+
+/* ============================================
+   GROUP BOX (MEGAsync Style)
+   ============================================ */
+
+QGroupBox {
+    font-weight: 600;
+    border: 1px solid #DCDDDD;
+    border-radius: 12px;
+    margin-top: 20px;
+    padding: 20px;
+    padding-top: 28px;
+    background-color: transparent;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 10px;
+    color: #04101E;
+    font-size: 12px;
+}
+
+QGroupBox::title:disabled {
+    color: #C1C2C4;
+}
+
+/* ============================================
+   NOTIFICATIONS (MEGAsync Style)
+   ============================================ */
+
+QWidget[type="notification"] {
+    background-color: #DFF4FE;
+}
+
+QWidget[type="notification"][error="true"] {
+    background-color: #FFE4E8;
+}
+
+QLabel[type="notification"] {
+    background-color: #DFF4FE;
+    color: #0078A4;
+}
+
+QLabel[type="notification"][error="true"] {
+    background-color: #FFE4E8;
+    color: #E31B57;
+}
+
+/* ============================================
+   DIALOGS
+   ============================================ */
+
+QDialog {
+    background-color: #FFFFFF;
+}
+
+QDialogButtonBox {
+    button-layout: 2;
+}
+
+/* ============================================
+   CONTENT AREA
+   ============================================ */
+
+#ContentStack {
+    background-color: #FFFFFF;
+}
+
+#FileExplorer {
+    background-color: #FFFFFF;
+}
+
+/* ============================================
+   PANELS (FolderMapper, MultiUploader, SmartSync, CloudCopier)
+   MEGAsync Card Style
+   ============================================ */
+
+#FolderMapperPanel QGroupBox,
+#MultiUploaderPanel QGroupBox,
+#SmartSyncPanel QGroupBox,
+#CloudCopierPanel QGroupBox,
+.PanelCard {
+    background-color: #F7F7F7;
+    border: 1px solid #DCDDDD;
+    border-radius: 12px;
+    margin-top: 20px;
+    padding: 20px;
+    padding-top: 28px;
+}
+
+#FolderMapperPanel QGroupBox::title,
+#MultiUploaderPanel QGroupBox::title,
+#SmartSyncPanel QGroupBox::title,
+#CloudCopierPanel QGroupBox::title,
+.PanelCard::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 16px;
+    color: #04101E;
+    font-size: 15px;
+    font-weight: 600;
+    background-color: #F7F7F7;
+}
+
+/* Panel Header */
+#PanelHeader {
+    background-color: transparent;
+    padding: 0 0 16px 0;
+    border-bottom: 1px solid #DCDDDD;
+    margin-bottom: 16px;
+}
+
+#PanelTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: #04101E;
+}
+
+#PanelSubtitle {
+    font-size: 14px;
+    color: #616366;
+    margin-top: 4px;
+}
+
+/* Panel Primary Button - Brand style */
+#PanelPrimaryButton {
+    background-color: #DD1405;
+    border: none;
+    border-radius: 6px;
+    color: #FAFAFA;
+    font-weight: 600;
+    padding: 8px 16px;
+    min-height: 36px;
+}
+
+#PanelPrimaryButton:hover {
+    background-color: #B61714;
+}
+
+#PanelPrimaryButton:pressed {
+    background-color: #931715;
+}
+
+#PanelPrimaryButton:disabled {
+    background-color: #E5E5E5;
+    color: #C1C2C4;
+}
+
+/* Panel Secondary Button */
+#PanelSecondaryButton {
+    background-color: rgba(97, 99, 102, 0.1);
+    border: none;
+    border-radius: 6px;
+    color: #303233;
+    font-weight: 600;
+    padding: 8px 16px;
+    min-height: 36px;
+}
+
+#PanelSecondaryButton:hover {
+    background-color: rgba(97, 99, 102, 0.2);
+}
+
+#PanelSecondaryButton:pressed {
+    background-color: rgba(97, 99, 102, 0.3);
+}
+
+/* Panel Tables */
+#FolderMapperPanel QTableWidget,
+#MultiUploaderPanel QTableWidget,
+#SmartSyncPanel QTableWidget,
+#CloudCopierPanel QTableWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    gridline-color: #F6F6F7;
+}
+
+#FolderMapperPanel QTableWidget::item,
+#MultiUploaderPanel QTableWidget::item,
+#SmartSyncPanel QTableWidget::item,
+#CloudCopierPanel QTableWidget::item {
+    padding: 10px 12px;
+    border-bottom: 1px solid #F6F6F7;
+}
+
+#FolderMapperPanel QHeaderView::section,
+#MultiUploaderPanel QHeaderView::section,
+#SmartSyncPanel QHeaderView::section,
+#CloudCopierPanel QHeaderView::section {
+    background-color: #F7F7F7;
+    border: none;
+    border-bottom: 2px solid #DCDDDD;
+    padding: 12px;
+    font-weight: 600;
+    color: #303233;
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+/* Panel Input Fields */
+#FolderMapperPanel QLineEdit,
+#MultiUploaderPanel QLineEdit,
+#SmartSyncPanel QLineEdit,
+#CloudCopierPanel QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-height: 18px;
+    font-size: 12px;
+}
+
+#FolderMapperPanel QLineEdit:focus,
+#MultiUploaderPanel QLineEdit:focus,
+#SmartSyncPanel QLineEdit:focus,
+#CloudCopierPanel QLineEdit:focus {
+    border: 1px solid #04101E;
+}
+
+/* Panel Progress Bar */
+#FolderMapperPanel QProgressBar,
+#MultiUploaderPanel QProgressBar,
+#SmartSyncPanel QProgressBar,
+#CloudCopierPanel QProgressBar {
+    background-color: #E4E4E5;
+    border: none;
+    border-radius: 6px;
+    height: 12px;
+    text-align: center;
+}
+
+#FolderMapperPanel QProgressBar::chunk,
+#MultiUploaderPanel QProgressBar::chunk,
+#SmartSyncPanel QProgressBar::chunk,
+#CloudCopierPanel QProgressBar::chunk {
+    background-color: #09BF5B;
+    border-radius: 6px;
+}
+
+/* Panel Scroll Areas */
+#FolderMapperPanel QScrollArea,
+#MultiUploaderPanel QScrollArea,
+#SmartSyncPanel QScrollArea,
+#CloudCopierPanel QScrollArea {
+    background-color: #FFFFFF;
+    border: none;
+}
+
+#FolderMapperPanel QScrollArea > QWidget > QWidget,
+#MultiUploaderPanel QScrollArea > QWidget > QWidget,
+#SmartSyncPanel QScrollArea > QWidget > QWidget,
+#CloudCopierPanel QScrollArea > QWidget > QWidget {
+    background-color: #FFFFFF;
+}
+
+/* ============================================
+   STATUS BADGES (MEGAsync Indicator Colors)
+   ============================================ */
+
+.StatusBadge {
+    border-radius: 12px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.StatusBadge-Ready, .StatusReady {
+    background-color: #CFFCDB;
+    color: #007C3E;
+}
+
+.StatusBadge-Syncing, .StatusSyncing, .StatusBadge-Uploading {
+    background-color: #DFF4FE;
+    color: #0078A4;
+}
+
+.StatusBadge-Active, .StatusActive {
+    background-color: #CFFCDB;
+    color: #007C3E;
+}
+
+.StatusBadge-Paused, .StatusPaused {
+    background-color: #FEF4C6;
+    color: #B55407;
+}
+
+.StatusBadge-Failed, .StatusFailed, .StatusBadge-Error {
+    background-color: #FFE4E8;
+    color: #E31B57;
+}
+
+.StatusBadge-Done, .StatusDone, .StatusBadge-Complete {
+    background-color: #CFFCDB;
+    color: #007C3E;
+}
+
+.StatusBadge-Pending, .StatusPending {
+    background-color: #F7F7F7;
+    color: #616366;
+}
+
+/* ============================================
+   INFO/WARNING/ERROR BOXES (MEGAsync Notification Style)
+   ============================================ */
+
+#InfoBox {
+    background-color: #DFF4FE;
+    border: 1px solid #05BAF1;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #0078A4;
+    font-size: 12px;
+}
+
+#WarningBox {
+    background-color: #FEF4C6;
+    border: 1px solid #F7A308;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #B55407;
+    font-size: 12px;
+}
+
+#ErrorBox {
+    background-color: #FFE4E8;
+    border: 1px solid #E31B57;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #E31B57;
+    font-size: 12px;
+}
+
+#SuccessBox {
+    background-color: #CFFCDB;
+    border: 1px solid #09BF5B;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #007C3E;
+    font-size: 12px;
+}
+
+/* ============================================
+   SETTINGS PANEL
+   ============================================ */
+
+#SettingsPanel {
+    background-color: #FFFFFF;
+}
+
+#SettingsNavigation {
+    background-color: #F7F7F7;
+    border-right: 1px solid #DCDDDD;
+}
+
+#SettingsNavHeader {
+    font-size: 18px;
+    font-weight: 600;
+    color: #04101E;
+    padding: 8px 4px;
+}
+
+#SettingsNavList {
+    background-color: transparent;
+    border: none;
+}
+
+#SettingsNavList::item {
+    padding: 10px 16px;
+    border-radius: 6px;
+    color: #616366;
+    font-size: 13px;
+    font-weight: 500;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+#SettingsNavList::item:hover {
+    background-color: #EFEFF0;
+}
+
+#SettingsNavList::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+    color: #7B2118;  /* brand-on-container - darker red text */
+    font-weight: 600;
+}
+
+#SettingsContent {
+    background-color: #FFFFFF;
+}
+
+#SettingsStack {
+    background-color: #FFFFFF;
+}
+
+#SettingsPanel QGroupBox {
+    background-color: #F7F7F7;
+    border: 1px solid #DCDDDD;
+    border-radius: 12px;
+    margin-top: 20px;
+    padding: 20px;
+    padding-top: 28px;
+}
+
+#SettingsPanel QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 16px;
+    color: #04101E;
+    font-size: 15px;
+    font-weight: 600;
+    background-color: #F7F7F7;
+}
+
+/* Make labels and frames inside QGroupBox transparent to avoid white boxes */
+#SettingsPanel QGroupBox QLabel {
+    background-color: transparent;
+}
+
+#SettingsPanel QGroupBox QFrame {
+    background-color: transparent;
+}
+
+#SettingsPanel QGroupBox QWidget {
+    background-color: transparent;
+}
+
+#SettingsPanel QScrollArea {
+    background-color: transparent;
+    border: none;
+}
+
+#SettingsPanel QScrollArea > QWidget > QWidget {
+    background-color: transparent;
+}
+
+/* Settings page container - prevents white background from global QWidget rule */
+#SettingsPage {
+    background: none;
+}
+
+#AboutLogo {
+    background-color: #DD1405;
+    color: #FAFAFA;
+    font-size: 40px;
+    font-weight: bold;
+    border-radius: 16px;
+}
+
+#AboutAppName {
+    font-size: 24px;
+    font-weight: bold;
+    color: #04101E;
+}
+
+/* ============================================
+   TOOL BUTTON (MEGAsync icon-button style)
+   ============================================ */
+
+QToolButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+QToolButton:hover {
+    background-color: #EFEFF0;
+}
+
+QToolButton:pressed {
+    background-color: #E4E4E5;
+}
+
+QToolButton:checked {
+    background-color: rgba(221, 20, 5, 0.1);  /* MEGA Red 10% - use rgba() for alpha */
+}
+
+QToolButton.icon-button {
+    border: none;
+    margin: 0px;
+    padding: 0px;
+    min-width: 0px;
+}
+
+QToolButton.icon-button[dimension="small"] {
+    height: 26px;
+    width: 26px;
+}
+
+QToolButton.icon-button[dimension="medium"] {
+    height: 36px;
+    width: 36px;
+}
+
+QToolButton.icon-button[dimension="large"] {
+    height: 48px;
+    width: 48px;
+}
+
+QToolButton.icon-label {
+    background-color: transparent;
+}
+
+/* ============================================
+   TEXT SIZES (MEGAsync Typography Scale)
+   ============================================ */
+
+QWidget[font-size="caption"] {
+    font-size: 10px;
+}
+
+QWidget[font-size="body-2"] {
+    font-size: 12px;
+}
+
+QWidget[font-size="body-1"] {
+    font-size: 14px;
+}
+
+QWidget[font-size="label-2"] {
+    font-size: 16px;
+}
+
+QWidget[font-size="label-1"] {
+    font-size: 18px;
+}
+
+QWidget[font-size="subtitle"] {
+    font-size: 20px;
+}
+
+QWidget[font-size="heading-1"] {
+    font-size: 24px;
+}
+
+QWidget[font-size="heading-2"] {
+    font-size: 32px;
+}
+
+QWidget[font-size="heading-3"] {
+    font-size: 40px;
+}
+
+QWidget[font-size="heading-4"] {
+    font-size: 48px;
+}
+
+QWidget[font-size="heading-5"] {
+    font-size: 60px;
+}
+
+/* Font Weights */
+QWidget[regular] {
+    font-weight: 400;
+}
+
+QWidget[semibold] {
+    font-weight: 600;
+}
+
+QWidget[bold] {
+    font-weight: 700;
+}
+
+/* Secondary Text */
+QLabel[type="secondary"] {
+    color: #616366;
+}
+
+/* ============================================
+   SLIDER
+   ============================================ */
+
+QSlider::groove:horizontal {
+    background-color: #E4E4E5;
+    height: 4px;
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: #DD1405;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #DD1405;
+    border-radius: 7px;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+}
+
+QSlider::handle:horizontal:hover {
+    background-color: #B61714;
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+}
+
+/* ============================================
+   TRANSFER QUEUE
+   ============================================ */
+
+#TransferQueue {
+    background-color: #F7F7F7;
+    border-top: 1px solid #DCDDDD;
+}
+
+#TransferQueueHeader {
+    background-color: #EFEFF0;
+    border-bottom: 1px solid #DCDDDD;
+    padding: 8px;
+}
+
+/* ============================================
+   ACCOUNT SWITCHER (Modern MEGAsync-inspired)
+   ============================================ */
+
+#AccountSwitcherWidget {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #EFEFF0;
+}
+
+/* Custom painted widgets need transparent background */
+#GradientAvatarWidget, #CircularStorageWidget {
+    background-color: transparent;
+    border: none;
+}
+
+#AccountHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #EFEFF0;
+}
+
+#AccountHeader:hover {
+    background-color: #FAFAFA;
+}
+
+#AccountEmail {
+    color: #303233;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+#AccountName {
+    color: #616366;
+    font-size: 11px;
+}
+
+#AccountExpandButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    color: #616366;
+    font-size: 10px;
+}
+
+#AccountExpandButton:hover {
+    background-color: #EFEFF0;
+    color: #303233;
+}
+
+#AccountDropdown {
+    background-color: #FFFFFF;
+    border-top: 1px solid #EFEFF0;
+}
+
+#AccountSearchBox {
+    background-color: #F7F7F7;
+    border: 1px solid #EFEFF0;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: #303233;
+}
+
+#AccountSearchBox:focus {
+    border-color: #04101E;
+    background-color: #FFFFFF;
+}
+
+#AccountSearchBox::placeholder {
+    color: #999999;
+}
+
+#AccountList {
+    background-color: transparent;
+    border: none;
+}
+
+#AccountList::item {
+    padding: 0px;
+    margin: 2px 0px;
+    border-radius: 6px;
+}
+
+#AccountList::item:hover {
+    background-color: transparent;
+}
+
+#AccountList::item:selected {
+    background-color: transparent;
+}
+
+#AccountListItem {
+    background-color: transparent;
+    border-radius: 6px;
+}
+
+#AddAccountButton, #ManageAccountsButton {
+    background-color: transparent;
+    border: none;
+    color: #616366;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 6px;
+}
+
+#AddAccountButton:hover, #ManageAccountsButton:hover {
+    background-color: #F7F7F7;
+    color: #DD1405;
+}
+
+#AddAccountButton {
+    color: #DD1405;
+    font-weight: 600;
+}
+
+/* ============================================
+   QUICK PEEK PANEL (Browse Other Accounts)
+   ============================================ */
+
+#QuickPeekPanel {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+}
+
+#QuickPeekHeader {
+    background-color: #F7F7F7;
+    border-bottom: 1px solid #DCDDDD;
+    border-radius: 8px 8px 0 0;
+    padding: 12px;
+}
+
+#QuickPeekTitle {
+    font-size: 11px;
+    font-weight: 600;
+    color: #616366;
+}
+
+#QuickPeekEmail {
+    font-size: 13px;
+    font-weight: 600;
+    color: #303233;
+}
+
+#QuickPeekNav {
+    background-color: #FAFAFA;
+    border-bottom: 1px solid #EFEFF0;
+}
+
+#QuickPeekPath {
+    font-size: 12px;
+    color: #616366;
+    padding: 0 8px;
+}
+
+#QuickPeekTree {
+    border: none;
+    background-color: #FFFFFF;
+}
+
+#QuickPeekTree::item {
+    padding: 4px 0;
+}
+
+#QuickPeekTree::item:selected {
+    background-color: rgba(221, 20, 5, 0.1);
+    color: #303233;
+}
+
+#QuickPeekTree::item:hover {
+    background-color: #F7F7F7;
+}
+
+#QuickPeekFooter {
+    background-color: #F7F7F7;
+    border-top: 1px solid #DCDDDD;
+}
+
+#QuickPeekSwitchBtn {
+    background-color: #DD1405;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+#QuickPeekSwitchBtn:hover {
+    background-color: #C00006;
+}
+
+#QuickPeekSwitchBtn:pressed {
+    background-color: #A00005;
+}
+
+/* ============================================
+   CROSS-ACCOUNT TRANSFER LOG PANEL
+   ============================================ */
+
+#CrossAccountLogPanel {
+    background-color: #FFFFFF;
+}
+
+#TransferLogHeader {
+    background-color: #F7F7F7;
+    border-bottom: 1px solid #DCDDDD;
+    padding: 16px;
+}
+
+#TransferLogTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: #04101E;
+}
+
+#TransferLogFilters {
+    background-color: transparent;
+}
+
+#TransferLogList {
+    background-color: #FFFFFF;
+    border: none;
+}
+
+#TransferLogItem {
+    padding: 12px 16px;
+    border-bottom: 1px solid #EFEFF0;
+}
+
+#TransferLogItem[status="completed"] {
+    background-color: rgba(9, 191, 91, 0.05);
+}
+
+#TransferLogItem[status="failed"] {
+    background-color: rgba(227, 27, 87, 0.05);
+}
+
+#TransferLogItem[status="in-progress"] {
+    background-color: rgba(5, 186, 241, 0.05);
+}
+
+#TransferLogItem[status="pending"] {
+    background-color: #FFFFFF;
+}
+
+#TransferLogItemIcon {
+    font-size: 16px;
+}
+
+#TransferLogItemName {
+    font-size: 13px;
+    font-weight: 600;
+    color: #303233;
+}
+
+#TransferLogItemPath {
+    font-size: 11px;
+    color: #616366;
+}
+
+#TransferLogItemTime {
+    font-size: 11px;
+    color: #616366;
+}
+
+#TransferLogItemProgress {
+    background-color: #E4E4E5;
+    border-radius: 3px;
+    max-height: 6px;
+}
+
+#TransferLogItemProgress::chunk {
+    background-color: #05BAF1;
+    border-radius: 3px;
+}
+
+#TransferLogRetryBtn {
+    background-color: #DD1405;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+#TransferLogRetryBtn:hover {
+    background-color: #C00006;
+}
+
+#TransferLogCancelBtn {
+    background-color: rgba(97, 99, 102, 0.1);
+    color: #303233;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+#TransferLogCancelBtn:hover {
+    background-color: rgba(97, 99, 102, 0.2);
+}
+
+#TransferLogClearBtn {
+    background-color: transparent;
+    color: #616366;
+    border: none;
+    font-size: 12px;
+}
+
+#TransferLogClearBtn:hover {
+    color: #E31B57;
+}
+
+/* ============================================
+   ACCOUNT MANAGER DIALOG
+   ============================================ */
+
+#AccountManagerDialog {
+    background-color: #FFFFFF;
+}
+
+#AccountManagerHeader {
+    background-color: #F7F7F7;
+    border-bottom: 1px solid #DCDDDD;
+    padding: 16px;
+}
+
+#AccountManagerTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: #04101E;
+}
+
+#AccountManagerSidebar {
+    background-color: #F7F7F7;
+    border-right: 1px solid #DCDDDD;
+}
+
+#AccountManagerContent {
+    background-color: #FFFFFF;
+    padding: 20px;
+}
+
+#AccountDetailSection {
+    background-color: #F7F7F7;
+    border: 1px solid #DCDDDD;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+#AccountDetailLabel {
+    font-size: 11px;
+    font-weight: 600;
+    color: #616366;
+    text-transform: uppercase;
+}
+
+#AccountDetailValue {
+    font-size: 13px;
+    color: #303233;
+}
+
+#AccountLabelChip {
+    background-color: #EFEFF0;
+    color: #303233;
+    border: none;
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+#AccountLabelChip:hover {
+    background-color: #E4E4E5;
+}
+
+#AccountLabelChipClose {
+    background-color: transparent;
+    color: #616366;
+    border: none;
+    font-size: 10px;
+    padding: 0 2px;
+}
+
+#AccountLabelChipClose:hover {
+    color: #E31B57;
+}
+
+#AddLabelBtn {
+    background-color: transparent;
+    color: #2C5BEB;
+    border: 1px dashed #2C5BEB;
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+#AddLabelBtn:hover {
+    background-color: rgba(44, 91, 235, 0.1);
+}
+
+#AccountColorPicker {
+    background-color: transparent;
+    border: none;
+}
+
+#AccountColorOption {
+    border: 2px solid transparent;
+    border-radius: 12px;
+    min-width: 24px;
+    min-height: 24px;
+    max-width: 24px;
+    max-height: 24px;
+}
+
+#AccountColorOption:checked {
+    border-color: #04101E;
+}
+
+#AccountColorOption:hover {
+    border-color: #616366;
+}
+
+#ReauthenticateBtn {
+    background-color: rgba(97, 99, 102, 0.1);
+    color: #303233;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+#ReauthenticateBtn:hover {
+    background-color: rgba(97, 99, 102, 0.2);
+}
+
+#RemoveAccountBtn {
+    background-color: #E31B57;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+#RemoveAccountBtn:hover {
+    background-color: #C0104A;
+}
+
+#RemoveAccountBtn:pressed {
+    background-color: #A11045;
+}

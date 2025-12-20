@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.16)
+project(MegaCustomGUI VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+qt_standard_project_setup()
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/build-qt/stubs
+    ${CMAKE_CURRENT_SOURCE_DIR}/build-qt/stubs/controllers
+    ${CMAKE_CURRENT_SOURCE_DIR}/build-qt/stubs/widgets
+    ${CMAKE_CURRENT_SOURCE_DIR}/build-qt/stubs/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/build-qt/stubs/dialogs
+)
+
+set(SOURCES
+    src/main.cpp
+    src/main/Application.cpp
+    src/main/MainWindow.cpp
+    src/widgets/FileExplorer.cpp
+    src/dialogs/LoginDialog.cpp
+)
+
+qt_add_executable(MegaCustomGUI ${SOURCES})
+
+target_link_libraries(MegaCustomGUI PRIVATE Qt6::Core Qt6::Widgets)
+
+# Simplified includes for stub build
+target_include_directories(MegaCustomGUI PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/build-qt/stubs
+)

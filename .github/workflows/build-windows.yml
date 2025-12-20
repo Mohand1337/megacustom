@@ -1,0 +1,190 @@
+name: Build Windows Portable
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qt-gui/**'
+      - 'src/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  QT_VERSION: '6.6.0'
+  BUILD_TYPE: Release
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Clone MEGA SDK
+      run: |
+        mkdir -p third_party
+        git clone --depth 1 https://github.com/meganz/sdk.git third_party/sdk
+      shell: bash
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: ${{ env.QT_VERSION }}
+        host: windows
+        target: desktop
+        arch: win64_msvc2019_64
+        modules: qtnetworkauth
+        cache: true
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '962e5e39f8a25f42522f51fffc574e05a3efd26b'
+        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+
+    - name: Install vcpkg packages
+      run: |
+        vcpkg install openssl:x64-windows
+        vcpkg install curl:x64-windows
+        vcpkg install sqlite3:x64-windows
+        vcpkg install libsodium:x64-windows
+        vcpkg install cryptopp:x64-windows
+        vcpkg install icu:x64-windows
+        vcpkg install c-ares:x64-windows
+        vcpkg install zlib:x64-windows
+
+    - name: Build MEGA SDK
+      run: |
+        cd third_party/sdk
+        if (!(Test-Path "build_sdk")) { mkdir build_sdk }
+        cd build_sdk
+        cmake .. -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+          -DENABLE_SYNC=ON `
+          -DENABLE_CHAT=OFF `
+          -DUSE_OPENSSL=ON
+        cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
+      shell: pwsh
+
+    - name: Configure Qt GUI
+      run: |
+        cd qt-gui
+        cmake -B build-win64 -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}" `
+          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+      shell: pwsh
+
+    - name: Build Qt GUI
+      run: |
+        cd qt-gui
+        cmake --build build-win64 --config ${{ env.BUILD_TYPE }} --parallel
+      shell: pwsh
+
+    - name: Create Portable Distribution
+      run: |
+        cd qt-gui
+
+        # Create deployment directory
+        $deployDir = "MegaCustomGUI-Portable"
+        if (Test-Path $deployDir) { Remove-Item -Recurse -Force $deployDir }
+        New-Item -ItemType Directory -Path $deployDir
+
+        # Copy executable
+        Copy-Item "build-win64/${{ env.BUILD_TYPE }}/MegaCustomGUI.exe" $deployDir/
+
+        # Run windeployqt
+        & "${{ env.Qt6_DIR }}/bin/windeployqt.exe" `
+          --release `
+          --no-translations `
+          --no-system-d3d-compiler `
+          --no-opengl-sw `
+          "$deployDir/MegaCustomGUI.exe"
+
+        # Copy vcpkg DLLs
+        $vcpkgBin = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin"
+        $dlls = @(
+          "libssl-3-x64.dll",
+          "libcrypto-3-x64.dll",
+          "libcurl.dll",
+          "sqlite3.dll",
+          "sodium.dll",
+          "zlib1.dll"
+        )
+        foreach ($dll in $dlls) {
+          $src = Join-Path $vcpkgBin $dll
+          if (Test-Path $src) {
+            Copy-Item $src $deployDir/
+            Write-Host "Copied $dll"
+          }
+        }
+
+        # Copy ICU DLLs (version may vary)
+        Get-ChildItem "$vcpkgBin/icu*.dll" | Copy-Item -Destination $deployDir/
+
+        # Create resources directory
+        New-Item -ItemType Directory -Path "$deployDir/resources/styles" -Force
+        New-Item -ItemType Directory -Path "$deployDir/resources/icons" -Force
+        Copy-Item "resources/styles/*.qss" "$deployDir/resources/styles/" -ErrorAction SilentlyContinue
+        Copy-Item "resources/icons/*.ico" "$deployDir/resources/icons/" -ErrorAction SilentlyContinue
+
+        # Create portable marker
+        @"
+MegaCustomGUI Portable Mode
+
+This file enables portable mode.
+Settings will be stored in this folder instead of AppData.
+Delete this file to use standard Windows settings location.
+"@ | Out-File -FilePath "$deployDir/portable.marker" -Encoding UTF8
+
+        # Create README
+        @"
+MegaCustomGUI Portable
+======================
+
+This is a portable version of MegaCustomGUI.
+
+To run: Double-click MegaCustomGUI.exe
+
+Portable mode is enabled - all settings are stored in this folder.
+To use standard Windows settings (AppData), delete the portable.marker file.
+
+System Requirements:
+- Windows 10 or later (64-bit)
+- No installation required
+"@ | Out-File -FilePath "$deployDir/README.txt" -Encoding UTF8
+
+        Write-Host "Portable distribution created in $deployDir"
+        Get-ChildItem $deployDir
+      shell: pwsh
+
+    - name: Upload Portable Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MegaCustomGUI-Portable-Win64
+        path: qt-gui/MegaCustomGUI-Portable/
+        retention-days: 30
+
+    - name: Create Release ZIP
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        cd qt-gui
+        Compress-Archive -Path "MegaCustomGUI-Portable" -DestinationPath "MegaCustomGUI-Portable-Win64.zip"
+      shell: pwsh
+
+    - name: Upload Release Asset
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: qt-gui/MegaCustomGUI-Portable-Win64.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,161 @@
+cmake_minimum_required(VERSION 3.16)
+project(MegaCustomGUI VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
+# Find Qt6
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Concurrent)
+qt_standard_project_setup()
+
+# Find Mega SDK and dependencies
+set(MEGA_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk")
+set(MEGA_SDK_BUILD "${MEGA_SDK_PATH}/build_sdk")
+
+# Include directories
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${MEGA_SDK_PATH}/include
+)
+
+# Collect source files
+set(SOURCES
+    src/main.cpp
+    src/main/Application.cpp
+    src/main/MainWindow.cpp
+    src/main/TrayIcon.cpp
+    src/widgets/FileExplorer.cpp
+    src/widgets/FileTreeView.cpp
+    src/widgets/FileListView.cpp
+    src/widgets/TransferQueue.cpp
+    src/widgets/TransferItem.cpp
+    src/dialogs/LoginDialog.cpp
+    src/dialogs/SettingsDialog.cpp
+    src/dialogs/AboutDialog.cpp
+    src/controllers/AuthController.cpp
+    src/controllers/FileController.cpp
+    src/controllers/TransferController.cpp
+    src/models/FileSystemModel.cpp
+    src/models/TransferModel.cpp
+    src/utils/Settings.cpp
+    src/utils/IconProvider.cpp
+)
+
+set(HEADERS
+    src/main/Application.h
+    src/main/MainWindow.h
+    src/main/TrayIcon.h
+    src/widgets/FileExplorer.h
+    src/widgets/FileTreeView.h
+    src/widgets/FileListView.h
+    src/widgets/TransferQueue.h
+    src/widgets/TransferItem.h
+    src/dialogs/LoginDialog.h
+    src/dialogs/SettingsDialog.h
+    src/dialogs/AboutDialog.h
+    src/controllers/AuthController.h
+    src/controllers/FileController.h
+    src/controllers/TransferController.h
+    src/models/FileSystemModel.h
+    src/models/TransferModel.h
+    src/utils/Settings.h
+    src/utils/IconProvider.h
+)
+
+# Resources
+qt_add_resources(RESOURCES resources/resources.qrc)
+
+# Windows-specific settings
+if(WIN32)
+    set(APP_ICON_RESOURCE_WINDOWS "${CMAKE_CURRENT_SOURCE_DIR}/resources/megacustom.rc")
+    qt_add_executable(MegaCustomGUI WIN32
+        ${SOURCES}
+        ${HEADERS}
+        ${RESOURCES}
+        ${APP_ICON_RESOURCE_WINDOWS}
+    )
+else()
+    qt_add_executable(MegaCustomGUI
+        ${SOURCES}
+        ${HEADERS}
+        ${RESOURCES}
+    )
+endif()
+
+# Link Qt libraries
+target_link_libraries(MegaCustomGUI PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+    Qt6::Network
+    Qt6::Concurrent
+)
+
+# Link backend libraries
+target_link_libraries(MegaCustomGUI PRIVATE
+    ${MEGA_SDK_BUILD}/libSDKlib.a
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/libMegaCore.a
+    crypto++
+    sodium
+    z
+    curl
+    ssl
+    crypto
+)
+
+# Windows-specific libraries
+if(WIN32)
+    target_link_libraries(MegaCustomGUI PRIVATE
+        ws2_32
+        wininet
+        shlwapi
+        gdi32
+        advapi32
+        user32
+        kernel32
+    )
+endif()
+
+# Set properties for Windows
+if(WIN32)
+    set_target_properties(MegaCustomGUI PROPERTIES
+        WIN32_EXECUTABLE TRUE
+        VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Copy Qt DLLs to output directory for Windows
+    add_custom_command(TARGET MegaCustomGUI POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:Qt6::Core>
+        $<TARGET_FILE:Qt6::Widgets>
+        $<TARGET_FILE:Qt6::Network>
+        $<TARGET_FILE:Qt6::Concurrent>
+        $<TARGET_FILE_DIR:MegaCustomGUI>
+    )
+endif()
+
+# Installation
+install(TARGETS MegaCustomGUI
+    BUNDLE DESTINATION .
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Create Windows installer with CPack
+if(WIN32)
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_PACKAGE_NAME "MegaCustom")
+    set(CPACK_PACKAGE_VENDOR "MegaCustom Team")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Mega Cloud Storage Desktop Client")
+    set(CPACK_PACKAGE_VERSION_MAJOR 1)
+    set(CPACK_PACKAGE_VERSION_MINOR 0)
+    set(CPACK_PACKAGE_VERSION_PATCH 0)
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "MegaCustom")
+    set(CPACK_NSIS_MODIFY_PATH ON)
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+
+    include(CPack)
+endif()
