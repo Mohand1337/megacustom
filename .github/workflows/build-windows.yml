@@ -61,7 +61,7 @@ jobs:
           -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
           -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/third_party/sdk" `
           -DVCPKG_MANIFEST_INSTALL=ON `
-          -DVCPKG_MANIFEST_FEATURES="use-openssl;use-freeimage;use-ffmpeg;use-mediainfo;use-libuv" `
+          -DVCPKG_MANIFEST_FEATURES="use-openssl;use-freeimage;use-ffmpeg;use-libuv" `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DENABLE_SYNC=ON `
           -DENABLE_CHAT=OFF `
@@ -75,7 +75,7 @@ jobs:
           -DUSE_SQLITE=ON `
           -DUSE_FREEIMAGE=ON `
           -DUSE_FFMPEG=ON `
-          -DUSE_MEDIAINFO=ON `
+          -DUSE_MEDIAINFO=OFF `
           -DUSE_LIBUV=ON `
           -DUSE_PDFIUM=OFF
         cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
