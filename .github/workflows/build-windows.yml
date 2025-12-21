@@ -52,9 +52,9 @@ jobs:
 
     - name: Install vcpkg packages
       run: |
-        .\vcpkg\vcpkg.exe install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib
+        .\vcpkg\vcpkg.exe install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib freeimage ffmpeg libmediainfo libuv
       shell: pwsh
-      timeout-minutes: 45
+      timeout-minutes: 60
 
     - name: Build MEGA SDK
       run: |
@@ -76,14 +76,14 @@ jobs:
           -DUSE_SODIUM=ON `
           -DUSE_CRYPTOPP=ON `
           -DUSE_SQLITE=ON `
-          -DUSE_FREEIMAGE=OFF `
-          -DUSE_FFMPEG=OFF `
-          -DUSE_MEDIAINFO=OFF `
-          -DUSE_LIBUV=OFF `
+          -DUSE_FREEIMAGE=ON `
+          -DUSE_FFMPEG=ON `
+          -DUSE_MEDIAINFO=ON `
+          -DUSE_LIBUV=ON `
           -DUSE_PDFIUM=OFF
         cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
       shell: pwsh
-      timeout-minutes: 30
+      timeout-minutes: 45
 
     - name: Configure Qt GUI
       run: |
@@ -122,24 +122,18 @@ jobs:
 
         # Copy vcpkg DLLs
         $vcpkgBin = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin"
-        $dlls = @(
-          "libssl-3-x64.dll",
-          "libcrypto-3-x64.dll",
-          "libcurl.dll",
-          "sqlite3.dll",
-          "sodium.dll",
-          "zlib1.dll"
-        )
-        foreach ($dll in $dlls) {
-          $src = Join-Path $vcpkgBin $dll
-          if (Test-Path $src) {
-            Copy-Item $src $deployDir/
-            Write-Host "Copied $dll"
-          }
-        }
+        $vcpkgTools = "${{ github.workspace }}/vcpkg/installed/x64-windows/tools/ffmpeg"
 
-        # Copy ICU DLLs (version may vary)
-        Get-ChildItem "$vcpkgBin/icu*.dll" | Copy-Item -Destination $deployDir/
+        # Copy all DLLs from vcpkg bin (includes OpenSSL, curl, ffmpeg, freeimage, etc.)
+        Get-ChildItem "$vcpkgBin/*.dll" | Copy-Item -Destination $deployDir/
+        Write-Host "Copied all vcpkg DLLs"
+
+        # Copy ffmpeg executables
+        if (Test-Path $vcpkgTools) {
+          Copy-Item "$vcpkgTools/ffmpeg.exe" $deployDir/ -ErrorAction SilentlyContinue
+          Copy-Item "$vcpkgTools/ffprobe.exe" $deployDir/ -ErrorAction SilentlyContinue
+          Write-Host "Copied ffmpeg tools"
+        }
 
         # Create resources directory
         New-Item -ItemType Directory -Path "$deployDir/resources/styles" -Force
