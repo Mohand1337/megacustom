@@ -50,11 +50,11 @@ jobs:
         ./vcpkg/bootstrap-vcpkg.bat
       shell: cmd
 
-    - name: Install vcpkg packages
+    - name: Install vcpkg packages for GUI
       run: |
-        .\vcpkg\vcpkg.exe install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib freeimage ffmpeg libmediainfo libuv
+        .\vcpkg\vcpkg.exe install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib
       shell: pwsh
-      timeout-minutes: 60
+      timeout-minutes: 30
 
     - name: Build MEGA SDK
       run: |
@@ -63,8 +63,10 @@ jobs:
         cd build_sdk
         cmake .. -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-          -DVCPKG_OVERLAY_PORTS="../cmake/vcpkg_overlay_ports" `
-          -DVCPKG_OVERLAY_TRIPLETS="../cmake/vcpkg_overlay_triplets" `
+          -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_ports" `
+          -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
+          -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/third_party/sdk" `
+          -DVCPKG_MANIFEST_INSTALL=ON `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DENABLE_SYNC=ON `
           -DENABLE_CHAT=OFF `
@@ -76,14 +78,14 @@ jobs:
           -DUSE_SODIUM=ON `
           -DUSE_CRYPTOPP=ON `
           -DUSE_SQLITE=ON `
-          -DUSE_FREEIMAGE=ON `
-          -DUSE_FFMPEG=ON `
-          -DUSE_MEDIAINFO=ON `
-          -DUSE_LIBUV=ON `
+          -DUSE_FREEIMAGE=OFF `
+          -DUSE_FFMPEG=OFF `
+          -DUSE_MEDIAINFO=OFF `
+          -DUSE_LIBUV=OFF `
           -DUSE_PDFIUM=OFF
         cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
       shell: pwsh
-      timeout-minutes: 45
+      timeout-minutes: 60
 
     - name: Configure Qt GUI
       run: |
