@@ -63,12 +63,27 @@ jobs:
         cd build_sdk
         cmake .. -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+          -DVCPKG_OVERLAY_PORTS="../cmake/vcpkg_overlay_ports" `
+          -DVCPKG_OVERLAY_TRIPLETS="../cmake/vcpkg_overlay_triplets" `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DENABLE_SYNC=ON `
           -DENABLE_CHAT=OFF `
-          -DUSE_OPENSSL=ON
+          -DENABLE_LOG_PERFORMANCE=OFF `
+          -DENABLE_SDKLIB_EXAMPLES=OFF `
+          -DENABLE_SDKLIB_TESTS=OFF `
+          -DUSE_OPENSSL=ON `
+          -DUSE_CURL=ON `
+          -DUSE_SODIUM=ON `
+          -DUSE_CRYPTOPP=ON `
+          -DUSE_SQLITE=ON `
+          -DUSE_FREEIMAGE=OFF `
+          -DUSE_FFMPEG=OFF `
+          -DUSE_MEDIAINFO=OFF `
+          -DUSE_LIBUV=OFF `
+          -DUSE_PDFIUM=OFF
         cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
       shell: pwsh
+      timeout-minutes: 30
 
     - name: Configure Qt GUI
       run: |
