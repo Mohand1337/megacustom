@@ -50,12 +50,6 @@ jobs:
         ./vcpkg/bootstrap-vcpkg.bat
       shell: cmd
 
-    - name: Install vcpkg packages for GUI
-      run: |
-        .\vcpkg\vcpkg.exe install --triplet x64-windows openssl curl sqlite3 libsodium cryptopp c-ares zlib
-      shell: pwsh
-      timeout-minutes: 30
-
     - name: Build MEGA SDK
       run: |
         cd third_party/sdk
@@ -67,6 +61,7 @@ jobs:
           -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
           -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/third_party/sdk" `
           -DVCPKG_MANIFEST_INSTALL=ON `
+          -DVCPKG_MANIFEST_FEATURES="use-openssl;use-freeimage;use-ffmpeg;use-mediainfo;use-libuv" `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DENABLE_SYNC=ON `
           -DENABLE_CHAT=OFF `
@@ -78,14 +73,14 @@ jobs:
           -DUSE_SODIUM=ON `
           -DUSE_CRYPTOPP=ON `
           -DUSE_SQLITE=ON `
-          -DUSE_FREEIMAGE=OFF `
-          -DUSE_FFMPEG=OFF `
-          -DUSE_MEDIAINFO=OFF `
-          -DUSE_LIBUV=OFF `
+          -DUSE_FREEIMAGE=ON `
+          -DUSE_FFMPEG=ON `
+          -DUSE_MEDIAINFO=ON `
+          -DUSE_LIBUV=ON `
           -DUSE_PDFIUM=OFF
         cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
       shell: pwsh
-      timeout-minutes: 60
+      timeout-minutes: 90
 
     - name: Configure Qt GUI
       run: |
@@ -122,18 +117,27 @@ jobs:
           --no-opengl-sw `
           "$deployDir/MegaCustomGUI.exe"
 
-        # Copy vcpkg DLLs
+        # Copy vcpkg DLLs - check manifest mode location first, then classic
+        $manifestBin = "${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed/x64-windows/bin"
+        $manifestTools = "${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed/x64-windows/tools/ffmpeg"
         $vcpkgBin = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin"
         $vcpkgTools = "${{ github.workspace }}/vcpkg/installed/x64-windows/tools/ffmpeg"
 
-        # Copy all DLLs from vcpkg bin (includes OpenSSL, curl, ffmpeg, freeimage, etc.)
-        Get-ChildItem "$vcpkgBin/*.dll" | Copy-Item -Destination $deployDir/
-        Write-Host "Copied all vcpkg DLLs"
+        # Copy all DLLs from vcpkg (manifest mode location preferred)
+        if (Test-Path $manifestBin) {
+          Get-ChildItem "$manifestBin/*.dll" | Copy-Item -Destination $deployDir/
+          Write-Host "Copied vcpkg DLLs from manifest location"
+          $toolsPath = $manifestTools
+        } elseif (Test-Path $vcpkgBin) {
+          Get-ChildItem "$vcpkgBin/*.dll" | Copy-Item -Destination $deployDir/
+          Write-Host "Copied vcpkg DLLs from classic location"
+          $toolsPath = $vcpkgTools
+        }
 
         # Copy ffmpeg executables
-        if (Test-Path $vcpkgTools) {
-          Copy-Item "$vcpkgTools/ffmpeg.exe" $deployDir/ -ErrorAction SilentlyContinue
-          Copy-Item "$vcpkgTools/ffprobe.exe" $deployDir/ -ErrorAction SilentlyContinue
+        if (Test-Path $toolsPath) {
+          Copy-Item "$toolsPath/ffmpeg.exe" $deployDir/ -ErrorAction SilentlyContinue
+          Copy-Item "$toolsPath/ffprobe.exe" $deployDir/ -ErrorAction SilentlyContinue
           Write-Host "Copied ffmpeg tools"
         }
 
