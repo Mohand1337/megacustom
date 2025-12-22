@@ -55,8 +55,8 @@ jobs:
         # Install all required packages using classic vcpkg mode
         # This gives us full control over package names and locations
         ${{ github.workspace }}/vcpkg/vcpkg.exe install --triplet x64-windows `
-          cryptopp curl[core,ssl,schannel] icu libsodium sqlite3 zlib zstd `
-          openssl freeimage ffmpeg[core,avcodec,avformat,swresample,swscale] libuv
+          cryptopp "curl[ssl]" icu libsodium sqlite3 zlib zstd `
+          openssl freeimage "ffmpeg[avcodec,avformat,swresample,swscale]" libuv
       shell: pwsh
       timeout-minutes: 60
 
