@@ -54,9 +54,10 @@ jobs:
       run: |
         # Install all required packages using classic vcpkg mode
         # This gives us full control over package names and locations
+        # Note: freeimage removed due to imath download issues on GitHub runners
         ${{ github.workspace }}/vcpkg/vcpkg.exe install --triplet x64-windows `
           cryptopp "curl[ssl]" icu libsodium sqlite3 zlib zstd c-ares `
-          openssl freeimage "ffmpeg[avcodec,avformat,swresample,swscale]" libuv
+          openssl "ffmpeg[avcodec,avformat,swresample,swscale]" libuv
       shell: pwsh
       timeout-minutes: 60
 
@@ -94,7 +95,7 @@ jobs:
           -DUSE_SODIUM=ON `
           -DUSE_CRYPTOPP=ON `
           -DUSE_SQLITE=ON `
-          -DUSE_FREEIMAGE=ON `
+          -DUSE_FREEIMAGE=OFF `
           -DUSE_FFMPEG=ON `
           -DUSE_MEDIAINFO=OFF `
           -DUSE_LIBUV=ON `
