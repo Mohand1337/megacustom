@@ -88,6 +88,7 @@ jobs:
           -DENABLE_LOG_PERFORMANCE=OFF `
           -DENABLE_SDKLIB_EXAMPLES=OFF `
           -DENABLE_SDKLIB_TESTS=OFF `
+          -DENABLE_SDKLIB_TOOLS=OFF `
           -DUSE_OPENSSL=ON `
           -DUSE_CURL=ON `
           -DUSE_SODIUM=ON `
@@ -98,7 +99,7 @@ jobs:
           -DUSE_MEDIAINFO=OFF `
           -DUSE_LIBUV=ON `
           -DUSE_PDFIUM=OFF
-        cmake --build . --config ${{ env.BUILD_TYPE }} --parallel
+        cmake --build . --config ${{ env.BUILD_TYPE }} --target SDKlib --parallel
       shell: pwsh
       timeout-minutes: 90
 
