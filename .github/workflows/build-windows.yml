@@ -50,18 +50,42 @@ jobs:
         ./vcpkg/bootstrap-vcpkg.bat
       shell: cmd
 
-    - name: Build MEGA SDK
+    - name: Install SDK vcpkg dependencies
       run: |
         cd third_party/sdk
         if (!(Test-Path "build_sdk")) { mkdir build_sdk }
         cd build_sdk
+        # Pre-install vcpkg packages using manifest
+        ${{ github.workspace }}/vcpkg/vcpkg.exe install `
+          --triplet x64-windows `
+          --x-manifest-root="${{ github.workspace }}/third_party/sdk" `
+          --x-install-root="${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed" `
+          --overlay-ports="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_ports" `
+          --overlay-triplets="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
+          --x-feature=use-openssl --x-feature=use-freeimage --x-feature=use-ffmpeg --x-feature=use-libuv
+      shell: pwsh
+      timeout-minutes: 60
+
+    - name: Fix pkg-config aliases
+      run: |
+        $pkgconfigDir = "${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed/x64-windows/lib/pkgconfig"
+        # SDK expects libcrypto++ but vcpkg provides cryptopp
+        if (Test-Path "$pkgconfigDir/cryptopp.pc") {
+          Copy-Item "$pkgconfigDir/cryptopp.pc" "$pkgconfigDir/libcrypto++.pc"
+          Write-Host "Created libcrypto++.pc alias for cryptopp"
+        }
+      shell: pwsh
+
+    - name: Build MEGA SDK
+      run: |
+        cd third_party/sdk/build_sdk
         cmake .. -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
           -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_ports" `
           -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
           -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/third_party/sdk" `
-          -DVCPKG_MANIFEST_INSTALL=ON `
-          -DVCPKG_MANIFEST_FEATURES="use-openssl;use-freeimage;use-ffmpeg;use-libuv" `
+          -DVCPKG_MANIFEST_INSTALL=OFF `
+          -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed" `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DENABLE_SYNC=ON `
           -DENABLE_CHAT=OFF `
