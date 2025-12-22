@@ -13,10 +13,19 @@
 #include <algorithm>
 #include <filesystem>
 #include <sys/stat.h>
+#include <random>
+
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#include <direct.h>
+#define popen _popen
+#define pclose _pclose
+#define WEXITSTATUS(x) (x)
+#else
 #include <sys/wait.h>
 #include <unistd.h>
-#include <dirent.h>
-#include <random>
+#endif
 
 namespace fs = std::filesystem;
 

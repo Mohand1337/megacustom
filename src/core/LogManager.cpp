@@ -10,8 +10,14 @@
 #include <cstring>
 #include <cerrno>
 #include <sys/stat.h>
-#include <dirent.h>
+#include <filesystem>
+
+#ifdef _WIN32
+#include <io.h>
+#define unlink _unlink
+#else
 #include <unistd.h>
+#endif
 
 namespace MegaCustom {
 
@@ -738,23 +744,26 @@ void LogManager::cleanOldLogs() {
     auto cutoff = now - std::chrono::hours(24 * m_retentionDays);
     auto cutoff_time = std::chrono::system_clock::to_time_t(cutoff);
 
-    DIR* dir = opendir(m_logDir.c_str());
-    if (!dir) return;
+    namespace fs = std::filesystem;
+    std::error_code ec;
 
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != nullptr) {
-        std::string filename = entry->d_name;
+    if (!fs::exists(m_logDir, ec) || !fs::is_directory(m_logDir, ec)) {
+        return;
+    }
+
+    for (const auto& entry : fs::directory_iterator(m_logDir, ec)) {
+        if (ec) break;
+
+        std::string filename = entry.path().filename().string();
         if (filename.find("activity_") == 0 && filename.find(".log") != std::string::npos) {
-            std::string filepath = m_logDir + "/" + filename;
             struct stat st;
-            if (stat(filepath.c_str(), &st) == 0) {
+            if (stat(entry.path().string().c_str(), &st) == 0) {
                 if (st.st_mtime < cutoff_time) {
-                    unlink(filepath.c_str());
+                    fs::remove(entry.path(), ec);
                 }
             }
         }
     }
-    closedir(dir);
 }
 
 bool LogManager::exportLogs(const std::string& outputPath, const LogFilter& filter) {

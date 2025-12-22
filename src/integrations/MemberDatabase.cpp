@@ -8,6 +8,11 @@
 #include <iostream>
 #include <iomanip>
 
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
+
 // Simple JSON handling (using the existing json_simple.hpp pattern)
 #include "json_simple.hpp"
 

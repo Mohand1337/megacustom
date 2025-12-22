@@ -9,11 +9,20 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <array>
 #include <thread>
 #include <future>
+
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#define popen _popen
+#define pclose _pclose
+#define WEXITSTATUS(x) (x)
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace MegaCustom {
 
