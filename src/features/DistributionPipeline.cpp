@@ -22,6 +22,15 @@
 #define popen _popen
 #define pclose _pclose
 #define WEXITSTATUS(x) (x)
+#define WIFEXITED(x) true
+// S_ISREG macro for Windows
+#ifndef S_ISREG
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+// Type definitions for Windows
+typedef int ssize_t;
+#define read _read
+#define close _close
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -328,51 +337,23 @@ bool DistributionPipeline::uploadToMegaFolder(
         return false;
     }
 
-    // Use execvp for safe command execution (no shell injection)
-    // Fork and exec to capture output safely
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        error = "Failed to create pipe";
+    // Build command for upload - use popen for cross-platform compatibility
+    // Quote paths to handle spaces
+    std::string cmd = "./megacustom upload \"" + localPath + "\" \"" + megaFolder + "\" 2>&1";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        error = "Failed to execute upload command";
         return false;
     }
-
-    pid_t pid = fork();
-    if (pid == -1) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        error = "Failed to fork process";
-        return false;
-    }
-
-    if (pid == 0) {
-        // Child process
-        close(pipefd[0]);  // Close read end
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[1]);
-
-        // Execute megacustom upload with explicit arguments (safe)
-        execlp("./megacustom", "megacustom", "upload",
-               localPath.c_str(), megaFolder.c_str(), nullptr);
-
-        // If exec fails
-        _exit(127);
-    }
-
-    // Parent process
-    close(pipefd[1]);  // Close write end
 
     std::string output;
     char buffer[256];
-    ssize_t bytesRead;
-    while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
-        buffer[bytesRead] = '\0';
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         output += buffer;
     }
-    close(pipefd[0]);
 
-    int status;
-    waitpid(pid, &status, 0);
+    int status = pclose(pipe);
 
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         error = "Upload failed: " + output;

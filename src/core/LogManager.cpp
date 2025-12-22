@@ -14,7 +14,13 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <direct.h>
 #define unlink _unlink
+#define mkdir(path, mode) _mkdir(path)
+// Windows uses localtime_s with different argument order
+inline struct tm* localtime_r(const time_t* timer, struct tm* buf) {
+    return localtime_s(buf, timer) == 0 ? buf : nullptr;
+}
 #else
 #include <unistd.h>
 #endif
