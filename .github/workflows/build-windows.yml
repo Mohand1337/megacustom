@@ -50,42 +50,38 @@ jobs:
         ./vcpkg/bootstrap-vcpkg.bat
       shell: cmd
 
-    - name: Install SDK vcpkg dependencies
+    - name: Install vcpkg packages (classic mode)
       run: |
-        cd third_party/sdk
-        if (!(Test-Path "build_sdk")) { mkdir build_sdk }
-        cd build_sdk
-        # Pre-install vcpkg packages using manifest
-        ${{ github.workspace }}/vcpkg/vcpkg.exe install `
-          --triplet x64-windows `
-          --x-manifest-root="${{ github.workspace }}/third_party/sdk" `
-          --x-install-root="${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed" `
-          --overlay-ports="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_ports" `
-          --overlay-triplets="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
-          --x-feature=use-openssl --x-feature=use-freeimage --x-feature=use-ffmpeg --x-feature=use-libuv
+        # Install all required packages using classic vcpkg mode
+        # This gives us full control over package names and locations
+        ${{ github.workspace }}/vcpkg/vcpkg.exe install --triplet x64-windows `
+          cryptopp curl[core,ssl,schannel] icu libsodium sqlite3 zlib zstd `
+          openssl freeimage ffmpeg[core,avcodec,avformat,swresample,swscale] libuv
       shell: pwsh
       timeout-minutes: 60
 
     - name: Fix pkg-config aliases
       run: |
-        $pkgconfigDir = "${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed/x64-windows/lib/pkgconfig"
+        $pkgconfigDir = "${{ github.workspace }}/vcpkg/installed/x64-windows/lib/pkgconfig"
         # SDK expects libcrypto++ but vcpkg provides cryptopp
         if (Test-Path "$pkgconfigDir/cryptopp.pc") {
           Copy-Item "$pkgconfigDir/cryptopp.pc" "$pkgconfigDir/libcrypto++.pc"
           Write-Host "Created libcrypto++.pc alias for cryptopp"
         }
+        # List pkg-config files for debugging
+        Write-Host "Available pkg-config files:"
+        Get-ChildItem "$pkgconfigDir/*.pc" | ForEach-Object { Write-Host $_.Name }
       shell: pwsh
 
     - name: Build MEGA SDK
       run: |
-        cd third_party/sdk/build_sdk
+        cd third_party/sdk
+        if (!(Test-Path "build_sdk")) { mkdir build_sdk }
+        cd build_sdk
         cmake .. -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-          -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_ports" `
-          -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/third_party/sdk/cmake/vcpkg_overlay_triplets" `
-          -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/third_party/sdk" `
-          -DVCPKG_MANIFEST_INSTALL=OFF `
-          -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed" `
+          -DVCPKG_TARGET_TRIPLET=x64-windows `
+          -DVCPKG_MANIFEST_MODE=OFF `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DENABLE_SYNC=ON `
           -DENABLE_CHAT=OFF `
@@ -141,27 +137,19 @@ jobs:
           --no-opengl-sw `
           "$deployDir/MegaCustomGUI.exe"
 
-        # Copy vcpkg DLLs - check manifest mode location first, then classic
-        $manifestBin = "${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed/x64-windows/bin"
-        $manifestTools = "${{ github.workspace }}/third_party/sdk/build_sdk/vcpkg_installed/x64-windows/tools/ffmpeg"
+        # Copy vcpkg DLLs (classic mode location)
         $vcpkgBin = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin"
         $vcpkgTools = "${{ github.workspace }}/vcpkg/installed/x64-windows/tools/ffmpeg"
 
-        # Copy all DLLs from vcpkg (manifest mode location preferred)
-        if (Test-Path $manifestBin) {
-          Get-ChildItem "$manifestBin/*.dll" | Copy-Item -Destination $deployDir/
-          Write-Host "Copied vcpkg DLLs from manifest location"
-          $toolsPath = $manifestTools
-        } elseif (Test-Path $vcpkgBin) {
+        if (Test-Path $vcpkgBin) {
           Get-ChildItem "$vcpkgBin/*.dll" | Copy-Item -Destination $deployDir/
-          Write-Host "Copied vcpkg DLLs from classic location"
-          $toolsPath = $vcpkgTools
+          Write-Host "Copied vcpkg DLLs from $vcpkgBin"
         }
 
         # Copy ffmpeg executables
-        if (Test-Path $toolsPath) {
-          Copy-Item "$toolsPath/ffmpeg.exe" $deployDir/ -ErrorAction SilentlyContinue
-          Copy-Item "$toolsPath/ffprobe.exe" $deployDir/ -ErrorAction SilentlyContinue
+        if (Test-Path $vcpkgTools) {
+          Copy-Item "$vcpkgTools/ffmpeg.exe" $deployDir/ -ErrorAction SilentlyContinue
+          Copy-Item "$vcpkgTools/ffprobe.exe" $deployDir/ -ErrorAction SilentlyContinue
           Write-Host "Copied ffmpeg tools"
         }
 
