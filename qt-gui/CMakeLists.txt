@@ -323,9 +323,9 @@ if(WIN32)
         OpenSSL::Crypto
         CURL::libcurl
         ZLIB::ZLIB
-        unofficial::sodium::sodium
+        unofficial-sodium::sodium
         unofficial::sqlite3::sqlite3
-        cryptopp::cryptopp
+        cryptopp-static
         ICU::uc
         ICU::i18n
         ICU::data
@@ -386,9 +386,9 @@ if(WIN32)
         OpenSSL::Crypto
         CURL::libcurl
         ZLIB::ZLIB
-        unofficial::sodium::sodium
+        unofficial-sodium::sodium
         unofficial::sqlite3::sqlite3
-        cryptopp::cryptopp
+        cryptopp-static
         ICU::uc
         ICU::i18n
         ICU::data
