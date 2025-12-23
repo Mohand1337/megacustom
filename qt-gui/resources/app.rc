@@ -37,6 +37,5 @@ BEGIN
     END
 END
 
-// Application Manifest for Windows 10+ features
-// Enables visual styles, DPI awareness, and long path support
-1 RT_MANIFEST "app.manifest"
+// Note: Application manifest is handled by Qt/CMake automatically
+// Do not include RT_MANIFEST here to avoid duplicate resource error
