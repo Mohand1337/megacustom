@@ -291,6 +291,7 @@ if(WIN32)
     find_package(cryptopp CONFIG REQUIRED)
     find_package(ICU COMPONENTS uc i18n data REQUIRED)
     find_package(c-ares CONFIG REQUIRED)
+    find_package(libuv CONFIG REQUIRED)
 
     # SDK library paths for Windows
     set(MEGA_SDK_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk/build_sdk/Release/SDKlib.lib)
@@ -330,10 +331,12 @@ if(WIN32)
         ICU::i18n
         ICU::data
         c-ares::cares
+        $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>
         ws2_32      # Windows Sockets
         crypt32     # Windows Crypto API
         winhttp     # Windows HTTP
         iphlpapi    # IP Helper API
+        shlwapi     # Shell API (PathIsRelativeW)
     )
 else()
     target_link_libraries(MegaCustomGUI PRIVATE
@@ -393,10 +396,12 @@ if(WIN32)
         ICU::i18n
         ICU::data
         c-ares::cares
+        $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>
         ws2_32
         crypt32
         winhttp
         iphlpapi
+        shlwapi
     )
 else()
     target_link_libraries(mega_ops PRIVATE
