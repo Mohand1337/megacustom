@@ -163,6 +163,23 @@ jobs:
         Copy-Item "resources/styles/*.qss" "$deployDir/resources/styles/" -ErrorAction SilentlyContinue
         Copy-Item "resources/icons/*.ico" "$deployDir/resources/icons/" -ErrorAction SilentlyContinue
 
+        # Copy scripts folder (for PDF watermarking and other features)
+        $scriptsSource = "${{ github.workspace }}/scripts"
+        if (Test-Path $scriptsSource) {
+          New-Item -ItemType Directory -Path "$deployDir/scripts" -Force
+          Copy-Item "$scriptsSource/pdf_watermark.py" "$deployDir/scripts/" -ErrorAction SilentlyContinue
+          Copy-Item "$scriptsSource/download_manager.py" "$deployDir/scripts/" -ErrorAction SilentlyContinue
+          Write-Host "Copied scripts folder"
+        }
+
+        # Copy fonts folder (for watermarking)
+        $fontsSource = "${{ github.workspace }}/bin/fonts"
+        if (Test-Path $fontsSource) {
+          New-Item -ItemType Directory -Path "$deployDir/bin/fonts" -Force
+          Copy-Item "$fontsSource/*.ttf" "$deployDir/bin/fonts/" -ErrorAction SilentlyContinue
+          Write-Host "Copied fonts folder"
+        }
+
         # Create portable marker
         $markerContent = "MegaCustomGUI Portable Mode`n`nThis file enables portable mode.`nSettings will be stored in this folder instead of AppData.`nDelete this file to use standard Windows settings location."
         Set-Content -Path "$deployDir/portable.marker" -Value $markerContent -Encoding UTF8
