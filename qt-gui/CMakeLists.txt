@@ -325,7 +325,7 @@ if(WIN32)
         ZLIB::ZLIB
         unofficial-sodium::sodium
         unofficial::sqlite3::sqlite3
-        cryptopp-static
+        cryptopp::cryptopp
         ICU::uc
         ICU::i18n
         ICU::data
@@ -388,7 +388,7 @@ if(WIN32)
         ZLIB::ZLIB
         unofficial-sodium::sodium
         unofficial::sqlite3::sqlite3
-        cryptopp-static
+        cryptopp::cryptopp
         ICU::uc
         ICU::i18n
         ICU::data

@@ -19,6 +19,10 @@
 #define popen _popen
 #define pclose _pclose
 #define WEXITSTATUS(x) (x)
+// S_IXUSR doesn't exist on Windows - define as 0 (Windows uses file extension for executability)
+#ifndef S_IXUSR
+#define S_IXUSR 0
+#endif
 #else
 #include <sys/wait.h>
 #include <unistd.h>
