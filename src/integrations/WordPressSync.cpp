@@ -12,9 +12,35 @@
 #include <cstring>
 #include <chrono>
 #include <algorithm>
+#include <cstdlib>
 #include <curl/curl.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shlobj.h>
+#endif
+
 namespace fs = std::filesystem;
+
+namespace {
+// Cross-platform function to get user home directory
+std::string getHomeDirectory() {
+#ifdef _WIN32
+    char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        return std::string(userProfile);
+    }
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        return std::string(path);
+    }
+    return "C:\\Users\\Default";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "/tmp";
+#endif
+}
+} // anonymous namespace
 
 namespace MegaCustom {
 
@@ -29,9 +55,13 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
 
 WordPressSync::WordPressSync() {
     // Default member database path
-    const char* home = getenv("HOME");
-    if (home) {
-        m_memberDbPath = std::string(home) + "/.megacustom/members.json";
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
+#ifdef _WIN32
+        m_memberDbPath = homeDir + "\\.megacustom\\members.json";
+#else
+        m_memberDbPath = homeDir + "/.megacustom/members.json";
+#endif
     }
 
     // Set default field mappings
@@ -125,9 +155,13 @@ std::string WordPressSync::base64Encode(const std::string& str) {
 // ==================== Configuration ====================
 
 std::string WordPressSync::getConfigFilePath() const {
-    const char* home = getenv("HOME");
-    if (home) {
-        return std::string(home) + "/.megacustom/wordpress.json";
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
+#ifdef _WIN32
+        return homeDir + "\\.megacustom\\wordpress.json";
+#else
+        return homeDir + "/.megacustom/wordpress.json";
+#endif
     }
     return "./wordpress.json";
 }
@@ -197,7 +231,12 @@ bool WordPressSync::saveConfig(const std::string& configPath) {
     std::string path = configPath.empty() ? getConfigFilePath() : configPath;
 
     // Ensure directory exists (safe, no shell injection)
-    std::string dir = path.substr(0, path.find_last_of('/'));
+#ifdef _WIN32
+    size_t lastSep = path.find_last_of("\\/");
+#else
+    size_t lastSep = path.find_last_of('/');
+#endif
+    std::string dir = (lastSep != std::string::npos) ? path.substr(0, lastSep) : "";
     if (!dir.empty()) {
         if (!megacustom::PathValidator::isValidPath(dir)) {
             m_lastError = "Invalid config directory path";

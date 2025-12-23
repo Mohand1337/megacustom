@@ -13,8 +13,34 @@
 #include <condition_variable>
 #include <set>
 #include <map>
+#include <cstdlib>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <shlobj.h>
+#endif
 
 namespace fs = std::filesystem;
+
+namespace {
+// Cross-platform function to get user home directory
+std::string getHomeDirectory() {
+#ifdef _WIN32
+    char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        return std::string(userProfile);
+    }
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        return std::string(path);
+    }
+    return "C:\\Users\\Default";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "/tmp";
+#endif
+}
+} // anonymous namespace
 using json = nlohmann::json;
 
 namespace MegaCustom {
@@ -39,9 +65,9 @@ FolderMapper::~FolderMapper() {
 // ============================================================================
 
 std::string FolderMapper::getDefaultConfigPath() {
-    const char* home = getenv("HOME");
-    if (home) {
-        fs::path configDir = fs::path(home) / ".megacustom";
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
+        fs::path configDir = fs::path(homeDir) / ".megacustom";
         if (!fs::exists(configDir)) {
             fs::create_directories(configDir);
         }

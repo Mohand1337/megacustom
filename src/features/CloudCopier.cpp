@@ -17,8 +17,34 @@
 #include <ctime>
 #include <filesystem>
 #include <set>
+#include <cstdlib>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <shlobj.h>
+#endif
 
 namespace fs = std::filesystem;
+
+namespace {
+// Cross-platform function to get user home directory
+std::string getHomeDirectory() {
+#ifdef _WIN32
+    char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        return std::string(userProfile);
+    }
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        return std::string(path);
+    }
+    return "C:\\Users\\Default";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "/tmp";
+#endif
+}
+} // anonymous namespace
 
 namespace MegaCustom {
 
@@ -147,9 +173,13 @@ CloudCopier::CloudCopier(mega::MegaApi* megaApi)
       m_defaultResolution(ConflictResolution::ASK) {
 
     // Set default templates path
-    const char* home = getenv("HOME");
-    if (home) {
-        m_templatesPath = std::string(home) + "/.config/MegaCustom/copy_templates.json";
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
+#ifdef _WIN32
+        m_templatesPath = homeDir + "\\.config\\MegaCustom\\copy_templates.json";
+#else
+        m_templatesPath = homeDir + "/.config/MegaCustom/copy_templates.json";
+#endif
     } else {
         m_templatesPath = "./copy_templates.json";
     }

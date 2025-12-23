@@ -14,6 +14,8 @@
 #include <future>
 
 #ifdef _WIN32
+#include <windows.h>
+#include <shlobj.h>
 #include <io.h>
 #include <process.h>
 #define popen _popen
@@ -27,6 +29,26 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+
+namespace {
+// Cross-platform function to get user home directory
+std::string getHomeDirectory() {
+#ifdef _WIN32
+    char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        return std::string(userProfile);
+    }
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        return std::string(path);
+    }
+    return "C:\\Users\\Default";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "/tmp";
+#endif
+}
+} // anonymous namespace for getHomeDirectory
 
 namespace MegaCustom {
 
@@ -52,10 +74,14 @@ std::string shellEscape(const std::string& arg) {
 
 Watermarker::Watermarker() {
     // Set default font path to bundled fonts
-    const char* home = std::getenv("HOME");
-    if (home) {
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
         // Check project bin/fonts first
-        std::string projectFontPath = std::string(home) + "/projects/Mega - SDK/mega-custom-app/bin/fonts/arial.ttf";
+#ifdef _WIN32
+        std::string projectFontPath = homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\bin\\fonts\\arial.ttf";
+#else
+        std::string projectFontPath = homeDir + "/projects/Mega - SDK/mega-custom-app/bin/fonts/arial.ttf";
+#endif
         struct stat st;
         if (stat(projectFontPath.c_str(), &st) == 0) {
             m_config.fontPath = projectFontPath;
@@ -66,18 +92,50 @@ Watermarker::Watermarker() {
 // ==================== Static Utility Methods ====================
 
 bool Watermarker::isFFmpegAvailable() {
-    // Check common locations
-    std::vector<std::string> paths = {
+    std::vector<std::string> paths;
+    std::string homeDir = getHomeDirectory();
+
+#ifdef _WIN32
+    // Windows: Check common installation locations
+    paths = {
+        "C:\\ffmpeg\\bin\\ffmpeg.exe",
+        "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+        "C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe"
+    };
+
+    // Add project bin path for Windows
+    if (!homeDir.empty()) {
+        paths.insert(paths.begin(),
+            homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\bin\\ffmpeg.exe");
+    }
+
+    for (const auto& path : paths) {
+        struct stat st;
+        if (stat(path.c_str(), &st) == 0) {
+            return true;
+        }
+    }
+
+    // Try PATH via where command
+    FILE* pipe = popen("where ffmpeg 2>nul", "r");
+    if (pipe) {
+        char buffer[256];
+        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
+        pclose(pipe);
+        return found;
+    }
+#else
+    // Unix: Check common locations
+    paths = {
         "/usr/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
         "/snap/bin/ffmpeg"
     };
 
     // Add project bin path
-    const char* home = std::getenv("HOME");
-    if (home) {
+    if (!homeDir.empty()) {
         paths.insert(paths.begin(),
-            std::string(home) + "/projects/Mega - SDK/mega-custom-app/bin/ffmpeg");
+            homeDir + "/projects/Mega - SDK/mega-custom-app/bin/ffmpeg");
     }
 
     for (const auto& path : paths) {
@@ -95,11 +153,28 @@ bool Watermarker::isFFmpegAvailable() {
         pclose(pipe);
         return found;
     }
+#endif
 
     return false;
 }
 
 bool Watermarker::isPythonAvailable() {
+#ifdef _WIN32
+    FILE* pipe = popen("python --version 2>nul", "r");
+    if (pipe) {
+        char buffer[256];
+        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
+        pclose(pipe);
+        if (found) return true;
+    }
+    pipe = popen("python3 --version 2>nul", "r");
+    if (pipe) {
+        char buffer[256];
+        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
+        pclose(pipe);
+        return found;
+    }
+#else
     FILE* pipe = popen("python3 --version 2>/dev/null || python --version 2>/dev/null", "r");
     if (pipe) {
         char buffer[256];
@@ -107,13 +182,18 @@ bool Watermarker::isPythonAvailable() {
         pclose(pipe);
         return found;
     }
+#endif
     return false;
 }
 
 std::string Watermarker::getPdfScriptPath() {
-    const char* home = std::getenv("HOME");
-    if (home) {
-        return std::string(home) + "/projects/Mega - SDK/mega-custom-app/scripts/pdf_watermark.py";
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
+#ifdef _WIN32
+        return homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\scripts\\pdf_watermark.py";
+#else
+        return homeDir + "/projects/Mega - SDK/mega-custom-app/scripts/pdf_watermark.py";
+#endif
     }
     return "./scripts/pdf_watermark.py";
 }

@@ -16,6 +16,8 @@
 #include <random>
 
 #ifdef _WIN32
+#include <windows.h>
+#include <shlobj.h>
 #include <io.h>
 #include <process.h>
 #include <direct.h>
@@ -36,6 +38,26 @@ typedef int ssize_t;
 #include <unistd.h>
 #endif
 
+namespace {
+// Cross-platform function to get user home directory
+std::string getHomeDirectory() {
+#ifdef _WIN32
+    char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        return std::string(userProfile);
+    }
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        return std::string(path);
+    }
+    return "C:\\Users\\Default";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "/tmp";
+#endif
+}
+} // anonymous namespace
+
 namespace fs = std::filesystem;
 
 namespace MegaCustom {
@@ -47,9 +69,13 @@ DistributionPipeline::DistributionPipeline() {
     m_config.tempDirectory = getDefaultTempDirectory();
 
     // Default member database path
-    const char* home = getenv("HOME");
-    if (home) {
-        m_memberDbPath = std::string(home) + "/.megacustom/members.json";
+    std::string homeDir = getHomeDirectory();
+    if (!homeDir.empty()) {
+#ifdef _WIN32
+        m_memberDbPath = homeDir + "\\.megacustom\\members.json";
+#else
+        m_memberDbPath = homeDir + "/.megacustom/members.json";
+#endif
     }
 }
 
@@ -81,6 +107,17 @@ std::string DistributionPipeline::generateJobId() {
 }
 
 std::string DistributionPipeline::getDefaultTempDirectory() {
+#ifdef _WIN32
+    // Windows: Use TEMP or TMP environment variables
+    const char* tmpdir = getenv("TEMP");
+    if (tmpdir) return std::string(tmpdir) + "\\megacustom_dist";
+
+    tmpdir = getenv("TMP");
+    if (tmpdir) return std::string(tmpdir) + "\\megacustom_dist";
+
+    return "C:\\Temp\\megacustom_dist";
+#else
+    // Unix: Use TMPDIR or TMP environment variables
     const char* tmpdir = getenv("TMPDIR");
     if (tmpdir) return std::string(tmpdir) + "/megacustom_dist";
 
@@ -88,6 +125,7 @@ std::string DistributionPipeline::getDefaultTempDirectory() {
     if (tmpdir) return std::string(tmpdir) + "/megacustom_dist";
 
     return "/tmp/megacustom_dist";
+#endif
 }
 
 int64_t DistributionPipeline::currentTimeMs() {

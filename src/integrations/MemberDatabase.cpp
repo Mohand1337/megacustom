@@ -9,12 +9,34 @@
 #include <iomanip>
 
 #ifdef _WIN32
+#include <windows.h>
+#include <shlobj.h>
 #include <direct.h>
 #define mkdir(path, mode) _mkdir(path)
 #endif
 
 // Simple JSON handling (using the existing json_simple.hpp pattern)
 #include "json_simple.hpp"
+
+namespace {
+// Cross-platform function to get user home directory
+std::string getHomeDirectory() {
+#ifdef _WIN32
+    char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        return std::string(userProfile);
+    }
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        return std::string(path);
+    }
+    return "C:\\Users\\Default";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "/tmp";
+#endif
+}
+} // anonymous namespace
 
 namespace MegaCustom {
 
@@ -81,9 +103,13 @@ MemberDatabase::MemberDatabase(const std::string& storagePath) {
     if (storagePath.empty()) {
         // Default to ~/.config/MegaCustom/members.json (same as Qt MemberRegistry)
         // This ensures both C++ and Qt layers share the same member database
-        const char* home = std::getenv("HOME");
-        if (home) {
-            m_storagePath = std::string(home) + "/.config/MegaCustom/members.json";
+        std::string homeDir = getHomeDirectory();
+        if (!homeDir.empty()) {
+#ifdef _WIN32
+            m_storagePath = homeDir + "\\.config\\MegaCustom\\members.json";
+#else
+            m_storagePath = homeDir + "/.config/MegaCustom/members.json";
+#endif
         } else {
             m_storagePath = "./members.json";
         }
@@ -92,7 +118,12 @@ MemberDatabase::MemberDatabase(const std::string& storagePath) {
     }
 
     // Ensure directory exists
-    std::string dir = m_storagePath.substr(0, m_storagePath.find_last_of('/'));
+#ifdef _WIN32
+    size_t lastSep = m_storagePath.find_last_of("\\/");
+#else
+    size_t lastSep = m_storagePath.find_last_of('/');
+#endif
+    std::string dir = (lastSep != std::string::npos) ? m_storagePath.substr(0, lastSep) : "";
     if (!dir.empty()) {
         mkdir(dir.c_str(), 0755);
     }

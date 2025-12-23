@@ -13,9 +13,17 @@
 #include <regex>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <cstring>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+#include <shlobj.h>
+#define mkdir(path, mode) _mkdir(path)
+#else
 #include <pwd.h>
 #include <unistd.h>
-#include <cstring>
+#endif
 
 // Core includes
 #include "core/MegaManager.h"
@@ -83,13 +91,32 @@ public:
  * Get the session file path in the user's home directory
  */
 std::string getSessionFilePath() {
+    std::string homeDir;
+
+#ifdef _WIN32
+    // Windows: Use USERPROFILE or LOCALAPPDATA
+    char* userProfile = getenv("USERPROFILE");
+    if (userProfile) {
+        homeDir = userProfile;
+    } else {
+        char path[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path))) {
+            homeDir = path;
+        } else {
+            homeDir = "C:\\Temp";
+        }
+    }
+    std::string configDir = homeDir + "\\.megacustom";
+#else
+    // Unix: Use HOME or passwd entry
     const char* home = getenv("HOME");
     if (!home) {
         struct passwd* pw = getpwuid(getuid());
         home = pw ? pw->pw_dir : "/tmp";
     }
-
-    std::string configDir = std::string(home) + "/.megacustom";
+    homeDir = home;
+    std::string configDir = homeDir + "/.megacustom";
+#endif
 
     // Create directory if it doesn't exist
     mkdir(configDir.c_str(), 0700);
@@ -104,12 +131,30 @@ std::string getSessionEncryptionKey() {
     // In production, use a more secure method
     // For now, use a combination of hostname and username
     char hostname[256] = {0};
+    std::string username;
+
+#ifdef _WIN32
+    // Windows: Use GetComputerName and GetUserName/USERNAME
+    DWORD size = sizeof(hostname);
+    if (!GetComputerNameA(hostname, &size)) {
+        strcpy(hostname, "unknown");
+    }
+
+    char usernameBuffer[256] = {0};
+    DWORD usernameSize = sizeof(usernameBuffer);
+    if (GetUserNameA(usernameBuffer, &usernameSize)) {
+        username = usernameBuffer;
+    } else {
+        const char* envUser = getenv("USERNAME");
+        username = envUser ? envUser : "default";
+    }
+#else
+    // Unix: Use gethostname and USER environment
     gethostname(hostname, sizeof(hostname));
 
-    const char* username = getenv("USER");
-    if (!username) {
-        username = "default";
-    }
+    const char* envUser = getenv("USER");
+    username = envUser ? envUser : "default";
+#endif
 
     // Create a key from hostname + username
     std::string key = std::string(hostname) + "_" + username + "_megacustom_key";
@@ -3454,12 +3499,27 @@ int handleConfig(const std::vector<std::string>& args) {
     std::string cmd = args[0];
 
     // Get config directory path
+    std::string configFile;
+#ifdef _WIN32
+    char* userProfile = getenv("USERPROFILE");
+    if (userProfile) {
+        configFile = std::string(userProfile) + "\\.megacustom\\config.json";
+    } else {
+        char path[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path))) {
+            configFile = std::string(path) + "\\.megacustom\\config.json";
+        } else {
+            configFile = "C:\\Temp\\.megacustom\\config.json";
+        }
+    }
+#else
     const char* home = getenv("HOME");
     if (!home) {
         struct passwd* pw = getpwuid(getuid());
         home = pw ? pw->pw_dir : "/tmp";
     }
-    std::string configFile = std::string(home) + "/.megacustom/config.json";
+    configFile = std::string(home) + "/.megacustom/config.json";
+#endif
 
     // Load existing config
     config.loadConfig(configFile);
