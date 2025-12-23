@@ -48,6 +48,40 @@ std::string getHomeDirectory() {
     return home ? std::string(home) : "/tmp";
 #endif
 }
+
+// Get the directory containing the executable (for portable deployment)
+std::string getExecutableDir() {
+#ifdef _WIN32
+    char path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        std::string exePath(path);
+        size_t pos = exePath.find_last_of("\\/");
+        if (pos != std::string::npos) {
+            return exePath.substr(0, pos);
+        }
+    }
+    return ".";
+#else
+    char path[1024];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len > 0) {
+        path[len] = '\0';
+        std::string exePath(path);
+        size_t pos = exePath.find_last_of("/");
+        if (pos != std::string::npos) {
+            return exePath.substr(0, pos);
+        }
+    }
+    return ".";
+#endif
+}
+
+// Check if a file exists
+bool fileExists(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0;
+}
 } // anonymous namespace for getHomeDirectory
 
 namespace MegaCustom {
@@ -74,17 +108,38 @@ std::string shellEscape(const std::string& arg) {
 
 Watermarker::Watermarker() {
     // Set default font path to bundled fonts
+    // Check multiple locations in order of priority:
+    // 1. Portable deployment (adjacent to executable)
+    // 2. Project development path
+
+    std::string exeDir = getExecutableDir();
     std::string homeDir = getHomeDirectory();
-    if (!homeDir.empty()) {
-        // Check project bin/fonts first
+
+    std::vector<std::string> fontPaths;
+
 #ifdef _WIN32
-        std::string projectFontPath = homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\bin\\fonts\\arial.ttf";
+    // Portable: fonts in bin/fonts adjacent to executable
+    fontPaths.push_back(exeDir + "\\bin\\fonts\\arial.ttf");
+    fontPaths.push_back(exeDir + "\\fonts\\arial.ttf");
+    // Development path
+    if (!homeDir.empty()) {
+        fontPaths.push_back(homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\bin\\fonts\\arial.ttf");
+    }
 #else
-        std::string projectFontPath = homeDir + "/projects/Mega - SDK/mega-custom-app/bin/fonts/arial.ttf";
+    // Portable: fonts in bin/fonts adjacent to executable
+    fontPaths.push_back(exeDir + "/bin/fonts/arial.ttf");
+    fontPaths.push_back(exeDir + "/fonts/arial.ttf");
+    // Development path
+    if (!homeDir.empty()) {
+        fontPaths.push_back(homeDir + "/projects/Mega - SDK/mega-custom-app/bin/fonts/arial.ttf");
+    }
 #endif
-        struct stat st;
-        if (stat(projectFontPath.c_str(), &st) == 0) {
-            m_config.fontPath = projectFontPath;
+
+    // Find the first existing font file
+    for (const auto& path : fontPaths) {
+        if (fileExists(path)) {
+            m_config.fontPath = path;
+            break;
         }
     }
 }
@@ -93,25 +148,26 @@ Watermarker::Watermarker() {
 
 bool Watermarker::isFFmpegAvailable() {
     std::vector<std::string> paths;
+    std::string exeDir = getExecutableDir();
     std::string homeDir = getHomeDirectory();
 
 #ifdef _WIN32
-    // Windows: Check common installation locations
+    // Windows: Check portable deployment first, then common locations
     paths = {
+        exeDir + "\\ffmpeg.exe",  // Portable: adjacent to executable
+        exeDir + "\\bin\\ffmpeg.exe",  // Portable: in bin subfolder
         "C:\\ffmpeg\\bin\\ffmpeg.exe",
         "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
         "C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe"
     };
 
-    // Add project bin path for Windows
+    // Add project bin path for Windows (development)
     if (!homeDir.empty()) {
-        paths.insert(paths.begin(),
-            homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\bin\\ffmpeg.exe");
+        paths.push_back(homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\bin\\ffmpeg.exe");
     }
 
     for (const auto& path : paths) {
-        struct stat st;
-        if (stat(path.c_str(), &st) == 0) {
+        if (fileExists(path)) {
             return true;
         }
     }
@@ -125,17 +181,18 @@ bool Watermarker::isFFmpegAvailable() {
         return found;
     }
 #else
-    // Unix: Check common locations
+    // Unix: Check portable deployment first, then common locations
     paths = {
+        exeDir + "/ffmpeg",  // Portable: adjacent to executable
+        exeDir + "/bin/ffmpeg",  // Portable: in bin subfolder
         "/usr/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
         "/snap/bin/ffmpeg"
     };
 
-    // Add project bin path
+    // Add project bin path (development)
     if (!homeDir.empty()) {
-        paths.insert(paths.begin(),
-            homeDir + "/projects/Mega - SDK/mega-custom-app/bin/ffmpeg");
+        paths.push_back(homeDir + "/projects/Mega - SDK/mega-custom-app/bin/ffmpeg");
     }
 
     for (const auto& path : paths) {
@@ -187,15 +244,49 @@ bool Watermarker::isPythonAvailable() {
 }
 
 std::string Watermarker::getPdfScriptPath() {
+    // Check multiple locations in order of priority:
+    // 1. Portable deployment (adjacent to executable)
+    // 2. Current directory
+    // 3. Project development path
+
+    std::string exeDir = getExecutableDir();
     std::string homeDir = getHomeDirectory();
-    if (!homeDir.empty()) {
+
+    std::vector<std::string> scriptPaths;
+
 #ifdef _WIN32
-        return homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\scripts\\pdf_watermark.py";
-#else
-        return homeDir + "/projects/Mega - SDK/mega-custom-app/scripts/pdf_watermark.py";
-#endif
+    // Portable: scripts folder adjacent to executable
+    scriptPaths.push_back(exeDir + "\\scripts\\pdf_watermark.py");
+    // Current directory
+    scriptPaths.push_back(".\\scripts\\pdf_watermark.py");
+    // Development path
+    if (!homeDir.empty()) {
+        scriptPaths.push_back(homeDir + "\\projects\\Mega - SDK\\mega-custom-app\\scripts\\pdf_watermark.py");
     }
-    return "./scripts/pdf_watermark.py";
+#else
+    // Portable: scripts folder adjacent to executable
+    scriptPaths.push_back(exeDir + "/scripts/pdf_watermark.py");
+    // Current directory
+    scriptPaths.push_back("./scripts/pdf_watermark.py");
+    // Development path
+    if (!homeDir.empty()) {
+        scriptPaths.push_back(homeDir + "/projects/Mega - SDK/mega-custom-app/scripts/pdf_watermark.py");
+    }
+#endif
+
+    // Return the first existing script
+    for (const auto& path : scriptPaths) {
+        if (fileExists(path)) {
+            return path;
+        }
+    }
+
+    // Return portable path as fallback (will show clear error if missing)
+#ifdef _WIN32
+    return exeDir + "\\scripts\\pdf_watermark.py";
+#else
+    return exeDir + "/scripts/pdf_watermark.py";
+#endif
 }
 
 bool Watermarker::isVideoFile(const std::string& path) {

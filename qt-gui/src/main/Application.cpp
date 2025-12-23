@@ -603,6 +603,8 @@ bool Application::loadStylesheetByTheme(bool darkMode)
 
     // Try multiple locations for the stylesheet
     QStringList stylesheetPaths = {
+        // Portable deployment: resources/styles/ adjacent to executable
+        QCoreApplication::applicationDirPath() + "/resources/styles/" + themeName,
         // Relative to build directory
         QCoreApplication::applicationDirPath() + "/../resources/styles/" + themeName,
         // Relative to project directory
