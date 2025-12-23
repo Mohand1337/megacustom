@@ -140,7 +140,7 @@ void AuthController::logout() {
     qDebug() << "Logging out:" << m_currentUser;
 
     auto* listener = new AuthRequestListener(this, AuthRequestListener::Operation::Logout);
-    m_api->logout(listener);
+    m_api->logout(false, listener);  // false = don't keep sync configs
 
     m_isLoggedIn = false;
     m_currentUser.clear();

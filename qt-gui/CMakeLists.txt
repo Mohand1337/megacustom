@@ -9,6 +9,9 @@ set(CMAKE_AUTORCC ON)
 # Define that Mega SDK is available since we're linking to it
 add_definitions(-DMEGA_SDK_AVAILABLE)
 
+# ENABLE_SYNC must match how the SDK was built - it changes function signatures
+add_definitions(-DENABLE_SYNC)
+
 # =============================================================================
 # Platform-Specific Configuration
 # =============================================================================

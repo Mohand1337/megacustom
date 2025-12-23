@@ -526,7 +526,7 @@ void AuthenticationModule::logout(bool clearLocalCache) {
 
     if (clearLocalCache) {
         // Full logout clearing all local cache
-        m_megaApi->logout(m_listener.get());
+        m_megaApi->logout(false, m_listener.get());  // false = don't keep sync configs
     } else {
         // Just logout from server, keep cache
         m_megaApi->localLogout(m_listener.get());
