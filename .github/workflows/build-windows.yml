@@ -198,9 +198,9 @@ jobs:
         Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile "get-pip.py"
         & "$deployDir/python/python.exe" get-pip.py --no-warn-script-location
 
-        # Install required packages for download_manager.py
-        & "$deployDir/python/python.exe" -m pip install --no-warn-script-location yt-dlp requests
-        Write-Host "Installed Python packages: yt-dlp, requests"
+        # Install required packages for download_manager.py and pdf_watermark.py
+        & "$deployDir/python/python.exe" -m pip install --no-warn-script-location yt-dlp requests reportlab PyPDF2
+        Write-Host "Installed Python packages: yt-dlp, requests, reportlab, PyPDF2"
 
         # Clean up pip cache to reduce size
         Remove-Item -Recurse -Force "$deployDir/python/Lib/site-packages/pip" -ErrorAction SilentlyContinue
