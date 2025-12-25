@@ -10,7 +10,10 @@ set(CMAKE_AUTORCC ON)
 add_definitions(-DMEGA_SDK_AVAILABLE)
 
 # ENABLE_SYNC must match how the SDK was built - it changes function signatures
-add_definitions(-DENABLE_SYNC)
+# Only enable on Windows where the SDK is built with ENABLE_SYNC via vcpkg
+if(WIN32)
+    add_definitions(-DENABLE_SYNC)
+endif()
 
 # =============================================================================
 # Platform-Specific Configuration

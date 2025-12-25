@@ -84,6 +84,17 @@ public:
             m_manager->handleMegaTransfer(transfer, error);
         }
     }
+
+#ifdef ENABLE_SYNC
+    // Sync-related virtual function stubs (required when SDK is built with ENABLE_SYNC)
+    void onSyncFileStateChanged(mega::MegaApi*, mega::MegaSync*, std::string*, int) override {}
+    void onSyncAdded(mega::MegaApi*, mega::MegaSync*) override {}
+    void onSyncDeleted(mega::MegaApi*, mega::MegaSync*) override {}
+    void onSyncStateChanged(mega::MegaApi*, mega::MegaSync*) override {}
+    void onSyncStatsUpdated(mega::MegaApi*, mega::MegaSyncStats*) override {}
+    void onGlobalSyncStateChanged(mega::MegaApi*) override {}
+    void onSyncRemoteRootChanged(mega::MegaApi*, mega::MegaSync*) override {}
+#endif
 };
 
 // Constructor

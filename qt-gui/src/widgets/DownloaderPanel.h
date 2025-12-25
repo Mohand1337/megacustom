@@ -92,6 +92,8 @@ private:
     bool m_cancelled = false;
     int m_currentIndex = 0;
     QProcess* m_process = nullptr;
+    QString m_lastCompletedPath;  // Path from JSON complete message
+    bool m_itemCompletedEmitted = false;  // Track if we already emitted completion
 };
 
 /**

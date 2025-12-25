@@ -103,6 +103,8 @@ void DownloadWorker::process() {
 
     for (int i = 0; i < total && !m_cancelled; ++i) {
         m_currentIndex = i;
+        m_lastCompletedPath.clear();
+        m_itemCompletedEmitted = false;
         QString url = m_urls[i];
 
         emit progress(i, total, url, 0, "", "");
@@ -138,10 +140,23 @@ void DownloadWorker::process() {
             }
         });
 
-        m_process->start("python3", args);
+        // Determine Python executable path
+        QString pythonExe = "python3";
+#ifdef Q_OS_WIN
+        // On Windows, check for bundled Python first (portable mode)
+        QString appDir = QCoreApplication::applicationDirPath();
+        QString bundledPython = appDir + "/python/python.exe";
+        if (QFile::exists(bundledPython)) {
+            pythonExe = bundledPython;
+            emit logMessage("Using bundled Python: " + bundledPython);
+        } else {
+            pythonExe = "python";  // Windows uses 'python' not 'python3'
+        }
+#endif
+        m_process->start(pythonExe, args);
 
         if (!m_process->waitForStarted(5000)) {
-            emit logMessage("Failed to start Python for: " + url);
+            emit logMessage("Failed to start Python (" + pythonExe + ") for: " + url);
             emit itemCompleted(i, false, "", "Failed to start Python process");
             failCount++;
             delete m_process;
@@ -172,14 +187,24 @@ void DownloadWorker::process() {
         delete m_process;
         m_process = nullptr;
 
-        if (exitCode == 0) {
-            // Success - try to find output file
-            QString outputPath = m_outputDir; // Simplified - actual path from JSON output
-            emit itemCompleted(i, true, outputPath, "");
-            successCount++;
+        // Only emit completion if not already done via JSON parsing
+        if (!m_itemCompletedEmitted) {
+            if (exitCode == 0) {
+                // Use path from JSON if available, otherwise use output directory
+                QString outputPath = m_lastCompletedPath.isEmpty() ? m_outputDir : m_lastCompletedPath;
+                emit itemCompleted(i, true, outputPath, "");
+                successCount++;
+            } else {
+                emit itemCompleted(i, false, "", QString("Exit code: %1").arg(exitCode));
+                failCount++;
+            }
         } else {
-            emit itemCompleted(i, false, "", QString("Exit code: %1").arg(exitCode));
-            failCount++;
+            // Already emitted via JSON, just count
+            if (exitCode == 0) {
+                successCount++;
+            } else {
+                failCount++;
+            }
         }
     }
 
@@ -204,6 +229,8 @@ void DownloadWorker::parseProgressLine(const QString& line) {
         }
         else if (type == "complete") {
             QString path = obj["path"].toString();
+            m_lastCompletedPath = path;
+            m_itemCompletedEmitted = true;
             emit itemCompleted(m_currentIndex, true, path, "");
         }
         else if (type == "error") {
