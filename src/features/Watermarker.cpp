@@ -429,6 +429,79 @@ int Watermarker::runProcess(const std::vector<std::string>& args,
     return WEXITSTATUS(status);
 }
 
+double Watermarker::getVideoDuration(const std::string& inputPath) {
+    // Use ffprobe to get video duration
+    std::string cmd = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ";
+    cmd += shellEscape(inputPath);
+    cmd += " 2>/dev/null";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        return 0.0;
+    }
+
+    char buffer[64];
+    double duration = 0.0;
+    if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        duration = std::strtod(buffer, nullptr);
+    }
+    pclose(pipe);
+
+    return duration;
+}
+
+int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
+                                        const std::string& inputFile,
+                                        double durationSeconds,
+                                        std::string& output) {
+    // Build command string
+    std::ostringstream cmdStream;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i > 0) cmdStream << " ";
+        cmdStream << shellEscape(args[i]);
+    }
+    cmdStream << " 2>&1";
+
+    std::string cmd = cmdStream.str();
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        output = "Failed to execute command";
+        return -1;
+    }
+
+    std::array<char, 256> buffer;
+    double lastPercent = 0.0;
+
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        std::string line(buffer.data());
+        output += line;
+
+        // Parse ffmpeg time progress from output like: "time=00:01:23.45"
+        size_t timePos = line.find("time=");
+        if (timePos != std::string::npos && durationSeconds > 0) {
+            std::string timeStr = line.substr(timePos + 5);
+            // Parse HH:MM:SS.ms format
+            int hours = 0, minutes = 0;
+            double seconds = 0.0;
+            if (sscanf(timeStr.c_str(), "%d:%d:%lf", &hours, &minutes, &seconds) >= 1) {
+                double currentTime = hours * 3600.0 + minutes * 60.0 + seconds;
+                double percent = (currentTime / durationSeconds) * 100.0;
+                percent = std::min(percent, 99.0);  // Cap at 99% until complete
+
+                // Only report if changed by at least 1%
+                if (percent - lastPercent >= 1.0) {
+                    lastPercent = percent;
+                    reportProgress(inputFile, 1, 1, percent, "encoding");
+                }
+            }
+        }
+    }
+
+    int status = pclose(pipe);
+    return WEXITSTATUS(status);
+}
+
 WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
                                             const std::string& output) {
     WatermarkResult result;
@@ -458,11 +531,15 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
     }
     result.inputSizeBytes = st.st_size;
 
-    // Build and execute command
+    // Get video duration for progress tracking
+    double duration = getVideoDuration(input);
+    reportProgress(input, 1, 1, 0.0, "encoding");
+
+    // Build and execute command with progress tracking
     auto cmd = buildFFmpegCommand(input, output);
 
-    std::string stdout_out, stderr_out;
-    int exitCode = runProcess(cmd, stdout_out, stderr_out);
+    std::string ffmpegOutput;
+    int exitCode = runFFmpegWithProgress(cmd, input, duration, ffmpegOutput);
 
     auto endTime = std::chrono::steady_clock::now();
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -471,10 +548,12 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
     if (exitCode == 0 && stat(output.c_str(), &st) == 0) {
         result.success = true;
         result.outputSizeBytes = st.st_size;
+        reportProgress(input, 1, 1, 100.0, "complete");
         LogManager::instance().logWatermark("video_complete",
             "Video watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
     } else {
-        result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + stdout_out;
+        result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+        reportProgress(input, 1, 1, 0.0, "error");
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "video_watermark_failed", "Video watermark failed: " + input + " - " + result.error, input);
     }

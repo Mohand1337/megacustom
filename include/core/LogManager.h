@@ -343,7 +343,7 @@ private:
     std::string m_logDir;
     LogLevel m_minLevel = LogLevel::Info;
     int m_retentionDays = 30;
-    bool m_consoleOutput = false;
+    bool m_consoleOutput = true;  // Enable console output by default
     LogCallback m_logCallback;
 
     // File handles

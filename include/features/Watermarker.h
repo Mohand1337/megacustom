@@ -270,6 +270,15 @@ private:
                    std::string& stdout_output,
                    std::string& stderr_output);
 
+    // Run ffmpeg with real-time progress parsing
+    int runFFmpegWithProgress(const std::vector<std::string>& args,
+                              const std::string& inputFile,
+                              double durationSeconds,
+                              std::string& output);
+
+    // Get video duration using ffprobe
+    double getVideoDuration(const std::string& inputPath);
+
     // Report progress
     void reportProgress(const std::string& file, int current, int total,
                         double percent, const std::string& status);
