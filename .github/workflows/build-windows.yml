@@ -187,11 +187,15 @@ jobs:
         Invoke-WebRequest -Uri $pythonUrl -OutFile "python-embed.zip"
         Expand-Archive -Path "python-embed.zip" -DestinationPath "$deployDir/python" -Force
 
-        # Enable pip in embeddable Python (uncomment import site)
+        # Enable pip in embeddable Python and configure paths
         $pthFile = "$deployDir/python/python312._pth"
         if (Test-Path $pthFile) {
-          (Get-Content $pthFile) -replace '#import site', 'import site' | Set-Content $pthFile
-          Write-Host "Enabled site-packages in Python"
+          # Create proper _pth file with all needed paths (one item per line)
+          "python312.zip`n.`nLib`nLib\site-packages`nimport site" | Set-Content -Path $pthFile -Encoding UTF8
+          Write-Host "Configured Python path file"
+          # Create Lib directory if it doesn't exist
+          New-Item -ItemType Directory -Path "$deployDir/python/Lib/site-packages" -Force | Out-Null
+          Write-Host "Created Lib/site-packages directory"
         }
 
         # Install pip

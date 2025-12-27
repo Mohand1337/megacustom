@@ -1,5 +1,6 @@
 #include "DownloaderPanel.h"
 #include "styles/ThemeManager.h"
+#include "core/LogManager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -142,17 +143,27 @@ void DownloadWorker::process() {
 
         // Determine Python executable path
         QString pythonExe = "python3";
+        QString appDir = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_WIN
         // On Windows, check for bundled Python first (portable mode)
-        QString appDir = QCoreApplication::applicationDirPath();
         QString bundledPython = appDir + "/python/python.exe";
+        emit logMessage("Checking for bundled Python at: " + bundledPython);
         if (QFile::exists(bundledPython)) {
             pythonExe = bundledPython;
             emit logMessage("Using bundled Python: " + bundledPython);
+            // Also log the Python path configuration
+            QString pthFile = appDir + "/python/python312._pth";
+            if (QFile::exists(pthFile)) {
+                emit logMessage("Python path file exists: " + pthFile);
+            } else {
+                emit logMessage("WARNING: Python path file not found: " + pthFile);
+            }
         } else {
             pythonExe = "python";  // Windows uses 'python' not 'python3'
+            emit logMessage("Bundled Python not found, using system Python: " + pythonExe);
         }
 #endif
+        emit logMessage("Starting download with: " + pythonExe + " " + args.join(" "));
         m_process->start(pythonExe, args);
 
         if (!m_process->waitForStarted(5000)) {
@@ -175,11 +186,18 @@ void DownloadWorker::process() {
             continue;
         }
 
-        // Process any remaining output
+        // Process any remaining output and collect error messages
         QString remaining = QString::fromUtf8(m_process->readAll());
+        QString errorOutput;
         for (const QString& line : remaining.split('\n')) {
-            if (!line.trimmed().isEmpty()) {
-                parseProgressLine(line.trimmed());
+            QString trimmedLine = line.trimmed();
+            if (!trimmedLine.isEmpty()) {
+                parseProgressLine(trimmedLine);
+                // Collect non-JSON lines as potential error messages
+                if (!trimmedLine.startsWith('{')) {
+                    if (!errorOutput.isEmpty()) errorOutput += "\n";
+                    errorOutput += trimmedLine;
+                }
             }
         }
 
@@ -195,7 +213,13 @@ void DownloadWorker::process() {
                 emit itemCompleted(i, true, outputPath, "");
                 successCount++;
             } else {
-                emit itemCompleted(i, false, "", QString("Exit code: %1").arg(exitCode));
+                // Include any error output in the error message
+                QString errorMsg = QString("Exit code: %1").arg(exitCode);
+                if (!errorOutput.isEmpty()) {
+                    errorMsg += "\n" + errorOutput;
+                }
+                emit logMessage("ERROR: " + errorMsg);
+                emit itemCompleted(i, false, "", errorMsg);
                 failCount++;
             }
         } else {
@@ -229,8 +253,13 @@ void DownloadWorker::parseProgressLine(const QString& line) {
         }
         else if (type == "complete") {
             QString path = obj["path"].toString();
+            QString file = obj["file"].toString();
             m_lastCompletedPath = path;
             m_itemCompletedEmitted = true;
+            // Also emit progress to update the filename display
+            if (!file.isEmpty()) {
+                emit progress(m_currentIndex, m_urls.size(), file, 100, "", "");
+            }
             emit itemCompleted(m_currentIndex, true, path, "");
         }
         else if (type == "error") {
@@ -868,9 +897,25 @@ void DownloaderPanel::onWorkerItemCompleted(int itemIndex, bool success,
                 m_items[i].error = error;
                 m_items[i].progressPercent = success ? 100 : 0;
 
+                // Update filename from output path if successful
                 if (success && !outputPath.isEmpty()) {
+                    QFileInfo fileInfo(outputPath);
+                    if (fileInfo.exists()) {
+                        m_items[i].fileName = fileInfo.fileName();
+                    }
+                }
+
+                // Log to LogManager
+                if (success) {
+                    LogManager::instance().logDownload("complete",
+                        "Downloaded: " + outputPath.toStdString(),
+                        outputPath.toStdString());
                     m_completedFiles.append(outputPath);
                     emit downloadCompleted(outputPath, m_items[i].url);
+                } else {
+                    LogManager::instance().logError("download_failed",
+                        "Failed to download: " + m_items[i].url.toStdString(),
+                        error.toStdString());
                 }
                 break;
             }
@@ -905,6 +950,9 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
 }
 
 void DownloaderPanel::onWorkerLog(const QString& message) {
+    // Log to LogManager for persistent logging
+    LogManager::instance().logDownload("progress", message.toStdString());
+    // Also output to console for debugging
     qDebug() << "Downloader:" << message;
 }
 
