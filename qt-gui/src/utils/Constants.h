@@ -12,6 +12,9 @@ constexpr const char* APP_VERSION = "1.0.0";
 constexpr const char* APP_ORGANIZATION = "MegaCustom";
 constexpr const char* APP_DOMAIN = "megacustom.app";
 
+// Brand name (matches C++ AppConstants.h)
+constexpr const char* BRAND_NAME = "Easygroupbuys.com";
+
 // MEGA SDK API Key (required for SDK initialization)
 constexpr const char* MEGA_API_KEY = "9gETCbhB";
 

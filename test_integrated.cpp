@@ -28,7 +28,14 @@ int main() {
     std::cout << "1. Testing Authentication...\n";
     MegaCustom::AuthenticationModule auth(manager.getMegaApi());
 
-    auto loginResult = auth.login("mohandelbadawey@gmail.com", "BDKJ#oHR45CRZK6");
+    const char* testEmail = std::getenv("MEGA_TEST_EMAIL");
+    const char* testPassword = std::getenv("MEGA_TEST_PASSWORD");
+    if (!testEmail || !testPassword) {
+        std::cerr << "Set MEGA_TEST_EMAIL and MEGA_TEST_PASSWORD env vars\n";
+        return 1;
+    }
+
+    auto loginResult = auth.login(testEmail, testPassword);
     if (loginResult.success) {
         std::cout << "   ✓ Login successful\n";
         std::cout << "   Session: " << (auth.getSessionKey().empty() ? "Not saved" : "Available") << "\n";

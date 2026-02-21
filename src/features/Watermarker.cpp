@@ -1,6 +1,7 @@
 #include "features/Watermarker.h"
 #include "integrations/MemberDatabase.h"
 #include "core/LogManager.h"
+#include "core/AppConstants.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -716,9 +717,10 @@ WatermarkResult Watermarker::watermarkVideoForMember(const std::string& inputPat
 
     const Member& member = *memberResult.member;
 
-    // Build watermark text from member info
-    m_config.primaryText = member.buildWatermarkText("Easygroupbuys.com");
-    m_config.secondaryText = member.buildSecondaryWatermarkText();
+    // Build watermark text from member info using local copy (thread-safe)
+    WatermarkConfig localConfig = m_config;
+    localConfig.primaryText = member.buildWatermarkText(MegaCustom::BRAND_NAME);
+    localConfig.secondaryText = member.buildSecondaryWatermarkText();
 
     // Generate output path with member ID
     std::string outPath = generateOutputPath(inputPath, outputDir);
@@ -728,7 +730,11 @@ WatermarkResult Watermarker::watermarkVideoForMember(const std::string& inputPat
         outPath.insert(suffixPos, "_" + memberId);
     }
 
-    return watermarkVideo(inputPath, outPath);
+    WatermarkConfig saved = m_config;
+    m_config = localConfig;
+    auto result = watermarkVideo(inputPath, outPath);
+    m_config = saved;
+    return result;
 }
 
 // Async video watermarking - runs FFmpeg in background thread
@@ -740,10 +746,11 @@ std::future<WatermarkResult> Watermarker::watermarkVideoAsync(
     WatermarkConfig configCopy = m_config;
 
     return std::async(std::launch::async, [this, inputPath, outputPath, configCopy]() {
-        // Use the captured config (thread-safe copy)
-        // Note: The actual watermarkVideo call will use m_config,
-        // but for simple cases this is sufficient
-        return this->watermarkVideo(inputPath, outputPath);
+        WatermarkConfig saved = m_config;
+        m_config = configCopy;
+        auto result = this->watermarkVideo(inputPath, outputPath);
+        m_config = saved;
+        return result;
     });
 }
 
@@ -787,9 +794,10 @@ WatermarkResult Watermarker::watermarkPdfForMember(const std::string& inputPath,
 
     const Member& member = *memberResult.member;
 
-    // Build watermark text from member info
-    m_config.primaryText = member.buildWatermarkText("Easygroupbuys.com");
-    m_config.secondaryText = member.buildSecondaryWatermarkText();
+    // Build watermark text from member info using local copy (thread-safe)
+    WatermarkConfig localConfig = m_config;
+    localConfig.primaryText = member.buildWatermarkText(MegaCustom::BRAND_NAME);
+    localConfig.secondaryText = member.buildSecondaryWatermarkText();
 
     // Generate output path with member ID
     std::string outPath = generateOutputPath(inputPath, outputDir);
@@ -798,7 +806,11 @@ WatermarkResult Watermarker::watermarkPdfForMember(const std::string& inputPath,
         outPath.insert(suffixPos, "_" + memberId);
     }
 
-    return watermarkPdf(inputPath, outPath);
+    WatermarkConfig saved = m_config;
+    m_config = localConfig;
+    auto result = watermarkPdf(inputPath, outPath);
+    m_config = saved;
+    return result;
 }
 
 WatermarkResult Watermarker::watermarkFile(const std::string& inputPath,
