@@ -164,21 +164,6 @@ set(SOURCES
     src/dialogs/DialogManager.cpp
     # Stylesheet generation (Phase 4)
     src/styles/StyleSheetGenerator.cpp
-    # CLI module source files
-    ../src/core/MegaManager.cpp
-    ../src/core/AuthenticationModule.cpp
-    ../src/core/ConfigManager.cpp
-    ../src/core/Crypto.cpp
-    ../src/core/PathValidator.cpp
-    ../src/operations/FileOperations.cpp
-    ../src/operations/FolderManager.cpp
-    ../src/features/FolderMapper.cpp
-    ../src/features/CloudCopier.cpp
-    ../src/features/Watermarker.cpp
-    ../src/core/LogManager.cpp
-    ../src/integrations/MemberDatabase.cpp
-    ../src/integrations/WordPressSync.cpp
-    ../src/features/DistributionPipeline.cpp
 )
 
 set(HEADERS
@@ -275,6 +260,49 @@ if(WIN32)
     set(WIN_RC_FILE resources/app.rc)
 endif()
 
+# Build CLI core modules as a static library (consistent compile flags)
+set(CORE_CLI_SOURCES
+    ../src/core/MegaManager.cpp
+    ../src/core/AuthenticationModule.cpp
+    ../src/core/ConfigManager.cpp
+    ../src/core/Crypto.cpp
+    ../src/core/PathValidator.cpp
+    ../src/core/LogManager.cpp
+    ../src/operations/FileOperations.cpp
+    ../src/operations/FolderManager.cpp
+    ../src/features/FolderMapper.cpp
+    ../src/features/CloudCopier.cpp
+    ../src/features/Watermarker.cpp
+    ../src/features/DistributionPipeline.cpp
+    ../src/integrations/MemberDatabase.cpp
+    ../src/integrations/WordPressSync.cpp
+)
+
+add_library(mega_custom_core STATIC ${CORE_CLI_SOURCES})
+target_include_directories(mega_custom_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk/include
+)
+target_compile_definitions(mega_custom_core PRIVATE MEGA_SDK_AVAILABLE)
+if(WIN32)
+    target_compile_definitions(mega_custom_core PRIVATE ENABLE_SYNC)
+endif()
+
+# Find dependencies for core library
+find_package(OpenSSL REQUIRED)
+find_package(CURL REQUIRED)
+find_package(ZLIB REQUIRED)
+target_link_libraries(mega_custom_core PRIVATE
+    OpenSSL::SSL OpenSSL::Crypto CURL::libcurl ZLIB::ZLIB
+)
+
+# Handle nlohmann_json for core
+find_package(nlohmann_json 3.2.0 QUIET)
+if(nlohmann_json_FOUND)
+    target_compile_definitions(mega_custom_core PRIVATE USE_NLOHMANN_JSON)
+    target_link_libraries(mega_custom_core PRIVATE nlohmann_json::nlohmann_json)
+endif()
+
 # Create executable
 qt_add_executable(MegaCustomGUI
     ${SOURCES}
@@ -311,8 +339,9 @@ else()
     set(CCRONEXPR_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk/build_sdk/third_party/ccronexpr/libccronexpr.a)
 endif()
 
-# Link Qt libraries and Mega SDK
+# Link Qt libraries, CLI core library, and Mega SDK
 target_link_libraries(MegaCustomGUI PRIVATE
+    mega_custom_core
     Qt6::Core
     Qt6::Widgets
     Qt6::Network
