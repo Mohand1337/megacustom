@@ -327,8 +327,8 @@ nlohmann::json ConfigManager::mergeConfigs(const nlohmann::json& base, const nlo
     nlohmann::json result = base;
 
     for (auto it = overlay.begin(); it != overlay.end(); ++it) {
-        const std::string& key = it->first;
-        const nlohmann::json& value = it->second;
+        const std::string& key = it.key();
+        const nlohmann::json& value = it.value();
 
         if (result.contains(key) && result[key].is_object() && value.is_object()) {
             result[key] = mergeConfigs(result[key], value);

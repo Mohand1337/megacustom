@@ -252,6 +252,23 @@ public:
                                 std::optional<std::chrono::system_clock::time_point> expireTime = {});
 
     /**
+     * Create public link for any node (file or folder)
+     * @param path Path to file or folder
+     * @param expireTime Optional expiration time
+     * @return Public link URL or empty if failed
+     */
+    std::string createNodeLink(const std::string& path,
+                               std::optional<std::chrono::system_clock::time_point> expireTime = {});
+
+    /**
+     * Bulk export links for multiple paths
+     * @param paths Vector of remote paths
+     * @param outputFile Output file path (markdown)
+     * @return Number of successful exports
+     */
+    int bulkExportLinks(const std::vector<std::string>& paths, const std::string& outputFile);
+
+    /**
      * Remove public link
      * @param path Folder path
      * @return true if removed successfully

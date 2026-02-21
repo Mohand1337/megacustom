@@ -419,9 +419,9 @@ std::map<std::string, std::string> WordPressSync::parseUserJson(const std::strin
 
         // Also extract any other meta fields dynamically using iterator
         for (auto it = meta.begin(); it != meta.end(); ++it) {
-            std::string metaKey = "meta." + it->first;
+            std::string metaKey = "meta." + it.key();
             if (result.find(metaKey) == result.end()) {  // Don't overwrite known fields
-                const nlohmann::json& value = it->second;
+                const nlohmann::json& value = it.value();
                 if (value.is_string()) {
                     result[metaKey] = value.get<std::string>();
                 } else if (value.is_number()) {
