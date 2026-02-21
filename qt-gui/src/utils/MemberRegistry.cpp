@@ -102,41 +102,34 @@ MemberInfo MemberInfo::fromJson(const QJsonObject& obj) {
     return info;
 }
 
-// Phase 2: Watermark text helpers
+// Phase 2: Watermark text helpers - aligned with C++ MemberDatabase format
 QString MemberInfo::buildWatermarkText(const QString& brandText) const {
-    QString text;
+    QString result;
     if (!brandText.isEmpty()) {
-        text = brandText + " - ";
+        result = brandText + " - ";
     }
 
-    QStringList fields = watermarkFields;
-    if (fields.isEmpty()) {
-        fields = {"name", "id"};  // Default fields
+    result += "Member #" + id;
+
+    if (!displayName.isEmpty() && watermarkFields.contains("name")) {
+        result += " (" + displayName + ")";
     }
 
-    QStringList parts;
-    for (const QString& field : fields) {
-        if (field == "name" && !displayName.isEmpty()) parts << displayName;
-        else if (field == "id" && !id.isEmpty()) parts << id;
-        else if (field == "email" && !email.isEmpty()) parts << email;
-    }
-
-    return text + parts.join(" - ");
+    return result;
 }
 
 QString MemberInfo::buildSecondaryWatermarkText() const {
     QStringList parts;
 
-    QStringList fields = watermarkFields;
-    if (fields.isEmpty()) {
-        fields = {"email", "ip"};  // Default secondary fields
-    }
-
-    for (const QString& field : fields) {
+    for (const QString& field : watermarkFields) {
         if (field == "email" && !email.isEmpty()) parts << email;
         else if (field == "ip" && !ipAddress.isEmpty()) parts << "IP: " + ipAddress;
         else if (field == "mac" && !macAddress.isEmpty()) parts << "MAC: " + macAddress;
         else if (field == "social" && !socialHandle.isEmpty()) parts << socialHandle;
+    }
+
+    if (parts.isEmpty()) {
+        return QStringLiteral("Full identity on file - Legal consequences apply");
     }
 
     return parts.join(" - ");
