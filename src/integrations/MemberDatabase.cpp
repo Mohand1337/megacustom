@@ -15,8 +15,12 @@
 #define mkdir(path, mode) _mkdir(path)
 #endif
 
-// Simple JSON handling (using the existing json_simple.hpp pattern)
+// JSON handling - use real nlohmann/json when available, fall back to built-in
+#ifdef USE_NLOHMANN_JSON
+#include <nlohmann/json.hpp>
+#else
 #include "json_simple.hpp"
+#endif
 
 namespace {
 // Cross-platform function to get user home directory

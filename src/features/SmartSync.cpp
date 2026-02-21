@@ -12,22 +12,12 @@
 #include <cstring>
 #include <openssl/md5.h>
 
-// Try to use nlohmann/json if available, fall back to json_simple
-#ifdef __has_include
-    #if __has_include(<nlohmann/json.hpp>)
-        #include <nlohmann/json.hpp>
-        using json = nlohmann::json;
-        #define HAS_NLOHMANN_JSON
-    #else
-        #include "json_simple.hpp"
-        namespace json_simple = nlohmann;
-        using json = nlohmann::json;
-    #endif
+#ifdef USE_NLOHMANN_JSON
+#include <nlohmann/json.hpp>
 #else
-    #include "json_simple.hpp"
-    namespace json_simple = nlohmann;
-    using json = nlohmann::json;
+#include "json_simple.hpp"
 #endif
+using json = nlohmann::json;
 
 namespace fs = std::filesystem;
 

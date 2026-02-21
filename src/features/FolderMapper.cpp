@@ -1,6 +1,10 @@
 #include "features/FolderMapper.h"
 #include "megaapi.h"
+#ifdef USE_NLOHMANN_JSON
+#include <nlohmann/json.hpp>
+#else
 #include "json_simple.hpp"
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>

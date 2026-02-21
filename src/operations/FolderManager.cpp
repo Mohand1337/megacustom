@@ -14,7 +14,11 @@
 #include <algorithm>
 #include <queue>
 #include <condition_variable>
-#include <json_simple.hpp>
+#ifdef USE_NLOHMANN_JSON
+#include <nlohmann/json.hpp>
+#else
+#include "json_simple.hpp"
+#endif
 
 namespace MegaCustom {
 
@@ -827,6 +831,86 @@ std::string FolderManager::createPublicLink(const std::string& path,
     }
 
     return m_listener->getPublicLink();
+}
+
+// Create public link for any node (file or folder)
+std::string FolderManager::createNodeLink(const std::string& path,
+                                          std::optional<std::chrono::system_clock::time_point> expireTime) {
+    std::unique_ptr<mega::MegaNode> node(getNodeByPath(path));
+    if (!node) {
+        return "";
+    }
+
+    m_listener->reset();
+
+    if (expireTime) {
+        int64_t seconds = std::chrono::duration_cast<std::chrono::seconds>(
+            expireTime->time_since_epoch()
+        ).count();
+        m_megaApi->exportNode(node.get(), seconds, false, true, m_listener.get());
+    } else {
+        m_megaApi->exportNode(node.get(), 0, false, true, m_listener.get());
+    }
+
+    if (!m_listener->waitForCompletion()) {
+        return "";
+    }
+
+    if (!m_listener->isSuccess()) {
+        return "";
+    }
+
+    return m_listener->getPublicLink();
+}
+
+// Bulk export links for multiple paths
+int FolderManager::bulkExportLinks(const std::vector<std::string>& paths, const std::string& outputFile) {
+    std::ofstream out(outputFile);
+    if (!out.is_open()) {
+        std::cerr << "Failed to open output file: " << outputFile << std::endl;
+        return 0;
+    }
+
+    out << "# MEGA Links Export\n\n";
+    out << "Generated: " << std::chrono::system_clock::now().time_since_epoch().count() << "\n\n";
+    out << "## Files\n\n";
+
+    int successCount = 0;
+    int totalCount = paths.size();
+
+    for (size_t i = 0; i < paths.size(); ++i) {
+        const std::string& path = paths[i];
+
+        if (m_progressCallback) {
+            m_progressCallback(path, i + 1, totalCount);
+        }
+
+        std::string link = createNodeLink(path);
+
+        // Extract filename from path
+        std::string filename = path;
+        size_t lastSlash = path.find_last_of('/');
+        if (lastSlash != std::string::npos) {
+            filename = path.substr(lastSlash + 1);
+        }
+
+        if (!link.empty()) {
+            out << "- [" << filename << "](" << link << ")\n";
+            out << "  - Path: `" << path << "`\n";
+            successCount++;
+        } else {
+            out << "- **FAILED**: " << filename << "\n";
+            out << "  - Path: `" << path << "`\n";
+        }
+    }
+
+    out << "\n## Summary\n\n";
+    out << "- Total: " << totalCount << "\n";
+    out << "- Successful: " << successCount << "\n";
+    out << "- Failed: " << (totalCount - successCount) << "\n";
+
+    out.close();
+    return successCount;
 }
 
 // Remove public link

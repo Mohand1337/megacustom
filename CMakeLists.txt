@@ -47,8 +47,10 @@ endif()
 
 # JSON library for configuration (optional for initial build)
 find_package(nlohmann_json 3.2.0 QUIET)
-if(NOT nlohmann_json_FOUND)
-    message(WARNING "nlohmann_json not found. JSON configuration will be disabled.")
+if(nlohmann_json_FOUND)
+    add_compile_definitions(USE_NLOHMANN_JSON)
+else()
+    message(WARNING "nlohmann_json not found. Using built-in json_simple fallback.")
 endif()
 
 # Include directories
@@ -62,6 +64,7 @@ include_directories(
 file(GLOB CORE_SOURCES src/core/*.cpp)
 file(GLOB OPERATIONS_SOURCES src/operations/*.cpp)
 file(GLOB FEATURES_SOURCES src/features/*.cpp)
+file(GLOB INTEGRATIONS_SOURCES src/integrations/*.cpp)
 file(GLOB UTILS_SOURCES src/utils/*.cpp)
 file(GLOB UI_SOURCES src/ui/*.cpp)
 
@@ -70,6 +73,7 @@ set(ALL_LIB_SOURCES
     ${CORE_SOURCES}
     ${OPERATIONS_SOURCES}
     ${FEATURES_SOURCES}
+    ${INTEGRATIONS_SOURCES}
     ${UTILS_SOURCES}
 )
 

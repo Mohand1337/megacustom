@@ -1,6 +1,10 @@
 #ifndef JSON_SIMPLE_HPP
 #define JSON_SIMPLE_HPP
 
+// When the real nlohmann/json library is available (USE_NLOHMANN_JSON defined),
+// skip this fallback implementation to avoid duplicate symbol conflicts.
+#ifndef USE_NLOHMANN_JSON
+
 /**
  * JSON implementation for MegaCustom
  * A complete, production-ready JSON parser and serializer
@@ -615,5 +619,7 @@ template<> inline bool json::get<bool>() const {
 }
 
 } // namespace nlohmann
+
+#endif // USE_NLOHMANN_JSON
 
 #endif // JSON_SIMPLE_HPP
