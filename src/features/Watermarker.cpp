@@ -91,10 +91,35 @@ namespace {
 // Properly escape a string for shell command execution
 // Uses single quotes which prevent ALL shell interpretation, escaping embedded single quotes
 std::string shellEscape(const std::string& arg) {
+#ifdef _WIN32
+    // Windows cmd.exe uses double quotes for escaping
+    // If the argument contains spaces or special chars, wrap in double quotes
+    // and escape any existing double quotes
+    bool needsQuoting = false;
+    for (char c : arg) {
+        if (c == ' ' || c == '\t' || c == '&' || c == '|' || c == '<' ||
+            c == '>' || c == '^' || c == '(' || c == ')') {
+            needsQuoting = true;
+            break;
+        }
+    }
+    if (!needsQuoting) return arg;
+
+    std::string result = "\"";
+    for (char c : arg) {
+        if (c == '"') {
+            result += "\\\"";
+        } else {
+            result += c;
+        }
+    }
+    result += "\"";
+    return result;
+#else
+    // Unix: single-quote escaping
     std::string result = "'";
     for (char c : arg) {
         if (c == '\'') {
-            // End single quote, add escaped single quote, start new single quote
             result += "'\\''";
         } else {
             result += c;
@@ -102,6 +127,7 @@ std::string shellEscape(const std::string& arg) {
     }
     result += "'";
     return result;
+#endif
 }
 } // anonymous namespace
 

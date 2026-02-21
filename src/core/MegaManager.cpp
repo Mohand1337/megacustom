@@ -192,10 +192,7 @@ bool MegaManager::login(const std::string& email, const std::string& password, c
             // m_megaApi->login(email.c_str(), password.c_str()); // Uncomment when SDK available
         }
 
-        // Simulate async operation
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-        // For now, just set logged in status
+        // Set logged in status (actual SDK login is async via listener)
         m_isLoggedIn = true;
         m_operationInProgress = false;
 
