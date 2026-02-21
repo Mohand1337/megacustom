@@ -103,9 +103,19 @@ public:
     static bool isFFmpegAvailable();
 
     /**
+     * Get resolved path to FFmpeg executable
+     */
+    static std::string getFFmpegPath();
+
+    /**
      * Check if Python with required modules is available
      */
     static bool isPythonAvailable();
+
+    /**
+     * Get resolved path to Python executable
+     */
+    static std::string getPythonPath();
 
     /**
      * Get path to bundled PDF watermark script

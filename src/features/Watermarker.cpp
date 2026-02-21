@@ -147,7 +147,7 @@ Watermarker::Watermarker() {
 
 // ==================== Static Utility Methods ====================
 
-bool Watermarker::isFFmpegAvailable() {
+std::string Watermarker::getFFmpegPath() {
     std::vector<std::string> paths;
     std::string exeDir = getExecutableDir();
     std::string homeDir = getHomeDirectory();
@@ -169,17 +169,23 @@ bool Watermarker::isFFmpegAvailable() {
 
     for (const auto& path : paths) {
         if (fileExists(path)) {
-            return true;
+            return path;
         }
     }
 
     // Try PATH via where command
     FILE* pipe = popen("where ffmpeg 2>nul", "r");
     if (pipe) {
-        char buffer[256];
-        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            pclose(pipe);
+            std::string result(buffer);
+            // Trim trailing newline/whitespace
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
         pclose(pipe);
-        return found;
     }
 #else
     // Unix: Check portable deployment first, then common locations
@@ -199,49 +205,90 @@ bool Watermarker::isFFmpegAvailable() {
     for (const auto& path : paths) {
         struct stat st;
         if (stat(path.c_str(), &st) == 0 && (st.st_mode & S_IXUSR)) {
-            return true;
+            return path;
         }
     }
 
     // Try PATH
     FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
     if (pipe) {
-        char buffer[256];
-        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            pclose(pipe);
+            std::string result(buffer);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
         pclose(pipe);
-        return found;
     }
 #endif
 
-    return false;
+    return "";
+}
+
+bool Watermarker::isFFmpegAvailable() {
+    return !getFFmpegPath().empty();
+}
+
+std::string Watermarker::getPythonPath() {
+    std::string exeDir = getExecutableDir();
+
+#ifdef _WIN32
+    // Check portable bundled Python first (deployed by CI)
+    std::string portablePython = exeDir + "\\python\\python.exe";
+    if (fileExists(portablePython)) {
+        return portablePython;
+    }
+
+    // Try system Python (Windows uses 'python' not 'python3')
+    FILE* pipe = popen("where python 2>nul", "r");
+    if (pipe) {
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            pclose(pipe);
+            std::string result(buffer);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(pipe);
+    }
+#else
+    // Unix: prefer python3
+    FILE* pipe = popen("which python3 2>/dev/null", "r");
+    if (pipe) {
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            pclose(pipe);
+            std::string result(buffer);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(pipe);
+    }
+
+    // Fallback to python
+    pipe = popen("which python 2>/dev/null", "r");
+    if (pipe) {
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            pclose(pipe);
+            std::string result(buffer);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(pipe);
+    }
+#endif
+
+    return "";
 }
 
 bool Watermarker::isPythonAvailable() {
-#ifdef _WIN32
-    FILE* pipe = popen("python --version 2>nul", "r");
-    if (pipe) {
-        char buffer[256];
-        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
-        pclose(pipe);
-        if (found) return true;
-    }
-    pipe = popen("python3 --version 2>nul", "r");
-    if (pipe) {
-        char buffer[256];
-        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
-        pclose(pipe);
-        return found;
-    }
-#else
-    FILE* pipe = popen("python3 --version 2>/dev/null || python --version 2>/dev/null", "r");
-    if (pipe) {
-        char buffer[256];
-        bool found = fgets(buffer, sizeof(buffer), pipe) != nullptr;
-        pclose(pipe);
-        return found;
-    }
-#endif
-    return false;
+    return !getPythonPath().empty();
 }
 
 std::string Watermarker::getPdfScriptPath() {
@@ -374,7 +421,8 @@ std::vector<std::string> Watermarker::buildFFmpegCommand(const std::string& inpu
                                                           const std::string& output) const {
     std::vector<std::string> cmd;
 
-    cmd.push_back("ffmpeg");
+    std::string ffmpegPath = getFFmpegPath();
+    cmd.push_back(ffmpegPath.empty() ? "ffmpeg" : ffmpegPath);
     cmd.push_back("-y");  // Overwrite output
     cmd.push_back("-i");
     cmd.push_back(input);
@@ -431,10 +479,25 @@ int Watermarker::runProcess(const std::vector<std::string>& args,
 }
 
 double Watermarker::getVideoDuration(const std::string& inputPath) {
+    // Derive ffprobe path from ffmpeg path
+    std::string ffmpegPath = getFFmpegPath();
+    std::string ffprobePath = "ffprobe";
+    if (!ffmpegPath.empty()) {
+        // Replace "ffmpeg" with "ffprobe" in the resolved path
+        size_t pos = ffmpegPath.rfind("ffmpeg");
+        if (pos != std::string::npos) {
+            ffprobePath = ffmpegPath.substr(0, pos) + "ffprobe" + ffmpegPath.substr(pos + 6);
+        }
+    }
+
     // Use ffprobe to get video duration
-    std::string cmd = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ";
+    std::string cmd = shellEscape(ffprobePath) + " -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ";
     cmd += shellEscape(inputPath);
+#ifdef _WIN32
+    cmd += " 2>nul";
+#else
     cmd += " 2>/dev/null";
+#endif
 
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
@@ -599,9 +662,10 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     }
     result.inputSizeBytes = st.st_size;
 
-    // Build command
+    // Build command using resolved Python path
+    std::string pythonPath = getPythonPath();
     std::vector<std::string> cmd = {
-        "python3", scriptPath,
+        pythonPath.empty() ? "python" : pythonPath, scriptPath,
         "--input", input,
         "--output", output,
         "--text", m_config.primaryText

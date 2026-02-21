@@ -1673,6 +1673,8 @@ int handleFolder(const std::vector<std::string>& args) {
         std::cout << "  size <path>             Calculate folder size\n";
         std::cout << "  share <path> <email>    Share folder\n";
         std::cout << "  link <path>             Create public link\n";
+        std::cout << "  export <file> <paths..> Bulk export links to file\n";
+        std::cout << "  export -f <list> <out>  Export links from path list file\n";
         std::cout << "  trash empty             Empty trash\n";
         std::cout << "  trash restore <path>    Restore from trash\n";
         return 0;
@@ -1916,6 +1918,63 @@ int handleFolder(const std::vector<std::string>& args) {
             std::cerr << "✗ Failed to create public link\n";
             return 1;
         }
+    }
+    else if (cmd == "export") {
+        if (args.size() < 2) {
+            std::cout << "Usage: megacustom folder export <output.md> <path1> [path2] ...\n";
+            std::cout << "       megacustom folder export -f <paths.txt> <output.md>\n";
+            return 1;
+        }
+
+        std::vector<std::string> paths;
+        std::string outputFile;
+
+        if (args[1] == "-f") {
+            // Read paths from file
+            if (args.size() < 4) {
+                std::cout << "Usage: megacustom folder export -f <paths.txt> <output.md>\n";
+                return 1;
+            }
+
+            std::ifstream inFile(args[2]);
+            if (!inFile.is_open()) {
+                std::cerr << "✗ Cannot open paths file: " << args[2] << "\n";
+                return 1;
+            }
+
+            std::string line;
+            while (std::getline(inFile, line)) {
+                // Trim whitespace
+                line.erase(0, line.find_first_not_of(" \t\r\n"));
+                line.erase(line.find_last_not_of(" \t\r\n") + 1);
+                if (!line.empty() && line[0] != '#') {
+                    paths.push_back(line);
+                }
+            }
+            inFile.close();
+            outputFile = args[3];
+        } else {
+            // Paths as arguments
+            outputFile = args[1];
+            for (size_t i = 2; i < args.size(); ++i) {
+                paths.push_back(args[i]);
+            }
+        }
+
+        if (paths.empty()) {
+            std::cerr << "✗ No paths to export\n";
+            return 1;
+        }
+
+        std::cout << "Exporting " << paths.size() << " links to: " << outputFile << "\n";
+
+        // Set progress callback
+        folderMgr.setProgressCallback([](const std::string& path, int current, int total) {
+            std::cout << "\r[" << current << "/" << total << "] " << path << std::flush;
+        });
+
+        int success = folderMgr.bulkExportLinks(paths, outputFile);
+        std::cout << "\n✓ Exported " << success << "/" << paths.size() << " links to " << outputFile << "\n";
     }
     else if (cmd == "trash") {
         if (args.size() < 2) {
