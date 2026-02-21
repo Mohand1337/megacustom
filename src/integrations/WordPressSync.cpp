@@ -3,7 +3,11 @@
 #include "core/LogManager.h"
 #include "core/PathValidator.h"
 #include "core/Crypto.h"
+#ifdef USE_NLOHMANN_JSON
+#include <nlohmann/json.hpp>
+#else
 #include "json_simple.hpp"
+#endif
 
 #include <iostream>
 #include <fstream>
@@ -207,9 +211,9 @@ bool WordPressSync::loadConfig(const std::string& configPath) {
     if (isEncrypted && !storedPassword.empty()) {
         // Decrypt the password
         try {
-            std::string machineKey = megacustom::Crypto::getMachineKey();
-            m_config.applicationPassword = megacustom::Crypto::decrypt(storedPassword, machineKey);
-        } catch (const megacustom::CryptoException& e) {
+            std::string machineKey = Crypto::getMachineKey();
+            m_config.applicationPassword = Crypto::decrypt(storedPassword, machineKey);
+        } catch (const CryptoException& e) {
             m_lastError = "Failed to decrypt password: " + std::string(e.what());
             // Still allow loading - user may need to re-enter password
             m_config.applicationPassword = "";
@@ -238,7 +242,7 @@ bool WordPressSync::saveConfig(const std::string& configPath) {
 #endif
     std::string dir = (lastSep != std::string::npos) ? path.substr(0, lastSep) : "";
     if (!dir.empty()) {
-        if (!megacustom::PathValidator::isValidPath(dir)) {
+        if (!PathValidator::isValidPath(dir)) {
             m_lastError = "Invalid config directory path";
             return false;
         }
@@ -259,9 +263,9 @@ bool WordPressSync::saveConfig(const std::string& configPath) {
     // Encrypt the application password before saving
     std::string encryptedPassword;
     try {
-        std::string machineKey = megacustom::Crypto::getMachineKey();
-        encryptedPassword = megacustom::Crypto::encrypt(m_config.applicationPassword, machineKey);
-    } catch (const megacustom::CryptoException& e) {
+        std::string machineKey = Crypto::getMachineKey();
+        encryptedPassword = Crypto::encrypt(m_config.applicationPassword, machineKey);
+    } catch (const CryptoException& e) {
         m_lastError = "Failed to encrypt password: " + std::string(e.what());
         return false;
     }

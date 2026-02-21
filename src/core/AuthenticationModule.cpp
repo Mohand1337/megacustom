@@ -979,11 +979,11 @@ std::string AuthenticationModule::encryptData(const std::string& data,
                                              const std::string& key) {
     try {
         // Derive a proper 32-byte key from the user-provided key
-        auto salt = megacustom::Crypto::generateSalt(16);
-        std::string derivedKey = megacustom::Crypto::deriveKey(key, salt, 10000);
+        auto salt = Crypto::generateSalt(16);
+        std::string derivedKey = Crypto::deriveKey(key, salt, 10000);
 
         // Encrypt the data
-        std::string encrypted = megacustom::Crypto::encrypt(data, derivedKey);
+        std::string encrypted = Crypto::encrypt(data, derivedKey);
 
         // Prepend salt (base64 encoded) to the ciphertext for decryption
         std::string saltBase64;
@@ -998,7 +998,7 @@ std::string AuthenticationModule::encryptData(const std::string& data,
         result += encrypted;
 
         return result;
-    } catch (const megacustom::CryptoException& e) {
+    } catch (const CryptoException& e) {
         std::cerr << "Encryption error: " << e.what() << std::endl;
         return "";
     }
@@ -1024,11 +1024,11 @@ std::string AuthenticationModule::decryptData(const std::string& encryptedData,
         std::string ciphertext = encryptedData.substr(1 + saltSize);
 
         // Derive the same key
-        std::string derivedKey = megacustom::Crypto::deriveKey(key, salt, 10000);
+        std::string derivedKey = Crypto::deriveKey(key, salt, 10000);
 
         // Decrypt
-        return megacustom::Crypto::decrypt(ciphertext, derivedKey);
-    } catch (const megacustom::CryptoException& e) {
+        return Crypto::decrypt(ciphertext, derivedKey);
+    } catch (const CryptoException& e) {
         std::cerr << "Decryption error: " << e.what() << std::endl;
         return "";
     }

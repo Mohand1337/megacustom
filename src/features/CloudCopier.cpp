@@ -1465,7 +1465,7 @@ void CloudCopier::saveTemplates() {
     size_t lastSlash = m_templatesPath.rfind('/');
     if (lastSlash != std::string::npos) {
         std::string dir = m_templatesPath.substr(0, lastSlash);
-        if (megacustom::PathValidator::isValidPath(dir)) {
+        if (PathValidator::isValidPath(dir)) {
             try {
                 fs::create_directories(dir);
             } catch (const fs::filesystem_error& e) {

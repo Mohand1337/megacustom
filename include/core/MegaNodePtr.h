@@ -4,7 +4,7 @@
 #include <megaapi.h>
 #include <utility>
 
-namespace megacustom {
+namespace MegaCustom {
 
 /**
  * RAII wrapper for mega::MegaNode pointers.
@@ -243,6 +243,6 @@ private:
     mega::MegaUser* m_user;
 };
 
-} // namespace megacustom
+} // namespace MegaCustom
 
 #endif // MEGACUSTOM_MEGA_NODE_PTR_H

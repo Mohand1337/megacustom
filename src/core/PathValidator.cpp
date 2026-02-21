@@ -4,7 +4,7 @@
 #include <regex>
 #include <cstring>
 
-namespace megacustom {
+namespace MegaCustom {
 
 namespace fs = std::filesystem;
 
@@ -255,4 +255,4 @@ bool PathValidator::copyFileSafe(const std::string& source,
     }
 }
 
-} // namespace megacustom
+} // namespace MegaCustom

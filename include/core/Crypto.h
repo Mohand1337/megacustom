@@ -5,7 +5,7 @@
 #include <vector>
 #include <stdexcept>
 
-namespace megacustom {
+namespace MegaCustom {
 
 /**
  * AES-256-GCM encryption class using OpenSSL.
@@ -103,6 +103,6 @@ public:
         : std::runtime_error("Crypto error: " + message) {}
 };
 
-} // namespace megacustom
+} // namespace MegaCustom
 
 #endif // MEGACUSTOM_CRYPTO_H

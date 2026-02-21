@@ -70,7 +70,7 @@
 /**
  * Template-based null check with optional default
  */
-namespace megacustom {
+namespace MegaCustom {
 
 /**
  * Execute function only if pointer is non-null
@@ -133,6 +133,6 @@ bool anyNull(Ptrs... ptrs) {
     return (... || (ptrs == nullptr));
 }
 
-} // namespace megacustom
+} // namespace MegaCustom
 
 #endif // MEGACUSTOM_GUARDS_H

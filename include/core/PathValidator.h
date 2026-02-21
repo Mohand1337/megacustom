@@ -5,7 +5,7 @@
 #include <vector>
 #include <filesystem>
 
-namespace megacustom {
+namespace MegaCustom {
 
 /**
  * Centralized path validation to prevent path traversal attacks.
@@ -110,6 +110,6 @@ private:
     static const std::vector<std::string> TRAVERSAL_PATTERNS;
 };
 
-} // namespace megacustom
+} // namespace MegaCustom
 
 #endif // MEGACUSTOM_PATH_VALIDATOR_H

@@ -296,7 +296,7 @@ bool DistributionPipeline::watermarkForMember(
     std::string tempDir = m_config.tempDirectory + "/" + memberId;
 
     // Create temp directory if needed (safe, no shell injection)
-    if (!megacustom::PathValidator::isValidPath(tempDir)) {
+    if (!PathValidator::isValidPath(tempDir)) {
         error = "Invalid temp directory path";
         return false;
     }
@@ -317,8 +317,8 @@ bool DistributionPipeline::watermarkForMember(
         case DistributionConfig::WatermarkMode::None:
             // No watermarking, just copy to temp (safe, no shell injection)
             {
-                if (!megacustom::PathValidator::isValidPath(sourceFile) ||
-                    !megacustom::PathValidator::isValidPath(outputPath)) {
+                if (!PathValidator::isValidPath(sourceFile) ||
+                    !PathValidator::isValidPath(outputPath)) {
                     result.success = false;
                     result.error = "Invalid file path";
                 } else {
@@ -366,11 +366,11 @@ bool DistributionPipeline::uploadToMegaFolder(
     std::string& error) {
 
     // Validate paths to prevent injection attacks
-    if (!megacustom::PathValidator::isValidPath(localPath)) {
+    if (!PathValidator::isValidPath(localPath)) {
         error = "Invalid local path";
         return false;
     }
-    if (!megacustom::PathValidator::isValidPath(megaFolder)) {
+    if (!PathValidator::isValidPath(megaFolder)) {
         error = "Invalid MEGA folder path";
         return false;
     }
@@ -622,7 +622,7 @@ DistributionResult DistributionPipeline::distribute(
     }
 
     // Create temp directory (safe, no shell injection)
-    if (!megacustom::PathValidator::isValidPath(m_config.tempDirectory)) {
+    if (!PathValidator::isValidPath(m_config.tempDirectory)) {
         result.errors.push_back("Invalid temp directory path");
         result.success = false;
         result.endTime = currentTimeMs();

@@ -16,7 +16,7 @@
 #include <sys/utsname.h>
 #endif
 
-namespace megacustom {
+namespace MegaCustom {
 
 // Base64 encoding table
 static const char BASE64_CHARS[] =
@@ -332,4 +332,4 @@ Crypto::EncryptedData Crypto::EncryptedData::fromBase64(const std::string& encod
     return data;
 }
 
-} // namespace megacustom
+} // namespace MegaCustom
