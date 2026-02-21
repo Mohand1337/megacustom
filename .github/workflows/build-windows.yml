@@ -6,6 +6,7 @@ on:
     paths:
       - 'qt-gui/**'
       - 'src/**'
+      - 'include/**'
       - '.github/workflows/build-windows.yml'
   pull_request:
     branches: [ main, master ]
@@ -57,7 +58,7 @@ jobs:
         # Note: freeimage removed due to imath download issues on GitHub runners
         ${{ github.workspace }}/vcpkg/vcpkg.exe install --triplet x64-windows `
           cryptopp "curl[ssl]" icu libsodium sqlite3 zlib zstd c-ares `
-          openssl "ffmpeg[avcodec,avformat,swresample,swscale]" libuv
+          openssl "ffmpeg[avcodec,avformat,swresample,swscale]" libuv nlohmann-json
       shell: pwsh
       timeout-minutes: 60
 
