@@ -7,6 +7,7 @@
 #include <map>
 #include <cstdint>
 #include <future>
+#include <atomic>
 
 namespace MegaCustom {
 
@@ -242,13 +243,13 @@ public:
     /**
      * Cancel ongoing batch operation
      */
-    void cancel() { m_cancelled = true; }
-    bool isCancelled() const { return m_cancelled; }
+    void cancel() { m_cancelled.store(true); }
+    bool isCancelled() const { return m_cancelled.load(); }
 
 private:
     WatermarkConfig m_config;
     WatermarkProgressCallback m_progressCallback;
-    bool m_cancelled = false;
+    std::atomic<bool> m_cancelled{false};
 
     // Build FFmpeg filter string for video watermark
     std::string buildFFmpegFilter() const;
