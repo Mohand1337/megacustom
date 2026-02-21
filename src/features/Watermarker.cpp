@@ -13,6 +13,7 @@
 #include <array>
 #include <thread>
 #include <future>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -92,26 +93,14 @@ namespace {
 // Uses single quotes which prevent ALL shell interpretation, escaping embedded single quotes
 std::string shellEscape(const std::string& arg) {
 #ifdef _WIN32
-    // Windows cmd.exe uses double quotes for escaping
-    // If the argument contains spaces or special chars, wrap in double quotes
-    // and escape any existing double quotes
-    bool needsQuoting = false;
-    for (char c : arg) {
-        if (c == ' ' || c == '\t' || c == '&' || c == '|' || c == '<' ||
-            c == '>' || c == '^' || c == '(' || c == ')') {
-            needsQuoting = true;
-            break;
-        }
-    }
-    if (!needsQuoting) return arg;
-
+    // Always quote on Windows — paths from `where` or portable deployment
+    // may contain spaces (e.g. "C:\Users\Admin\Desktop\My App\ffmpeg.exe").
+    // Use "" (doubled double-quote) for escaping embedded quotes, which is
+    // the correct escape sequence inside cmd.exe double-quoted strings.
     std::string result = "\"";
     for (char c : arg) {
-        if (c == '"') {
-            result += "\\\"";
-        } else {
-            result += c;
-        }
+        if (c == '"') result += "\"\"";  // cmd.exe doubled-quote escape
+        else result += c;
     }
     result += "\"";
     return result;
@@ -487,7 +476,13 @@ int Watermarker::runProcess(const std::vector<std::string>& args,
     }
     cmdStream << " 2>&1";
 
+    // On Windows, wrap the entire command in outer quotes so cmd.exe /c
+    // passes inner quoted paths verbatim (cmd.exe Rule 2 workaround).
+#ifdef _WIN32
+    std::string cmd = "\"" + cmdStream.str() + "\"";
+#else
     std::string cmd = cmdStream.str();
+#endif
 
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
@@ -521,6 +516,8 @@ double Watermarker::getVideoDuration(const std::string& inputPath) {
     cmd += shellEscape(inputPath);
 #ifdef _WIN32
     cmd += " 2>nul";
+    // Outer-quote wrapping for cmd.exe Rule 2 workaround
+    cmd = "\"" + cmd + "\"";
 #else
     cmd += " 2>/dev/null";
 #endif
@@ -552,7 +549,11 @@ int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
     }
     cmdStream << " 2>&1";
 
+#ifdef _WIN32
+    std::string cmd = "\"" + cmdStream.str() + "\"";
+#else
     std::string cmd = cmdStream.str();
+#endif
 
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
@@ -737,8 +738,8 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
 
 std::string Watermarker::generateOutputPath(const std::string& inputPath,
                                              const std::string& outputDir) const {
-    // Extract filename
-    size_t lastSlash = inputPath.find_last_of('/');
+    // Extract filename (handle both / and \ separators for Windows)
+    size_t lastSlash = inputPath.find_last_of("/\\");
     std::string filename = (lastSlash == std::string::npos) ?
         inputPath : inputPath.substr(lastSlash + 1);
 
@@ -753,7 +754,7 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
     std::string outDir = outputDir.empty() ?
         inputPath.substr(0, lastSlash == std::string::npos ? 0 : lastSlash) : outputDir;
 
-    if (!outDir.empty() && outDir.back() != '/') {
+    if (!outDir.empty() && outDir.back() != '/' && outDir.back() != '\\') {
         outDir += '/';
     }
 
@@ -995,29 +996,29 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
     std::vector<std::string> videoFiles;
     std::vector<std::string> pdfFiles;
 
-    // Scan directory for supported files
-    // Note: This is a simple implementation. For production, use std::filesystem
-    std::string cmd = recursive ?
-        "find " + shellEscape(inputDir) + " -type f" :
-        "find " + shellEscape(inputDir) + " -maxdepth 1 -type f";
-
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (pipe) {
-        char buffer[1024];
-        while (fgets(buffer, sizeof(buffer), pipe)) {
-            std::string path = buffer;
-            // Remove newline
-            if (!path.empty() && path.back() == '\n') {
-                path.pop_back();
+    // Scan directory for supported files using std::filesystem (cross-platform)
+    namespace fs = std::filesystem;
+    try {
+        if (recursive) {
+            for (const auto& entry : fs::recursive_directory_iterator(inputDir)) {
+                if (entry.is_regular_file()) {
+                    std::string p = entry.path().string();
+                    if (isVideoFile(p)) videoFiles.push_back(p);
+                    else if (isPdfFile(p)) pdfFiles.push_back(p);
+                }
             }
-
-            if (isVideoFile(path)) {
-                videoFiles.push_back(path);
-            } else if (isPdfFile(path)) {
-                pdfFiles.push_back(path);
+        } else {
+            for (const auto& entry : fs::directory_iterator(inputDir)) {
+                if (entry.is_regular_file()) {
+                    std::string p = entry.path().string();
+                    if (isVideoFile(p)) videoFiles.push_back(p);
+                    else if (isPdfFile(p)) pdfFiles.push_back(p);
+                }
             }
         }
-        pclose(pipe);
+    } catch (const std::exception& e) {
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "directory_scan_failed", "Failed to scan directory: " + inputDir + " - " + e.what());
     }
 
     std::vector<WatermarkResult> results;
