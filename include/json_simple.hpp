@@ -481,6 +481,11 @@ public:
     auto begin() const { return m_object.begin(); }
     auto end() const { return m_object.end(); }
 
+    // items() for key-value iteration (compatible with real nlohmann::json)
+    // Usage: for (const auto& [key, value] : obj.items()) { ... }
+    std::map<std::string, json>& items() { return m_object; }
+    const std::map<std::string, json>& items() const { return m_object; }
+
     // Array iteration
     auto array_begin() { return m_array.begin(); }
     auto array_end() { return m_array.end(); }
