@@ -414,11 +414,21 @@ std::string Watermarker::buildFFmpegFilter() const {
         }
     }
 #endif
-    // FFmpeg filter parser treats backslashes as escape chars — use forward slashes
+    // Escape font path for FFmpeg drawtext filter:
+    // 1. Use forward slashes (backslashes are escape chars in filter syntax)
+    // 2. Escape colons (they delimit filter options, but appear in Windows drive letters)
     std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
+    {
+        std::string escaped;
+        for (char c : fontFilePath) {
+            if (c == ':' || c == '\'') escaped += '\\';
+            escaped += c;
+        }
+        fontFilePath = escaped;
+    }
 
     std::string fontFile = fontFilePath.empty() ? "" :
-        "fontfile='" + fontFilePath + "':";
+        "fontfile=" + fontFilePath + ":";
 
     // Primary text (line 1) - golden color, random position, appears periodically
     filter << "drawtext=" << fontFile
