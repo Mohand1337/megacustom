@@ -51,7 +51,9 @@ if (!$SkipVcpkg) {
     Write-Host ""
     Write-Host "[2/6] Installing vcpkg packages (this may take a while first time)..." -ForegroundColor Yellow
 
-    $packages = "openssl", "curl", "sqlite3", "libsodium", "cryptopp", "c-ares", "zlib", "freeimage", "ffmpeg", "libmediainfo", "libuv"
+    # Note: ffmpeg, freeimage, libmediainfo excluded - ffmpeg is used as external binary,
+    # and freeimage/libmediainfo cause build issues on older Windows versions
+    $packages = "openssl", "curl[ssl]", "sqlite3", "libsodium", "cryptopp", "c-ares", "zlib", "zstd", "icu", "libuv", "nlohmann-json"
     & "$VcpkgPath\vcpkg.exe" install --triplet x64-windows $packages
 
     if ($LASTEXITCODE -ne 0) {
@@ -84,7 +86,7 @@ if (!$SkipSdk) {
     if (!(Test-Path $sdkBuild)) { New-Item -ItemType Directory -Path $sdkBuild | Out-Null }
 
     Push-Location $sdkBuild
-    cmake .. -G "Visual Studio 17 2022" -A x64 `
+    cmake .. -G "Visual Studio 16 2019" -A x64 `
         -DCMAKE_TOOLCHAIN_FILE="$VcpkgPath/scripts/buildsystems/vcpkg.cmake" `
         -DVCPKG_OVERLAY_PORTS="../cmake/vcpkg_overlay_ports" `
         -DVCPKG_OVERLAY_TRIPLETS="../cmake/vcpkg_overlay_triplets" `
@@ -94,8 +96,8 @@ if (!$SkipSdk) {
         -DENABLE_SDKLIB_EXAMPLES=OFF -DENABLE_SDKLIB_TESTS=OFF `
         -DUSE_OPENSSL=ON -DUSE_CURL=ON -DUSE_SODIUM=ON `
         -DUSE_CRYPTOPP=ON -DUSE_SQLITE=ON `
-        -DUSE_FREEIMAGE=ON -DUSE_FFMPEG=ON `
-        -DUSE_MEDIAINFO=ON -DUSE_LIBUV=ON -DUSE_PDFIUM=OFF
+        -DUSE_FREEIMAGE=OFF -DUSE_FFMPEG=OFF `
+        -DUSE_MEDIAINFO=OFF -DUSE_LIBUV=ON -DUSE_PDFIUM=OFF
 
     if ($LASTEXITCODE -ne 0) {
         Pop-Location
@@ -124,7 +126,7 @@ $guiPath = "$ProjectRoot\qt-gui"
 $guiBuild = "$guiPath\build-win64"
 
 Push-Location $guiPath
-cmake -B build-win64 -G "Visual Studio 17 2022" -A x64 `
+cmake -B build-win64 -G "Visual Studio 16 2019" -A x64 `
     -DCMAKE_PREFIX_PATH="$QtPath" `
     -DCMAKE_TOOLCHAIN_FILE="$VcpkgPath/scripts/buildsystems/vcpkg.cmake" `
     -DCMAKE_BUILD_TYPE=Release
