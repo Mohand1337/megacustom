@@ -414,21 +414,11 @@ std::string Watermarker::buildFFmpegFilter() const {
         }
     }
 #endif
-    // Escape font path for FFmpeg drawtext filter:
-    // 1. Use forward slashes (backslashes are escape chars in filter syntax)
-    // 2. Escape colons (they delimit filter options, but appear in Windows drive letters)
+    // Use forward slashes for FFmpeg compatibility
     std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
-    {
-        std::string escaped;
-        for (char c : fontFilePath) {
-            if (c == ':' || c == '\'') escaped += '\\';
-            escaped += c;
-        }
-        fontFilePath = escaped;
-    }
 
     std::string fontFile = fontFilePath.empty() ? "" :
-        "fontfile=" + fontFilePath + ":";
+        "fontfile='" + fontFilePath + "':";
 
     // Primary text (line 1) - golden color, random position, appears periodically
     filter << "drawtext=" << fontFile
@@ -468,8 +458,28 @@ std::vector<std::string> Watermarker::buildFFmpegCommand(const std::string& inpu
     cmd.push_back("-y");  // Overwrite output
     cmd.push_back("-i");
     cmd.push_back(input);
+
+#ifdef _WIN32
+    // On Windows, write the filter to a temp file and use -filter_script:v
+    // to avoid cmd.exe mangling colons/quotes in the filter string.
+    {
+        std::string filterText = buildFFmpegFilter();
+        std::string tempDir;
+        const char* tmp = std::getenv("TEMP");
+        if (tmp) tempDir = tmp;
+        else tempDir = ".";
+        m_filterScriptPath = tempDir + "\\megacustom_vf.txt";
+        std::ofstream f(m_filterScriptPath);
+        f << filterText;
+        f.close();
+    }
+    cmd.push_back("-filter_script:v");
+    cmd.push_back(m_filterScriptPath);
+#else
     cmd.push_back("-vf");
     cmd.push_back(buildFFmpegFilter());
+#endif
+
     cmd.push_back("-c:v");
     cmd.push_back("libx264");
     cmd.push_back("-crf");

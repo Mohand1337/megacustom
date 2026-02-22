@@ -260,6 +260,7 @@ private:
     WatermarkConfig m_config;
     WatermarkProgressCallback m_progressCallback;
     std::atomic<bool> m_cancelled{false};
+    mutable std::string m_filterScriptPath;  // Temp file for Windows filter_script
 
     // Build FFmpeg filter string for video watermark
     std::string buildFFmpegFilter() const;
