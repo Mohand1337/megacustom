@@ -414,6 +414,9 @@ std::string Watermarker::buildFFmpegFilter() const {
         }
     }
 #endif
+    // FFmpeg filter parser treats backslashes as escape chars — use forward slashes
+    std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
+
     std::string fontFile = fontFilePath.empty() ? "" :
         "fontfile='" + fontFilePath + "':";
 
