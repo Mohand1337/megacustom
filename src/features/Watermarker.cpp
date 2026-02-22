@@ -608,32 +608,43 @@ int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
         return -1;
     }
 
-    std::array<char, 256> buffer;
     double lastPercent = 0.0;
 
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        std::string line(buffer.data());
-        output += line;
+    // Read character by character — FFmpeg outputs progress with \r (carriage
+    // return) not \n, so fgets() would block until the process finishes.
+    std::string line;
+    int ch;
+    while ((ch = fgetc(pipe)) != EOF) {
+        if (ch == '\r' || ch == '\n') {
+            if (!line.empty()) {
+                output += line + "\n";
 
-        // Parse ffmpeg time progress from output like: "time=00:01:23.45"
-        size_t timePos = line.find("time=");
-        if (timePos != std::string::npos && durationSeconds > 0) {
-            std::string timeStr = line.substr(timePos + 5);
-            // Parse HH:MM:SS.ms format
-            int hours = 0, minutes = 0;
-            double seconds = 0.0;
-            if (sscanf(timeStr.c_str(), "%d:%d:%lf", &hours, &minutes, &seconds) >= 1) {
-                double currentTime = hours * 3600.0 + minutes * 60.0 + seconds;
-                double percent = (currentTime / durationSeconds) * 100.0;
-                percent = std::min(percent, 99.0);  // Cap at 99% until complete
+                // Parse ffmpeg time progress from output like: "time=00:01:23.45"
+                size_t timePos = line.find("time=");
+                if (timePos != std::string::npos && durationSeconds > 0) {
+                    std::string timeStr = line.substr(timePos + 5);
+                    int hours = 0, minutes = 0;
+                    double seconds = 0.0;
+                    if (sscanf(timeStr.c_str(), "%d:%d:%lf", &hours, &minutes, &seconds) >= 1) {
+                        double currentTime = hours * 3600.0 + minutes * 60.0 + seconds;
+                        double percent = (currentTime / durationSeconds) * 100.0;
+                        percent = std::min(percent, 99.0);
 
-                // Only report if changed by at least 1%
-                if (percent - lastPercent >= 1.0) {
-                    lastPercent = percent;
-                    reportProgress(inputFile, 1, 1, percent, "encoding");
+                        if (percent - lastPercent >= 1.0) {
+                            lastPercent = percent;
+                            reportProgress(inputFile, 1, 1, percent, "encoding");
+                        }
+                    }
                 }
+                line.clear();
             }
+        } else {
+            line += static_cast<char>(ch);
         }
+    }
+    // Capture any trailing output
+    if (!line.empty()) {
+        output += line + "\n";
     }
 
     int status = pclose(pipe);
@@ -805,7 +816,19 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
         outDir += '/';
     }
 
-    return outDir + baseName + m_config.outputSuffix + ext;
+    // Check if output file already exists; if so, append (1), (2), etc.
+    std::string candidate = outDir + baseName + m_config.outputSuffix + ext;
+    struct stat stCheck;
+    if (stat(candidate.c_str(), &stCheck) == 0) {
+        for (int n = 1; n < 1000; ++n) {
+            candidate = outDir + baseName + m_config.outputSuffix
+                        + " (" + std::to_string(n) + ")" + ext;
+            if (stat(candidate.c_str(), &stCheck) != 0) {
+                break;
+            }
+        }
+    }
+    return candidate;
 }
 
 // ==================== Progress Reporting ====================

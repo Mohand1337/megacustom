@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QString>
 #include <QMutex>
+#include <QTimer>
 
 // Forward declaration for MEGA SDK
 namespace mega {
@@ -171,11 +172,18 @@ private:
     void performLogin(const QString& accountId, const QString& sessionToken);
     void cleanupSession(CachedSession& session);
 
+    // Async login completion handlers
+    void onAsyncLoginComplete(const QString& accountId);
+    void onAsyncLoginFailed(const QString& accountId, const QString& error, bool expired);
+
     QMap<QString, CachedSession> m_pool;
     mutable QMutex m_poolMutex;  // Protects m_pool from concurrent access
     CredentialStore* m_credentialStore;
     int m_maxSessions;
     QString m_pendingAccountId;  // Account ID waiting for credential load
+
+    // Persistent async login handlers (one per in-flight login)
+    QMap<QString, QObject*> m_loginHandlers;
 };
 
 } // namespace MegaCustom

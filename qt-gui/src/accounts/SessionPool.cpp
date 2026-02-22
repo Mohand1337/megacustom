@@ -8,12 +8,92 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QMutexLocker>
+#include <QMetaObject>
+#include <QTimer>
 #include <algorithm>
 
 namespace MegaCustom {
 
 // User agent for MEGA SDK
 static const char* MEGA_USER_AGENT = "MegaCustomApp/1.0";
+
+/**
+ * Async login handler - chains fastLogin → fetchNodes without blocking.
+ * Lives as a QObject so signals from the MEGA SDK thread are safely
+ * delivered to the main thread via queued connections.
+ */
+class AsyncLoginHandler : public QObject, public mega::MegaRequestListener {
+    Q_OBJECT
+public:
+    enum Phase { PhaseLogin, PhaseFetchNodes };
+
+    AsyncLoginHandler(const QString& accountId, mega::MegaApi* api, QObject* parent)
+        : QObject(parent), m_accountId(accountId), m_api(api), m_phase(PhaseLogin)
+    {
+        m_timer.setSingleShot(true);
+        connect(&m_timer, &QTimer::timeout, this, &AsyncLoginHandler::onTimeout);
+    }
+
+    void startLogin(const QString& sessionToken) {
+        qDebug() << "AsyncLoginHandler: Starting fastLogin for" << m_accountId;
+        m_timer.start(120000); // 120s timeout for login
+        m_api->fastLogin(sessionToken.toUtf8().constData(), this);
+    }
+
+    // Called from MEGA SDK internal thread — must not touch Qt objects directly
+    void onRequestFinish(mega::MegaApi*, mega::MegaRequest*, mega::MegaError* e) override {
+        int errorCode = e->getErrorCode();
+        QString errorStr = QString::fromUtf8(e->getErrorString());
+        Phase phase = m_phase;
+
+        // Post result back to main thread
+        QMetaObject::invokeMethod(this, [this, phase, errorCode, errorStr]() {
+            handleResult(phase, errorCode, errorStr);
+        }, Qt::QueuedConnection);
+    }
+
+signals:
+    void loginComplete(const QString& accountId);
+    void loginFailed(const QString& accountId, const QString& error, bool expired);
+
+private slots:
+    void onTimeout() {
+        m_api->cancelTransfers(mega::MegaTransfer::TYPE_DOWNLOAD);
+        QString phase = (m_phase == PhaseLogin) ? "Login" : "Fetch nodes";
+        qWarning() << "AsyncLoginHandler:" << phase << "timeout for" << m_accountId;
+        emit loginFailed(m_accountId, phase + " timeout", m_phase == PhaseLogin);
+    }
+
+private:
+    void handleResult(Phase phase, int errorCode, const QString& errorStr) {
+        m_timer.stop();
+
+        if (phase == PhaseLogin) {
+            if (errorCode == mega::MegaError::API_OK) {
+                qDebug() << "AsyncLoginHandler: fastLogin OK, fetching nodes for" << m_accountId;
+                m_phase = PhaseFetchNodes;
+                m_timer.start(180000); // 180s for fetchNodes
+                m_api->fetchNodes(this);
+            } else {
+                qWarning() << "AsyncLoginHandler: fastLogin failed for" << m_accountId << "-" << errorStr;
+                emit loginFailed(m_accountId, errorStr, true);
+            }
+        } else { // PhaseFetchNodes
+            if (errorCode == mega::MegaError::API_OK) {
+                qDebug() << "AsyncLoginHandler: fetchNodes OK for" << m_accountId;
+                emit loginComplete(m_accountId);
+            } else {
+                qWarning() << "AsyncLoginHandler: fetchNodes failed for" << m_accountId << "-" << errorStr;
+                emit loginFailed(m_accountId, errorStr, false);
+            }
+        }
+    }
+
+    QString m_accountId;
+    mega::MegaApi* m_api;
+    Phase m_phase;
+    QTimer m_timer;
+};
 
 SessionPool::SessionPool(CredentialStore* credentialStore, QObject* parent)
     : QObject(parent)
@@ -29,6 +109,12 @@ SessionPool::SessionPool(CredentialStore* credentialStore, QObject* parent)
 
 SessionPool::~SessionPool()
 {
+    // Clean up any in-flight login handlers
+    for (auto* handler : m_loginHandlers) {
+        delete handler;
+    }
+    m_loginHandlers.clear();
+
     releaseAllSessions(true);
 }
 
@@ -387,100 +473,47 @@ void SessionPool::performLogin(const QString& accountId, const QString& sessionT
         api = session.api;
     }
 
-    qDebug() << "SessionPool: Performing fastLogin for" << accountId;
+    qDebug() << "SessionPool: Performing async fastLogin for" << accountId;
 
-    // Use a synchronous listener for login
-    // In a production app, you'd use async with callbacks
-    class LoginListener : public mega::MegaRequestListener {
-    public:
-        bool finished = false;
-        bool success = false;
-        QString error;
-
-        void onRequestFinish(mega::MegaApi*, mega::MegaRequest* request, mega::MegaError* e) override {
-            finished = true;
-            if (e->getErrorCode() == mega::MegaError::API_OK) {
-                success = true;
-            } else {
-                success = false;
-                error = QString::fromUtf8(e->getErrorString());
-            }
-        }
-    };
-
-    LoginListener listener;
-
-    // Fast login with session token
-    api->fastLogin(sessionToken.toUtf8().constData(), &listener);
-
-    // Wait for completion (with timeout)
-    int timeout = 120000;  // 120 seconds (increased for large accounts)
-    int waited = 0;
-    while (!listener.finished && waited < timeout) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        QThread::msleep(100);
-        waited += 100;
+    // Clean up any previous handler for this account
+    if (m_loginHandlers.contains(accountId)) {
+        m_loginHandlers[accountId]->deleteLater();
+        m_loginHandlers.remove(accountId);
     }
 
-    if (!listener.finished) {
-        {
-            QMutexLocker locker(&m_poolMutex);
-            if (m_pool.contains(accountId)) {
-                CachedSession& session = m_pool[accountId];
-                session.isLoggingIn = false;
-                session.isConnected = false;
-            }
-        }
-        emit sessionError(accountId, "Login timeout");
-        emit sessionExpired(accountId);
-        return;
-    }
+    // Create async handler — non-blocking, chains login → fetchNodes via signals
+    auto* handler = new AsyncLoginHandler(accountId, api, this);
+    m_loginHandlers[accountId] = handler;
 
-    if (!listener.success) {
-        {
-            QMutexLocker locker(&m_poolMutex);
-            if (m_pool.contains(accountId)) {
-                CachedSession& session = m_pool[accountId];
-                session.isLoggingIn = false;
-                session.isConnected = false;
-            }
-        }
-        qWarning() << "SessionPool: Login failed for" << accountId << "-" << listener.error;
-        emit sessionError(accountId, listener.error);
-        emit sessionExpired(accountId);
-        return;
-    }
+    connect(handler, &AsyncLoginHandler::loginComplete,
+            this, &SessionPool::onAsyncLoginComplete);
+    connect(handler, &AsyncLoginHandler::loginFailed,
+            this, &SessionPool::onAsyncLoginFailed);
 
-    // Login successful - now fetch nodes
-    qDebug() << "SessionPool: Login successful, fetching nodes for" << accountId;
+    handler->startLogin(sessionToken);
+    // Returns immediately — UI stays responsive
+}
 
-    LoginListener fetchListener;
-    api->fetchNodes(&fetchListener);
-
-    waited = 0;
-    int fetchTimeout = 180000;  // 180 seconds for fetch (increased for large accounts with 100k+ files)
-    while (!fetchListener.finished && waited < fetchTimeout) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        QThread::msleep(100);
-        waited += 100;
-    }
-
-    if (!fetchListener.finished || !fetchListener.success) {
-        {
-            QMutexLocker locker(&m_poolMutex);
-            if (m_pool.contains(accountId)) {
-                CachedSession& session = m_pool[accountId];
-                session.isLoggingIn = false;
-                session.isConnected = false;
-            }
-        }
-        QString error = fetchListener.finished ? fetchListener.error : "Fetch nodes timeout";
-        emit sessionError(accountId, error);
-        return;
+void SessionPool::onAsyncLoginComplete(const QString& accountId)
+{
+    // Clean up handler
+    if (m_loginHandlers.contains(accountId)) {
+        m_loginHandlers[accountId]->deleteLater();
+        m_loginHandlers.remove(accountId);
     }
 
     // Verify we have nodes
-    mega::MegaNode* rootNode = api->getRootNode();
+    mega::MegaApi* api = nullptr;
+    {
+        QMutexLocker locker(&m_poolMutex);
+        if (!m_pool.contains(accountId)) {
+            emit sessionError(accountId, "Session removed during login");
+            return;
+        }
+        api = m_pool[accountId].api;
+    }
+
+    mega::MegaNode* rootNode = api ? api->getRootNode() : nullptr;
     if (!rootNode) {
         {
             QMutexLocker locker(&m_poolMutex);
@@ -490,12 +523,12 @@ void SessionPool::performLogin(const QString& accountId, const QString& sessionT
                 session.isConnected = false;
             }
         }
-        emit sessionError(accountId, "Failed to get root node");
+        emit sessionError(accountId, "Failed to get root node after login");
         return;
     }
     delete rootNode;
 
-    // Success! - Update session state under lock
+    // Success — mark session as connected
     {
         QMutexLocker locker(&m_poolMutex);
         if (m_pool.contains(accountId)) {
@@ -509,6 +542,30 @@ void SessionPool::performLogin(const QString& accountId, const QString& sessionT
     qDebug() << "SessionPool: Session ready for" << accountId;
     emit sessionCreated(accountId);
     emit sessionReady(accountId);
+}
+
+void SessionPool::onAsyncLoginFailed(const QString& accountId, const QString& error, bool expired)
+{
+    // Clean up handler
+    if (m_loginHandlers.contains(accountId)) {
+        m_loginHandlers[accountId]->deleteLater();
+        m_loginHandlers.remove(accountId);
+    }
+
+    {
+        QMutexLocker locker(&m_poolMutex);
+        if (m_pool.contains(accountId)) {
+            CachedSession& session = m_pool[accountId];
+            session.isLoggingIn = false;
+            session.isConnected = false;
+        }
+    }
+
+    qWarning() << "SessionPool: Login failed for" << accountId << "-" << error;
+    emit sessionError(accountId, error);
+    if (expired) {
+        emit sessionExpired(accountId);
+    }
 }
 
 void SessionPool::cleanupSession(CachedSession& session)
@@ -526,3 +583,6 @@ void SessionPool::cleanupSession(CachedSession& session)
 }
 
 } // namespace MegaCustom
+
+// Required for Q_OBJECT class defined in .cpp file
+#include "SessionPool.moc"

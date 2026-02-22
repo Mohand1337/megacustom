@@ -717,39 +717,34 @@ void AccountManager::refreshStorageInfo()
         return;
     }
 
-    // Get account details asynchronously
-    // For now, use synchronous for simplicity
-    class AccountListener : public mega::MegaRequestListener {
+    // Use a persistent listener so the callback fires asynchronously
+    // without blocking the main thread.
+    class StorageListener : public QObject, public mega::MegaRequestListener {
     public:
-        bool finished = false;
-        qint64 used = 0;
-        qint64 total = 0;
+        StorageListener(AccountManager* mgr, const QString& accountId)
+            : QObject(mgr), m_mgr(mgr), m_accountId(accountId) {}
 
         void onRequestFinish(mega::MegaApi*, mega::MegaRequest* request, mega::MegaError* e) override {
-            finished = true;
-            if (e->getErrorCode() == mega::MegaError::API_OK) {
-                used = request->getNumber();
-                total = request->getTotalBytes();
-            }
+            int errorCode = e->getErrorCode();
+            qint64 used = (errorCode == mega::MegaError::API_OK) ? request->getNumber() : 0;
+            qint64 total = (errorCode == mega::MegaError::API_OK) ? request->getTotalBytes() : 0;
+            QMetaObject::invokeMethod(m_mgr, [this, used, total]() {
+                if (m_mgr->m_accounts.contains(m_accountId)) {
+                    m_mgr->m_accounts[m_accountId].storageUsed = used;
+                    m_mgr->m_accounts[m_accountId].storageTotal = total;
+                    m_mgr->m_dirty = true;
+                    emit m_mgr->storageInfoUpdated(m_accountId);
+                }
+                deleteLater();
+            }, Qt::QueuedConnection);
         }
+    private:
+        AccountManager* m_mgr;
+        QString m_accountId;
     };
 
-    AccountListener listener;
-    api->getAccountDetails(&listener);
-
-    int waited = 0;
-    while (!listener.finished && waited < 10000) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        QThread::msleep(100);
-        waited += 100;
-    }
-
-    if (listener.finished && m_accounts.contains(m_activeAccountId)) {
-        m_accounts[m_activeAccountId].storageUsed = listener.used;
-        m_accounts[m_activeAccountId].storageTotal = listener.total;
-        m_dirty = true;
-        emit storageInfoUpdated(m_activeAccountId);
-    }
+    auto* listener = new StorageListener(this, m_activeAccountId);
+    api->getAccountDetails(listener);
 }
 
 void AccountManager::updateAccountSession(const QString& accountId, mega::MegaApi* api)

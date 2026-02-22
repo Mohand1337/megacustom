@@ -224,6 +224,9 @@ LogManager& LogManager::instance() {
 LogManager::LogManager() {
     // Default log directory
     const char* home = getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = getenv("USERPROFILE");
+#endif
     if (home) {
         m_logDir = std::string(home) + "/.megacustom/logs";
     } else {
