@@ -417,8 +417,19 @@ std::string Watermarker::buildFFmpegFilter() const {
     // Use forward slashes for FFmpeg compatibility
     std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
 
+    // Escape special characters in font path for FFmpeg filter option parsing.
+    // ':' is the option separator, '\' is the escape char, "'" is the quote char.
+    // We must escape ':' (e.g. drive letter "C:/") so FFmpeg doesn't treat it as a delimiter.
+    std::string escapedFontPath;
+    for (char c : fontFilePath) {
+        if (c == ':' || c == '\'' || c == '\\') {
+            escapedFontPath += '\\';
+        }
+        escapedFontPath += c;
+    }
+
     std::string fontFile = fontFilePath.empty() ? "" :
-        "fontfile='" + fontFilePath + "':";
+        "fontfile=" + escapedFontPath + ":";
 
     // Primary text (line 1) - golden color, random position, appears periodically
     filter << "drawtext=" << fontFile
