@@ -47,6 +47,10 @@ void WatermarkWorker::setMemberId(const QString& memberId) {
     m_memberId = memberId;
 }
 
+void WatermarkWorker::setMemberIds(const QStringList& memberIds) {
+    m_memberIds = memberIds;
+}
+
 void WatermarkWorker::cancel() {
     m_cancelled = true;
 }
@@ -57,12 +61,62 @@ void WatermarkWorker::process() {
     m_cancelled = false;
     int successCount = 0;
     int failCount = 0;
-    int total = m_files.size();
 
     Watermarker watermarker;
     if (m_config) {
         watermarker.setConfig(*m_config);
     }
+
+    // All-members mode: iterate files x members
+    if (!m_memberIds.isEmpty()) {
+        int total = m_files.size() * m_memberIds.size();
+        int idx = 0;
+
+        watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
+            emit this->progress(progress.currentIndex, total,
+                               QString::fromStdString(progress.currentFile),
+                               static_cast<int>(progress.percentComplete));
+        });
+
+        for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
+            QString inputPath = m_files[i];
+            std::string inputStd = inputPath.toStdString();
+            std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
+
+            for (int j = 0; j < m_memberIds.size() && !m_cancelled; ++j) {
+                QString memberId = m_memberIds[j];
+                QString label = QString("%1 [%2]").arg(QFileInfo(inputPath).fileName()).arg(memberId);
+                emit progress(idx, total, label, 0);
+
+                WatermarkResult result;
+                if (Watermarker::isVideoFile(inputStd)) {
+                    result = watermarker.watermarkVideoForMember(inputStd, memberId.toStdString(), outputDir);
+                } else if (Watermarker::isPdfFile(inputStd)) {
+                    result = watermarker.watermarkPdfForMember(inputStd, memberId.toStdString(), outputDir);
+                } else {
+                    result.success = false;
+                    result.error = "Unsupported file type";
+                }
+
+                if (result.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+
+                emit fileCompleted(i, result.success,
+                                  QString::fromStdString(result.outputFile),
+                                  QString::fromStdString(result.error));
+                idx++;
+            }
+        }
+
+        emit finished(successCount, failCount);
+        return;
+    }
+
+    // Single-member or global mode
+    int total = m_files.size();
 
     // Set progress callback
     watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
@@ -605,6 +659,7 @@ void WatermarkPanel::selectMember(const QString& memberId) {
 void WatermarkPanel::loadMembers() {
     m_memberCombo->clear();
     m_memberCombo->addItem("-- Select Member --", "");
+    m_memberCombo->addItem("-- All Members --", "ALL");
 
     QList<MemberInfo> members = m_registry->getActiveMembers();
     for (const MemberInfo& m : members) {
@@ -740,9 +795,17 @@ void WatermarkPanel::onStartWatermark() {
             return;
         }
     } else {
-        if (m_memberCombo->currentData().toString().isEmpty()) {
+        QString selectedMember = m_memberCombo->currentData().toString();
+        if (selectedMember.isEmpty()) {
             QMessageBox::warning(this, "No Member", "Please select a member.");
             return;
+        }
+        if (selectedMember == "ALL") {
+            QList<MemberInfo> activeMembers = m_registry->getActiveMembers();
+            if (activeMembers.isEmpty()) {
+                QMessageBox::warning(this, "No Members", "No active members found.");
+                return;
+            }
         }
     }
 
@@ -761,10 +824,19 @@ void WatermarkPanel::onStartWatermark() {
         outputDir = m_outputDirEdit->text();
     }
 
-    // Get member ID (if per-member mode)
+    // Get member ID(s) (if per-member mode)
     QString memberId;
+    QStringList allMemberIds;
     if (m_modeCombo->currentData().toString() == "member") {
-        memberId = m_memberCombo->currentData().toString();
+        QString selected = m_memberCombo->currentData().toString();
+        if (selected == "ALL") {
+            QList<MemberInfo> activeMembers = m_registry->getActiveMembers();
+            for (const MemberInfo& m : activeMembers) {
+                allMemberIds.append(m.id);
+            }
+        } else {
+            memberId = selected;
+        }
     }
 
     // Reset file statuses
@@ -785,6 +857,7 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setOutputDir(outputDir);
     m_worker->setConfig(config);
     m_worker->setMemberId(memberId);
+    m_worker->setMemberIds(allMemberIds);
 
     connect(m_workerThread, &QThread::started, m_worker, &WatermarkWorker::process);
     connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);

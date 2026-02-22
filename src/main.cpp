@@ -2354,6 +2354,7 @@ int handleWatermark(const std::vector<std::string>& args) {
         std::cout << "  file <input> [output]               Auto-detect and watermark\n";
         std::cout << "  batch <dir> <output-dir>            Watermark all files in directory\n";
         std::cout << "  member <input> <member-id> [dir]    Watermark for specific member\n";
+        std::cout << "  all-members <input> [output-dir]    Watermark for all members\n";
         std::cout << "  check                               Check FFmpeg/Python availability\n";
         std::cout << "\nOptions:\n";
         std::cout << "  --text <text>                       Primary watermark text\n";
@@ -2370,6 +2371,7 @@ int handleWatermark(const std::vector<std::string>& args) {
         std::cout << "  megacustom watermark video input.mp4 output.mp4 --text \"My Brand\"\n";
         std::cout << "  megacustom watermark pdf doc.pdf --text \"Confidential\" --opacity 0.2\n";
         std::cout << "  megacustom watermark member video.mp4 EGB001\n";
+        std::cout << "  megacustom watermark all-members video.mp4 /output\n";
         std::cout << "  megacustom watermark batch /videos /output --parallel 4\n";
         return 0;
     }
@@ -2640,6 +2642,61 @@ int handleWatermark(const std::vector<std::string>& args) {
             std::cerr << "\n✗ Failed: " << result.error << "\n";
             return 1;
         }
+    }
+
+    // ============ ALL-MEMBERS ============
+    else if (cmd == "all-members") {
+        if (args.size() < 2) {
+            std::cout << "Usage: megacustom watermark all-members <input> [output-dir]\n";
+            std::cout << "Example: megacustom watermark all-members video.mp4 /output\n";
+            return 1;
+        }
+
+        std::string input = args[1];
+        std::string outputDir = (args.size() > 2 && args[2][0] != '-') ? args[2] : "";
+
+        if (!MegaCustom::Watermarker::isVideoFile(input) && !MegaCustom::Watermarker::isPdfFile(input)) {
+            std::cerr << "Error: Unsupported file type. Must be video or PDF.\n";
+            return 1;
+        }
+
+        // Fetch all members
+        MegaCustom::MemberDatabase db;
+        auto membersResult = db.getAllMembers();
+        if (!membersResult.success || membersResult.members.empty()) {
+            std::cerr << "Error: No members found. Add members first with 'megacustom member add'.\n";
+            return 1;
+        }
+
+        std::cout << "Watermarking for all " << membersResult.members.size() << " members...\n";
+        std::cout << "Input: " << input << "\n\n";
+
+        int successCount = 0;
+        int failCount = 0;
+        int total = static_cast<int>(membersResult.members.size());
+
+        for (int i = 0; i < total; ++i) {
+            const auto& member = membersResult.members[i];
+            std::cout << "[" << (i + 1) << "/" << total << "] " << member.id << " (" << member.name << ")... ";
+
+            MegaCustom::WatermarkResult result;
+            if (MegaCustom::Watermarker::isVideoFile(input)) {
+                result = watermarker.watermarkVideoForMember(input, member.id, outputDir);
+            } else {
+                result = watermarker.watermarkPdfForMember(input, member.id, outputDir);
+            }
+
+            if (result.success) {
+                successCount++;
+                std::cout << "✓ " << result.outputFile << "\n";
+            } else {
+                failCount++;
+                std::cout << "✗ " << result.error << "\n";
+            }
+        }
+
+        std::cout << "\nDone: " << successCount << " succeeded, " << failCount << " failed out of " << total << " members.\n";
+        return (failCount == 0) ? 0 : 1;
     }
 
     else {

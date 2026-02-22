@@ -400,8 +400,22 @@ std::string Watermarker::buildFFmpegFilter() const {
         return result;
     };
 
-    std::string fontFile = m_config.fontPath.empty() ? "" :
-        "fontfile='" + m_config.fontPath + "':";
+    std::string fontFilePath = m_config.fontPath;
+#ifdef _WIN32
+    // On Windows, fontconfig is typically not configured, so we must specify
+    // a font file explicitly. Use Arial as a safe default.
+    if (fontFilePath.empty()) {
+        const char* windir = std::getenv("WINDIR");
+        std::string winFontsDir = windir ? std::string(windir) + "\\Fonts" : "C:\\Windows\\Fonts";
+        std::string arialPath = winFontsDir + "\\arial.ttf";
+        struct stat st;
+        if (stat(arialPath.c_str(), &st) == 0) {
+            fontFilePath = arialPath;
+        }
+    }
+#endif
+    std::string fontFile = fontFilePath.empty() ? "" :
+        "fontfile='" + fontFilePath + "':";
 
     // Primary text (line 1) - golden color, random position, appears periodically
     filter << "drawtext=" << fontFile

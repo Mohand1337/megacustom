@@ -49,6 +49,7 @@ public:
     void setOutputDir(const QString& dir);
     void setConfig(const WatermarkConfig& config);
     void setMemberId(const QString& memberId);
+    void setMemberIds(const QStringList& memberIds);
 
 public slots:
     void process();
@@ -64,6 +65,7 @@ private:
     QStringList m_files;
     QString m_outputDir;
     QString m_memberId;
+    QStringList m_memberIds;
     std::shared_ptr<WatermarkConfig> m_config;
     bool m_cancelled = false;
 };
