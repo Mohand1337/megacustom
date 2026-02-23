@@ -156,6 +156,32 @@ PathType PathType::fromJson(const QJsonObject& obj) {
     return pt;
 }
 
+// MemberGroup JSON serialization
+QJsonObject MemberGroup::toJson() const {
+    QJsonObject obj;
+    obj["name"] = name;
+    obj["description"] = description;
+    QJsonArray ids;
+    for (const QString& id : memberIds) ids.append(id);
+    obj["memberIds"] = ids;
+    if (createdAt > 0) obj["createdAt"] = createdAt;
+    if (updatedAt > 0) obj["updatedAt"] = updatedAt;
+    return obj;
+}
+
+MemberGroup MemberGroup::fromJson(const QJsonObject& obj) {
+    MemberGroup group;
+    group.name = obj["name"].toString();
+    group.description = obj["description"].toString();
+    QJsonArray ids = obj["memberIds"].toArray();
+    for (const QJsonValue& v : ids) {
+        group.memberIds.append(v.toString());
+    }
+    group.createdAt = obj["createdAt"].toInteger(0);
+    group.updatedAt = obj["updatedAt"].toInteger(0);
+    return group;
+}
+
 // MemberTemplate methods
 void MemberTemplate::initDefaultPathTypes() {
     pathTypes.clear();
@@ -303,7 +329,19 @@ bool MemberRegistry::load() {
         m_members[info.id] = info;
     }
 
-    qDebug() << "Loaded" << m_members.size() << "members from registry";
+    // Load groups
+    m_groups.clear();
+    if (root.contains("groups")) {
+        QJsonArray groupsArray = root["groups"].toArray();
+        for (const QJsonValue& val : groupsArray) {
+            MemberGroup group = MemberGroup::fromJson(val.toObject());
+            if (!group.name.isEmpty()) {
+                m_groups[group.name] = group;
+            }
+        }
+    }
+
+    qDebug() << "Loaded" << m_members.size() << "members and" << m_groups.size() << "groups from registry";
     emit membersReloaded();
     return true;
 }
@@ -320,6 +358,13 @@ bool MemberRegistry::save() {
         membersArray.append(info.toJson());
     }
     root["members"] = membersArray;
+
+    // Save groups
+    QJsonArray groupsArray;
+    for (const MemberGroup& group : m_groups) {
+        groupsArray.append(group.toJson());
+    }
+    root["groups"] = groupsArray;
 
     QJsonDocument doc(root);
 
@@ -426,6 +471,13 @@ bool MemberRegistry::exportToFile(const QString& filePath) {
     }
     root["members"] = membersArray;
 
+    // Export groups
+    QJsonArray groupsArray;
+    for (const MemberGroup& group : m_groups) {
+        groupsArray.append(group.toJson());
+    }
+    root["groups"] = groupsArray;
+
     QJsonDocument doc(root);
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
@@ -460,6 +512,18 @@ bool MemberRegistry::importFromFile(const QString& filePath) {
     for (const QJsonValue& val : membersArray) {
         MemberInfo info = MemberInfo::fromJson(val.toObject());
         m_members[info.id] = info;
+    }
+
+    // Import groups
+    m_groups.clear();
+    if (root.contains("groups")) {
+        QJsonArray groupsArray = root["groups"].toArray();
+        for (const QJsonValue& val : groupsArray) {
+            MemberGroup group = MemberGroup::fromJson(val.toObject());
+            if (!group.name.isEmpty()) {
+                m_groups[group.name] = group;
+            }
+        }
     }
 
     save();
@@ -669,6 +733,69 @@ QList<MemberInfo> MemberRegistry::filterMembers(const QString& searchText,
     });
 
     return list;
+}
+
+// ==================== Member Groups ====================
+
+QList<MemberGroup> MemberRegistry::getAllGroups() const {
+    return m_groups.values();
+}
+
+MemberGroup MemberRegistry::getGroup(const QString& name) const {
+    return m_groups.value(name);
+}
+
+bool MemberRegistry::hasGroup(const QString& name) const {
+    return m_groups.contains(name);
+}
+
+QStringList MemberRegistry::getGroupNames() const {
+    QStringList names = m_groups.keys();
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+void MemberRegistry::addGroup(const MemberGroup& group) {
+    m_groups[group.name] = group;
+    save();
+    emit groupAdded(group.name);
+}
+
+void MemberRegistry::updateGroup(const MemberGroup& group) {
+    if (m_groups.contains(group.name)) {
+        m_groups[group.name] = group;
+        save();
+        emit groupUpdated(group.name);
+    }
+}
+
+void MemberRegistry::removeGroup(const QString& name) {
+    if (m_groups.remove(name) > 0) {
+        save();
+        emit groupRemoved(name);
+    }
+}
+
+QStringList MemberRegistry::getGroupMemberIds(const QString& groupName) const {
+    if (!m_groups.contains(groupName)) return {};
+    QStringList result;
+    for (const QString& id : m_groups[groupName].memberIds) {
+        if (m_members.contains(id) && m_members[id].active) {
+            result.append(id);
+        }
+    }
+    return result;
+}
+
+QStringList MemberRegistry::getGroupsForMember(const QString& memberId) const {
+    QStringList result;
+    for (auto it = m_groups.constBegin(); it != m_groups.constEnd(); ++it) {
+        if (it.value().memberIds.contains(memberId)) {
+            result.append(it.key());
+        }
+    }
+    result.sort(Qt::CaseInsensitive);
+    return result;
 }
 
 } // namespace MegaCustom

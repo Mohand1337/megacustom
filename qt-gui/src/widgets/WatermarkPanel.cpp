@@ -183,6 +183,9 @@ WatermarkPanel::WatermarkPanel(QWidget* parent)
     connect(m_registry, &MemberRegistry::membersReloaded, this, &WatermarkPanel::loadMembers);
     connect(m_registry, &MemberRegistry::memberAdded, this, &WatermarkPanel::loadMembers);
     connect(m_registry, &MemberRegistry::memberRemoved, this, &WatermarkPanel::loadMembers);
+    connect(m_registry, &MemberRegistry::groupAdded, this, &WatermarkPanel::loadMembers);
+    connect(m_registry, &MemberRegistry::groupUpdated, this, &WatermarkPanel::loadMembers);
+    connect(m_registry, &MemberRegistry::groupRemoved, this, &WatermarkPanel::loadMembers);
 }
 
 WatermarkPanel::~WatermarkPanel() {
@@ -664,6 +667,20 @@ void WatermarkPanel::loadMembers() {
     m_memberCombo->addItem("-- Select Member --", "");
     m_memberCombo->addItem("-- All Members --", "ALL");
 
+    // Add groups
+    QStringList groupNames = m_registry->getGroupNames();
+    if (!groupNames.isEmpty()) {
+        m_memberCombo->insertSeparator(m_memberCombo->count());
+        for (const QString& name : groupNames) {
+            int count = m_registry->getGroupMemberIds(name).size();
+            m_memberCombo->addItem(
+                QString("[Group] %1 (%2)").arg(name).arg(count),
+                "GROUP:" + name);
+        }
+    }
+
+    // Add individual members
+    m_memberCombo->insertSeparator(m_memberCombo->count());
     QList<MemberInfo> members = m_registry->getActiveMembers();
     for (const MemberInfo& m : members) {
         m_memberCombo->addItem(QString("%1 (%2)").arg(m.displayName).arg(m.id), m.id);
@@ -809,6 +826,14 @@ void WatermarkPanel::onStartWatermark() {
                 QMessageBox::warning(this, "No Members", "No active members found.");
                 return;
             }
+        } else if (selectedMember.startsWith("GROUP:")) {
+            QString groupName = selectedMember.mid(6);
+            QStringList groupIds = m_registry->getGroupMemberIds(groupName);
+            if (groupIds.isEmpty()) {
+                QMessageBox::warning(this, "Empty Group",
+                    QString("Group '%1' has no active members.").arg(groupName));
+                return;
+            }
         }
     }
 
@@ -837,6 +862,9 @@ void WatermarkPanel::onStartWatermark() {
             for (const MemberInfo& m : activeMembers) {
                 allMemberIds.append(m.id);
             }
+        } else if (selected.startsWith("GROUP:")) {
+            QString groupName = selected.mid(6);
+            allMemberIds = m_registry->getGroupMemberIds(groupName);
         } else {
             memberId = selected;
         }

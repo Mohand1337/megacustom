@@ -110,11 +110,13 @@ private:
 
     QPushButton* m_selectAllBtn;
     QPushButton* m_deselectAllBtn;
+    QComboBox* m_groupCombo;
     QPushButton* m_previewBtn;
     QPushButton* m_startBtn;
     QPushButton* m_pauseBtn;
     QPushButton* m_stopBtn;
     QPushButton* m_bulkRenameBtn;
+    QLabel* m_moveWarningBanner = nullptr;
 
     QCheckBox* m_removeWatermarkSuffixCheck;
     QCheckBox* m_createDestFolderCheck;
@@ -154,6 +156,7 @@ private:
 
     // Helper methods
     void cleanupWorkerThread();
+    void loadGroups();
 };
 
 } // namespace MegaCustom

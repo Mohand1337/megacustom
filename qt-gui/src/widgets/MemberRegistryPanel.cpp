@@ -39,6 +39,11 @@ MemberRegistryPanel::MemberRegistryPanel(QWidget* parent)
     connect(m_registry, &MemberRegistry::memberUpdated, this, &MemberRegistryPanel::refresh);
     connect(m_registry, &MemberRegistry::memberRemoved, this, &MemberRegistryPanel::refresh);
     connect(m_registry, &MemberRegistry::templateChanged, this, &MemberRegistryPanel::refreshTemplate);
+    connect(m_registry, &MemberRegistry::groupAdded, this, &MemberRegistryPanel::refresh);
+    connect(m_registry, &MemberRegistry::groupUpdated, this, [this]() {
+        if (!m_suppressGroupRefresh) refresh();
+    });
+    connect(m_registry, &MemberRegistry::groupRemoved, this, &MemberRegistryPanel::refresh);
 }
 
 void MemberRegistryPanel::setFileController(FileController* controller) {
@@ -115,9 +120,9 @@ void MemberRegistryPanel::setupUI() {
 
     // Members table with extended columns
     m_memberTable = new QTableWidget();
-    m_memberTable->setColumnCount(7);
+    m_memberTable->setColumnCount(8);
     m_memberTable->setHorizontalHeaderLabels({
-        "#", "ID", "Display Name", "Email", "Distribution Folder", "WM Fields", "Active"
+        "#", "ID", "Display Name", "Email", "Distribution Folder", "WM Fields", "Active", "Groups"
     });
     m_memberTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_memberTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -133,12 +138,14 @@ void MemberRegistryPanel::setupUI() {
     m_memberTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);    // Folder
     m_memberTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Interactive); // WM Fields
     m_memberTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);      // Active
+    m_memberTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Interactive); // Groups
     m_memberTable->setColumnWidth(0, 40);
     m_memberTable->setColumnWidth(1, 100);
     m_memberTable->setColumnWidth(2, 120);
     m_memberTable->setColumnWidth(3, 160);
     m_memberTable->setColumnWidth(5, 100);
     m_memberTable->setColumnWidth(6, 60);
+    m_memberTable->setColumnWidth(7, 120);
 
     m_memberTable->setStyleSheet(R"(
         QTableWidget {
@@ -174,6 +181,32 @@ void MemberRegistryPanel::setupUI() {
         menu.addAction("Edit", this, &MemberRegistryPanel::onEditMember);
         menu.addAction("Bind Folder...", this, &MemberRegistryPanel::onBindFolder);
         menu.addAction("Unbind Folder", this, &MemberRegistryPanel::onUnbindFolder);
+        menu.addSeparator();
+
+        // Add to Group submenu
+        QMenu* groupMenu = menu.addMenu("Add to Group...");
+        QStringList groupNames = m_registry->getGroupNames();
+        if (groupNames.isEmpty()) {
+            groupMenu->addAction("(No groups created)")->setEnabled(false);
+        } else {
+            for (const QString& gn : groupNames) {
+                MemberGroup group = m_registry->getGroup(gn);
+                bool inGroup = group.memberIds.contains(memberId);
+                QAction* action = groupMenu->addAction(
+                    (inGroup ? QString::fromUtf8("\xe2\x9c\x93 ") : QString("  ")) + gn);
+                connect(action, &QAction::triggered, this, [this, gn, memberId]() {
+                    MemberGroup g = m_registry->getGroup(gn);
+                    if (g.memberIds.contains(memberId)) {
+                        g.memberIds.removeAll(memberId);
+                    } else {
+                        g.memberIds.append(memberId);
+                    }
+                    g.updatedAt = QDateTime::currentSecsSinceEpoch();
+                    m_registry->updateGroup(g);
+                });
+            }
+        }
+
         menu.addSeparator();
         menu.addAction("Remove", this, &MemberRegistryPanel::onRemoveMember);
         menu.exec(m_memberTable->viewport()->mapToGlobal(pos));
@@ -332,6 +365,161 @@ void MemberRegistryPanel::setupUI() {
 
     tabWidget->addTab(templateTab, "Global Template");
 
+    // === Groups Tab ===
+    QWidget* groupsTab = new QWidget();
+    QVBoxLayout* groupsLayout = new QVBoxLayout(groupsTab);
+    groupsLayout->setContentsMargins(8, 8, 8, 8);
+
+    QLabel* groupsDescLabel = new QLabel(
+        "Create named groups of members for quick selection in Watermark and Distribution panels.");
+    groupsDescLabel->setStyleSheet("color: #888;");
+    groupsDescLabel->setWordWrap(true);
+    groupsLayout->addWidget(groupsDescLabel);
+
+    QSplitter* groupSplitter = new QSplitter(Qt::Horizontal);
+
+    // Left: group list
+    QWidget* groupListWidget = new QWidget();
+    QVBoxLayout* groupListLayout = new QVBoxLayout(groupListWidget);
+    groupListLayout->setContentsMargins(0, 0, 0, 0);
+
+    QLabel* groupListLabel = new QLabel("Groups");
+    groupListLabel->setStyleSheet("font-weight: bold; color: #e0e0e0;");
+    groupListLayout->addWidget(groupListLabel);
+
+    m_groupList = new QListWidget();
+    m_groupList->setStyleSheet(R"(
+        QListWidget {
+            background-color: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 4px;
+        }
+        QListWidget::item {
+            padding: 6px;
+            color: #e0e0e0;
+        }
+        QListWidget::item:selected {
+            background-color: #0d6efd;
+        }
+        QListWidget::item:hover {
+            background-color: #333;
+        }
+    )");
+    m_groupList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_groupList, &QListWidget::currentRowChanged,
+            this, &MemberRegistryPanel::onGroupSelectionChanged);
+    connect(m_groupList, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        if (m_groupList->currentRow() < 0) return;
+        QMenu menu(this);
+        menu.addAction("Rename", this, &MemberRegistryPanel::onRenameGroup);
+        menu.addAction("Duplicate", this, &MemberRegistryPanel::onDuplicateGroup);
+        menu.addSeparator();
+        menu.addAction("Delete", this, &MemberRegistryPanel::onDeleteGroup);
+        menu.exec(m_groupList->viewport()->mapToGlobal(pos));
+    });
+    groupListLayout->addWidget(m_groupList, 1);
+
+    QHBoxLayout* groupBtnsLayout = new QHBoxLayout();
+    groupBtnsLayout->setSpacing(4);
+
+    QString groupBtnStyle =
+        "QPushButton { background-color: #444; color: white; "
+        "border: none; border-radius: 4px; padding: 5px 10px; } "
+        "QPushButton:hover { background-color: #555; } "
+        "QPushButton:disabled { background-color: #333; color: #666; }";
+
+    m_addGroupBtn = new QPushButton("+ New");
+    m_addGroupBtn->setStyleSheet(groupBtnStyle);
+    connect(m_addGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onAddGroup);
+
+    m_renameGroupBtn = new QPushButton("Rename");
+    m_renameGroupBtn->setStyleSheet(groupBtnStyle);
+    m_renameGroupBtn->setEnabled(false);
+    connect(m_renameGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onRenameGroup);
+
+    m_deleteGroupBtn = new QPushButton("Delete");
+    m_deleteGroupBtn->setStyleSheet(
+        "QPushButton { background-color: #444; color: #ff6b6b; "
+        "border: none; border-radius: 4px; padding: 5px 10px; } "
+        "QPushButton:hover { background-color: #555; } "
+        "QPushButton:disabled { background-color: #333; color: #666; }");
+    m_deleteGroupBtn->setEnabled(false);
+    connect(m_deleteGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onDeleteGroup);
+
+    m_duplicateGroupBtn = new QPushButton("Duplicate");
+    m_duplicateGroupBtn->setStyleSheet(groupBtnStyle);
+    m_duplicateGroupBtn->setEnabled(false);
+    connect(m_duplicateGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onDuplicateGroup);
+
+    groupBtnsLayout->addWidget(m_addGroupBtn);
+    groupBtnsLayout->addWidget(m_renameGroupBtn);
+    groupBtnsLayout->addWidget(m_duplicateGroupBtn);
+    groupBtnsLayout->addWidget(m_deleteGroupBtn);
+    groupListLayout->addLayout(groupBtnsLayout);
+
+    groupSplitter->addWidget(groupListWidget);
+
+    // Right: members in group
+    QWidget* groupMemberWidget = new QWidget();
+    QVBoxLayout* groupMemberLayout = new QVBoxLayout(groupMemberWidget);
+    groupMemberLayout->setContentsMargins(0, 0, 0, 0);
+
+    QLabel* groupMemberLabel = new QLabel("Members in group:");
+    groupMemberLabel->setStyleSheet("font-weight: bold; color: #e0e0e0;");
+    groupMemberLayout->addWidget(groupMemberLabel);
+
+    m_groupSearchEdit = new QLineEdit();
+    m_groupSearchEdit->setPlaceholderText("Search members...");
+    m_groupSearchEdit->setClearButtonEnabled(true);
+    connect(m_groupSearchEdit, &QLineEdit::textChanged,
+            this, &MemberRegistryPanel::onGroupSearchChanged);
+    groupMemberLayout->addWidget(m_groupSearchEdit);
+
+    m_groupMemberList = new QListWidget();
+    m_groupMemberList->setStyleSheet(R"(
+        QListWidget {
+            background-color: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 4px;
+        }
+        QListWidget::item {
+            padding: 4px;
+            color: #e0e0e0;
+        }
+    )");
+    connect(m_groupMemberList, &QListWidget::itemChanged,
+            this, &MemberRegistryPanel::onGroupMemberToggled);
+    groupMemberLayout->addWidget(m_groupMemberList, 1);
+
+    QHBoxLayout* groupMemberBtnsLayout = new QHBoxLayout();
+    groupMemberBtnsLayout->setSpacing(4);
+
+    m_groupSelectAllBtn = new QPushButton("Select All");
+    m_groupSelectAllBtn->setStyleSheet(groupBtnStyle);
+    m_groupSelectAllBtn->setEnabled(false);
+    connect(m_groupSelectAllBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onGroupSelectAll);
+
+    m_groupDeselectAllBtn = new QPushButton("Deselect All");
+    m_groupDeselectAllBtn->setStyleSheet(groupBtnStyle);
+    m_groupDeselectAllBtn->setEnabled(false);
+    connect(m_groupDeselectAllBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onGroupDeselectAll);
+
+    groupMemberBtnsLayout->addWidget(m_groupSelectAllBtn);
+    groupMemberBtnsLayout->addWidget(m_groupDeselectAllBtn);
+    groupMemberBtnsLayout->addStretch();
+    groupMemberLayout->addLayout(groupMemberBtnsLayout);
+
+    groupSplitter->addWidget(groupMemberWidget);
+    groupSplitter->setSizes({250, 400});
+
+    groupsLayout->addWidget(groupSplitter, 1);
+
+    m_groupStatsLabel = new QLabel();
+    m_groupStatsLabel->setStyleSheet("color: #888;");
+    groupsLayout->addWidget(m_groupStatsLabel);
+
+    tabWidget->addTab(groupsTab, "Groups");
+
     mainLayout->addWidget(tabWidget, 1);
 
     // Stats
@@ -342,6 +530,7 @@ void MemberRegistryPanel::setupUI() {
 
 void MemberRegistryPanel::refresh() {
     populateTable();
+    refreshGroups();
 
     // Update stats
     QList<MemberInfo> all = m_registry->getAllMembers();
@@ -450,6 +639,18 @@ void MemberRegistryPanel::populateTable() {
             activeItem->setForeground(QColor("#888"));
         }
         m_memberTable->setItem(row, 6, activeItem);
+
+        // Groups
+        QTableWidgetItem* groupsItem = new QTableWidgetItem();
+        QStringList memberGroups = m_registry->getGroupsForMember(m.id);
+        if (memberGroups.isEmpty()) {
+            groupsItem->setText("-");
+            groupsItem->setForeground(QColor("#666"));
+        } else {
+            groupsItem->setText(memberGroups.join(", "));
+            groupsItem->setForeground(QColor("#60a5fa"));
+        }
+        m_memberTable->setItem(row, 7, groupsItem);
     }
 }
 
@@ -1046,6 +1247,266 @@ void MemberRegistryPanel::onWpSyncCompleted(int created, int updated) {
             QString("Sync completed:\n- %1 new members created\n- %2 existing members updated")
                 .arg(created).arg(updated));
     }
+}
+
+// ==================== Groups Tab ====================
+
+void MemberRegistryPanel::refreshGroups() {
+    if (!m_groupList) return;
+
+    QString currentGroup;
+    if (m_groupList->currentItem()) {
+        currentGroup = m_groupList->currentItem()->data(Qt::UserRole).toString();
+    }
+
+    m_groupList->clear();
+    QStringList groupNames = m_registry->getGroupNames();
+    int selectRow = -1;
+    for (int i = 0; i < groupNames.size(); ++i) {
+        const QString& name = groupNames[i];
+        MemberGroup group = m_registry->getGroup(name);
+        int activeCount = m_registry->getGroupMemberIds(name).size();
+        QListWidgetItem* item = new QListWidgetItem(
+            QString("%1 (%2 members)").arg(name).arg(activeCount));
+        item->setData(Qt::UserRole, name);
+        m_groupList->addItem(item);
+        if (name == currentGroup) selectRow = i;
+    }
+
+    if (selectRow >= 0) {
+        m_groupList->setCurrentRow(selectRow);
+    }
+
+    m_groupStatsLabel->setText(QString("%1 group(s)").arg(groupNames.size()));
+}
+
+void MemberRegistryPanel::onAddGroup() {
+    bool ok;
+    QString name = QInputDialog::getText(this, "New Group",
+        "Group name:", QLineEdit::Normal, "", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+    if (m_registry->hasGroup(name)) {
+        QMessageBox::warning(this, "Error", "A group with this name already exists.");
+        return;
+    }
+    MemberGroup group;
+    group.name = name;
+    group.createdAt = QDateTime::currentSecsSinceEpoch();
+    group.updatedAt = group.createdAt;
+    m_registry->addGroup(group);
+
+    // Select the new group
+    for (int i = 0; i < m_groupList->count(); ++i) {
+        if (m_groupList->item(i)->data(Qt::UserRole).toString() == name) {
+            m_groupList->setCurrentRow(i);
+            break;
+        }
+    }
+}
+
+void MemberRegistryPanel::onRenameGroup() {
+    if (m_groupList->currentRow() < 0) return;
+    QString oldName = m_groupList->currentItem()->data(Qt::UserRole).toString();
+
+    bool ok;
+    QString newName = QInputDialog::getText(this, "Rename Group",
+        "New name:", QLineEdit::Normal, oldName, &ok);
+    if (!ok || newName.trimmed().isEmpty()) return;
+    newName = newName.trimmed();
+    if (newName == oldName) return;
+    if (m_registry->hasGroup(newName)) {
+        QMessageBox::warning(this, "Error", "A group with this name already exists.");
+        return;
+    }
+
+    MemberGroup group = m_registry->getGroup(oldName);
+    m_registry->removeGroup(oldName);
+    group.name = newName;
+    group.updatedAt = QDateTime::currentSecsSinceEpoch();
+    m_registry->addGroup(group);
+}
+
+void MemberRegistryPanel::onDeleteGroup() {
+    if (m_groupList->currentRow() < 0) return;
+    QString name = m_groupList->currentItem()->data(Qt::UserRole).toString();
+
+    int ret = QMessageBox::question(this, "Delete Group",
+        QString("Delete group '%1'?\n\nThis will NOT delete the members, only the group.").arg(name),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+
+    m_registry->removeGroup(name);
+}
+
+void MemberRegistryPanel::onDuplicateGroup() {
+    if (m_groupList->currentRow() < 0) return;
+    QString name = m_groupList->currentItem()->data(Qt::UserRole).toString();
+    MemberGroup original = m_registry->getGroup(name);
+
+    QString newName = name + " (copy)";
+    int suffix = 2;
+    while (m_registry->hasGroup(newName)) {
+        newName = name + QString(" (copy %1)").arg(suffix++);
+    }
+
+    MemberGroup copy;
+    copy.name = newName;
+    copy.description = original.description;
+    copy.memberIds = original.memberIds;
+    copy.createdAt = QDateTime::currentSecsSinceEpoch();
+    copy.updatedAt = copy.createdAt;
+    m_registry->addGroup(copy);
+
+    // Select the new group
+    for (int i = 0; i < m_groupList->count(); ++i) {
+        if (m_groupList->item(i)->data(Qt::UserRole).toString() == newName) {
+            m_groupList->setCurrentRow(i);
+            break;
+        }
+    }
+}
+
+void MemberRegistryPanel::onGroupSelectionChanged() {
+    bool hasSelection = m_groupList->currentRow() >= 0;
+    m_renameGroupBtn->setEnabled(hasSelection);
+    m_deleteGroupBtn->setEnabled(hasSelection);
+    m_duplicateGroupBtn->setEnabled(hasSelection);
+    m_groupSelectAllBtn->setEnabled(hasSelection);
+    m_groupDeselectAllBtn->setEnabled(hasSelection);
+
+    // Block signals while populating to avoid triggering onGroupMemberToggled
+    m_groupMemberList->blockSignals(true);
+    m_groupMemberList->clear();
+
+    if (!hasSelection) {
+        m_groupMemberList->blockSignals(false);
+        return;
+    }
+
+    QString groupName = m_groupList->currentItem()->data(Qt::UserRole).toString();
+    MemberGroup group = m_registry->getGroup(groupName);
+    QList<MemberInfo> activeMembers = m_registry->getActiveMembers();
+    QString searchFilter = m_groupSearchEdit->text().trimmed();
+
+    for (const MemberInfo& m : activeMembers) {
+        // Apply search filter
+        if (!searchFilter.isEmpty()) {
+            bool match = m.id.contains(searchFilter, Qt::CaseInsensitive) ||
+                         m.displayName.contains(searchFilter, Qt::CaseInsensitive);
+            if (!match) continue;
+        }
+
+        QListWidgetItem* item = new QListWidgetItem(
+            QString("%1 (%2)").arg(m.displayName).arg(m.id));
+        item->setData(Qt::UserRole, m.id);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(group.memberIds.contains(m.id) ? Qt::Checked : Qt::Unchecked);
+        m_groupMemberList->addItem(item);
+    }
+
+    m_groupMemberList->blockSignals(false);
+}
+
+void MemberRegistryPanel::onGroupMemberToggled(QListWidgetItem* item) {
+    if (m_groupList->currentRow() < 0) return;
+
+    QString groupName = m_groupList->currentItem()->data(Qt::UserRole).toString();
+    QString memberId = item->data(Qt::UserRole).toString();
+    MemberGroup group = m_registry->getGroup(groupName);
+
+    if (item->checkState() == Qt::Checked) {
+        if (!group.memberIds.contains(memberId)) {
+            group.memberIds.append(memberId);
+        }
+    } else {
+        group.memberIds.removeAll(memberId);
+    }
+
+    group.updatedAt = QDateTime::currentSecsSinceEpoch();
+
+    // Suppress refresh to avoid rebuilding member list (losing scroll position)
+    m_suppressGroupRefresh = true;
+    m_registry->updateGroup(group);
+    m_suppressGroupRefresh = false;
+
+    // Update the group list count display without losing selection
+    int row = m_groupList->currentRow();
+    int activeCount = m_registry->getGroupMemberIds(groupName).size();
+    m_groupList->item(row)->setText(
+        QString("%1 (%2 members)").arg(groupName).arg(activeCount));
+}
+
+void MemberRegistryPanel::onGroupSelectAll() {
+    m_groupMemberList->blockSignals(true);
+    for (int i = 0; i < m_groupMemberList->count(); ++i) {
+        QListWidgetItem* item = m_groupMemberList->item(i);
+        if (!item->isHidden()) {
+            item->setCheckState(Qt::Checked);
+        }
+    }
+    m_groupMemberList->blockSignals(false);
+
+    // Save all visible members to group
+    if (m_groupList->currentRow() < 0) return;
+    QString groupName = m_groupList->currentItem()->data(Qt::UserRole).toString();
+    MemberGroup group = m_registry->getGroup(groupName);
+    for (int i = 0; i < m_groupMemberList->count(); ++i) {
+        QListWidgetItem* item = m_groupMemberList->item(i);
+        if (!item->isHidden()) {
+            QString memberId = item->data(Qt::UserRole).toString();
+            if (!group.memberIds.contains(memberId)) {
+                group.memberIds.append(memberId);
+            }
+        }
+    }
+    group.updatedAt = QDateTime::currentSecsSinceEpoch();
+    m_suppressGroupRefresh = true;
+    m_registry->updateGroup(group);
+    m_suppressGroupRefresh = false;
+
+    // Update count display
+    int activeCount = m_registry->getGroupMemberIds(groupName).size();
+    m_groupList->currentItem()->setText(
+        QString("%1 (%2 members)").arg(groupName).arg(activeCount));
+}
+
+void MemberRegistryPanel::onGroupDeselectAll() {
+    m_groupMemberList->blockSignals(true);
+    for (int i = 0; i < m_groupMemberList->count(); ++i) {
+        QListWidgetItem* item = m_groupMemberList->item(i);
+        if (!item->isHidden()) {
+            item->setCheckState(Qt::Unchecked);
+        }
+    }
+    m_groupMemberList->blockSignals(false);
+
+    // Remove all visible members from group
+    if (m_groupList->currentRow() < 0) return;
+    QString groupName = m_groupList->currentItem()->data(Qt::UserRole).toString();
+    MemberGroup group = m_registry->getGroup(groupName);
+    for (int i = 0; i < m_groupMemberList->count(); ++i) {
+        QListWidgetItem* item = m_groupMemberList->item(i);
+        if (!item->isHidden()) {
+            QString memberId = item->data(Qt::UserRole).toString();
+            group.memberIds.removeAll(memberId);
+        }
+    }
+    group.updatedAt = QDateTime::currentSecsSinceEpoch();
+    m_suppressGroupRefresh = true;
+    m_registry->updateGroup(group);
+    m_suppressGroupRefresh = false;
+
+    // Update count display
+    int activeCount = m_registry->getGroupMemberIds(groupName).size();
+    m_groupList->currentItem()->setText(
+        QString("%1 (%2 members)").arg(groupName).arg(activeCount));
+}
+
+void MemberRegistryPanel::onGroupSearchChanged(const QString& text) {
+    Q_UNUSED(text);
+    // Re-populate the member list with filter applied
+    onGroupSelectionChanged();
 }
 
 } // namespace MegaCustom

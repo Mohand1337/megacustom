@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QMap>
 #include <QList>
 #include <QJsonObject>
@@ -126,6 +127,20 @@ struct MemberTemplate {
 };
 
 /**
+ * Named group of members for quick selection
+ */
+struct MemberGroup {
+    QString name;              // e.g., "NHB2026"
+    QStringList memberIds;     // Member IDs in this group
+    QString description;
+    qint64 createdAt = 0;
+    qint64 updatedAt = 0;
+
+    QJsonObject toJson() const;
+    static MemberGroup fromJson(const QJsonObject& obj);
+};
+
+/**
  * MemberRegistry - manages all members and their paths
  * Stores data in JSON config file
  */
@@ -194,12 +209,26 @@ public:
                                     bool activeOnly = false,
                                     bool withDistributionFolder = false) const;
 
+    // === Member Groups ===
+    QList<MemberGroup> getAllGroups() const;
+    MemberGroup getGroup(const QString& name) const;
+    bool hasGroup(const QString& name) const;
+    QStringList getGroupNames() const;
+    void addGroup(const MemberGroup& group);
+    void updateGroup(const MemberGroup& group);
+    void removeGroup(const QString& name);
+    QStringList getGroupMemberIds(const QString& groupName) const;
+    QStringList getGroupsForMember(const QString& memberId) const;
+
 signals:
     void templateChanged();
     void memberAdded(const QString& id);
     void memberUpdated(const QString& id);
     void memberRemoved(const QString& id);
     void membersReloaded();
+    void groupAdded(const QString& name);
+    void groupUpdated(const QString& name);
+    void groupRemoved(const QString& name);
 
 private:
     explicit MemberRegistry(QObject* parent = nullptr);
@@ -209,6 +238,7 @@ private:
 
     MemberTemplate m_template;
     QMap<QString, MemberInfo> m_members;
+    QMap<QString, MemberGroup> m_groups;
 
     void initDefaults();
 };

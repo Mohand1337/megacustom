@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QTableWidget>
+#include <QListWidget>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QLabel>
@@ -62,9 +63,21 @@ private slots:
     void onWordPressSync();
     void onWpSyncCompleted(int created, int updated);
 
+    // Groups tab
+    void onAddGroup();
+    void onRenameGroup();
+    void onDeleteGroup();
+    void onDuplicateGroup();
+    void onGroupSelectionChanged();
+    void onGroupMemberToggled(QListWidgetItem* item);
+    void onGroupSelectAll();
+    void onGroupDeselectAll();
+    void onGroupSearchChanged(const QString& text);
+
 private:
     void setupUI();
     void populateTable();
+    void refreshGroups();
     QString getSelectedMemberId() const;
     void showMemberEditDialog(const MemberInfo& member, bool isNew);
 
@@ -96,6 +109,19 @@ private:
 
     // Stats
     QLabel* m_statsLabel;
+
+    // Groups tab
+    QListWidget* m_groupList = nullptr;
+    QListWidget* m_groupMemberList = nullptr;
+    QLineEdit* m_groupSearchEdit = nullptr;
+    QPushButton* m_addGroupBtn = nullptr;
+    QPushButton* m_renameGroupBtn = nullptr;
+    QPushButton* m_deleteGroupBtn = nullptr;
+    QPushButton* m_duplicateGroupBtn = nullptr;
+    QPushButton* m_groupSelectAllBtn = nullptr;
+    QPushButton* m_groupDeselectAllBtn = nullptr;
+    QLabel* m_groupStatsLabel = nullptr;
+    bool m_suppressGroupRefresh = false;  // Guard to prevent rebuild during checkbox toggles
 
     // Controllers
     MemberRegistry* m_registry;

@@ -215,6 +215,11 @@ DistributionPanel::DistributionPanel(QWidget* parent)
     , m_failCount(0)
 {
     setupUI();
+    loadGroups();
+
+    connect(m_registry, &MemberRegistry::groupAdded, this, [this]() { loadGroups(); });
+    connect(m_registry, &MemberRegistry::groupUpdated, this, [this]() { loadGroups(); });
+    connect(m_registry, &MemberRegistry::groupRemoved, this, [this]() { loadGroups(); });
 }
 
 DistributionPanel::~DistributionPanel() {
@@ -350,6 +355,13 @@ void DistributionPanel::setupUI() {
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
+    // Move mode warning banner (hidden by default)
+    m_moveWarningBanner = new QLabel("WARNING: MOVE MODE \xe2\x80\x94 Source files will be DELETED after transfer");
+    m_moveWarningBanner->setStyleSheet(
+        "background: #DC3545; color: white; padding: 8px; font-weight: bold; border-radius: 4px;");
+    m_moveWarningBanner->setVisible(false);
+    mainLayout->addWidget(m_moveWarningBanner);
+
     // Source/Destination Config
     QGroupBox* configGroup = new QGroupBox("CONFIGURATION");
     configGroup->setStyleSheet(
@@ -374,6 +386,18 @@ void DistributionPanel::setupUI() {
     m_destTemplateEdit = new QLineEdit("{member}/{year}/{month}/");
     m_destTemplateEdit->setToolTip("Destination path template. Use {member}, {member_id}, {year}, {month}, etc.");
     configLayout->addWidget(m_destTemplateEdit, 1, 1);
+
+    // Real-time template validation
+    connect(m_destTemplateEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+        QString error;
+        bool valid = TemplateExpander::validateTemplate(text, &error);
+        m_destTemplateEdit->setStyleSheet(valid
+            ? "QLineEdit { border: 1px solid #555; }"
+            : "QLineEdit { border: 1px solid #DC3545; }");
+        m_destTemplateEdit->setToolTip(valid
+            ? "Destination path template. Use {member}, {member_id}, {year}, {month}, etc."
+            : QString("Invalid template: %1").arg(error));
+    });
 
     // Template help button and month selector in a horizontal layout
     QWidget* templateBtnWidget = new QWidget();
@@ -447,6 +471,7 @@ void DistributionPanel::setupUI() {
                                  "WARNING: Source files will be permanently deleted after successful transfer!");
     m_moveFilesCheck->setStyleSheet("QCheckBox { color: #D90007; }");  // Red text for warning
     optionsLayout->addWidget(m_moveFilesCheck, 2, 0, 1, 2);  // Span both columns
+    connect(m_moveFilesCheck, &QCheckBox::toggled, m_moveWarningBanner, &QLabel::setVisible);
 
     mainLayout->addWidget(optionsGroup);
 
@@ -498,10 +523,9 @@ void DistributionPanel::setupUI() {
     tableLayout->addWidget(m_memberTable, 1);
     mainLayout->addWidget(tableGroup, 1);
 
-    // Action Buttons
-    QHBoxLayout* actionsLayout = new QHBoxLayout();
+    // Action Buttons - Row 1: Selection controls
+    QHBoxLayout* selectionLayout = new QHBoxLayout();
 
-    // Secondary action buttons styling
     QString secondaryBtnStyle =
         "QPushButton { background-color: #444; color: white; "
         "border: none; border-radius: 4px; padding: 6px 12px; } "
@@ -518,6 +542,36 @@ void DistributionPanel::setupUI() {
     m_deselectAllBtn->setStyleSheet(secondaryBtnStyle);
     connect(m_deselectAllBtn, &QPushButton::clicked, this, &DistributionPanel::onDeselectAll);
 
+    m_groupCombo = new QComboBox();
+    m_groupCombo->setMinimumWidth(180);
+    m_groupCombo->setToolTip("Select a member group to check its members");
+    m_groupCombo->addItem("-- Select Group --", "");
+    connect(m_groupCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+        QString groupName = m_groupCombo->itemData(index).toString();
+        if (groupName.isEmpty()) return;
+
+        // Deselect all, then select group members
+        onDeselectAll();
+        QStringList groupMemberIds = m_registry->getGroupMemberIds(groupName);
+
+        for (int i = 0; i < m_wmFolders.size(); ++i) {
+            if (groupMemberIds.contains(m_wmFolders[i].memberId)) {
+                m_wmFolders[i].selected = true;
+                QWidget* w = m_memberTable->cellWidget(i, 0);
+                if (w) {
+                    QCheckBox* c = w->findChild<QCheckBox*>();
+                    if (c) c->setChecked(true);
+                }
+            }
+        }
+
+        // Reset combo to prompt
+        m_groupCombo->blockSignals(true);
+        m_groupCombo->setCurrentIndex(0);
+        m_groupCombo->blockSignals(false);
+    });
+
     m_bulkRenameBtn = new QPushButton("Bulk Rename");
     m_bulkRenameBtn->setIcon(QIcon(":/icons/edit.svg"));
     m_bulkRenameBtn->setToolTip("Remove '_watermarked' suffix from files in selected folders");
@@ -527,10 +581,16 @@ void DistributionPanel::setupUI() {
         "QPushButton:hover { background-color: #F57C00; }");
     connect(m_bulkRenameBtn, &QPushButton::clicked, this, &DistributionPanel::onBulkRename);
 
-    actionsLayout->addWidget(m_selectAllBtn);
-    actionsLayout->addWidget(m_deselectAllBtn);
-    actionsLayout->addWidget(m_bulkRenameBtn);
-    actionsLayout->addStretch();
+    selectionLayout->addWidget(m_selectAllBtn);
+    selectionLayout->addWidget(m_deselectAllBtn);
+    selectionLayout->addWidget(m_groupCombo);
+    selectionLayout->addStretch();
+    selectionLayout->addWidget(m_bulkRenameBtn);
+
+    mainLayout->addLayout(selectionLayout);
+
+    // Action Buttons - Row 2: Execution controls
+    QHBoxLayout* actionsLayout = new QHBoxLayout();
 
     m_previewBtn = new QPushButton("Preview");
     m_previewBtn->setIcon(QIcon(":/icons/eye.svg"));
@@ -573,6 +633,7 @@ void DistributionPanel::setupUI() {
     m_stopBtn->setEnabled(false);
     connect(m_stopBtn, &QPushButton::clicked, this, &DistributionPanel::onStopDistribution);
 
+    actionsLayout->addStretch();
     actionsLayout->addWidget(m_previewBtn);
     actionsLayout->addWidget(m_startBtn);
     actionsLayout->addWidget(m_pauseBtn);
@@ -601,6 +662,19 @@ void DistributionPanel::setupUI() {
 
 void DistributionPanel::refresh() {
     onScanWmFolder();
+}
+
+void DistributionPanel::loadGroups() {
+    m_groupCombo->blockSignals(true);
+    m_groupCombo->clear();
+    m_groupCombo->addItem("-- Select Group --", "");
+
+    QStringList groupNames = m_registry->getGroupNames();
+    for (const QString& name : groupNames) {
+        int count = m_registry->getGroupMemberIds(name).size();
+        m_groupCombo->addItem(QString("%1 (%2)").arg(name).arg(count), name);
+    }
+    m_groupCombo->blockSignals(false);
 }
 
 void DistributionPanel::addFilesFromWatermark(const QStringList& filePaths) {
@@ -1162,12 +1236,18 @@ void DistributionPanel::onStartDistribution() {
 }
 
 void DistributionPanel::onStopDistribution() {
+    auto reply = QMessageBox::question(this, "Stop Distribution",
+        "Are you sure you want to stop? Progress will be lost.",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) return;
+
     if (m_controllerActive && m_distController) {
         m_distController->cancel();
     } else if (m_copyWorker) {
         m_copyWorker->cancel();
     }
     m_statusLabel->setText("Stopping...");
+    m_progressBar->setStyleSheet("");
 }
 
 void DistributionPanel::onPauseDistribution() {
@@ -1177,11 +1257,13 @@ void DistributionPanel::onPauseDistribution() {
             m_isPaused = false;
             m_pauseBtn->setText("Pause");
             m_statusLabel->setText("Upload resumed");
+            m_progressBar->setStyleSheet("");
         } else {
             m_distController->pause();
             m_isPaused = true;
             m_pauseBtn->setText("Resume");
             m_statusLabel->setText("Upload paused");
+            m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #666; }");
         }
         return;
     }
@@ -1189,17 +1271,17 @@ void DistributionPanel::onPauseDistribution() {
     if (!m_copyWorker) return;
 
     if (m_isPaused) {
-        // Resume
         m_copyWorker->resume();
         m_isPaused = false;
         m_pauseBtn->setText("Pause");
         m_statusLabel->setText("Distribution resumed");
+        m_progressBar->setStyleSheet("");
     } else {
-        // Pause
         m_copyWorker->pause();
         m_isPaused = true;
         m_pauseBtn->setText("Resume");
         m_statusLabel->setText("Distribution paused");
+        m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #666; }");
     }
 }
 
