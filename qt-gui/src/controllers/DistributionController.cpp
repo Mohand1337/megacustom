@@ -437,8 +437,8 @@ void DistributionWorker::processDirectUpload() {
         const QStringList& files = it.value();
 
         // Look up member's MEGA folder from MemberRegistry
-        MemberRegistry& registry = MemberRegistry::instance();
-        MemberInfo memberInfo = registry.getMember(memberId);
+        MemberRegistry* registry = MemberRegistry::instance();
+        MemberInfo memberInfo = registry->getMember(memberId);
 
         QtMemberStatus memberStatus;
         memberStatus.memberId = memberId;
