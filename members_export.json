@@ -1,0 +1,38 @@
+{
+    "template": {
+        "archiveRootPrefix": "/Alen Sultanic - NHB+ - EGBs/",
+        "nhbCallsPath": "NHB+ 2021-2024 - Regularly Updated/1. NHB+ Calls & Playlists/2025",
+        "fastForwardPath": "Fast Forward",
+        "theoryCallsPath": "2- Theory Calls",
+        "hotSeatsPath": "3- Hotseats",
+        "wmRootPath": "/latest-wm/",
+        "pathTypes": [
+            {"key": "archiveRoot", "label": "Archive Root", "description": "Main member folder", "defaultValue": "/Alen Sultanic - NHB+ - EGBs/X. MemberName", "enabled": true},
+            {"key": "nhbCallsPath", "label": "NHB Calls Path", "description": "Monthly calls archive", "defaultValue": "NHB+ 2021-2024 - Regularly Updated/1. NHB+ Calls & Playlists/2025", "enabled": true},
+            {"key": "fastForwardPath", "label": "Fast Forward Path", "description": "FF content folder", "defaultValue": "Fast Forward", "enabled": true},
+            {"key": "theoryCallsPath", "label": "Theory Calls Path", "description": "Under Fast Forward", "defaultValue": "2- Theory Calls", "enabled": true},
+            {"key": "hotSeatsPath", "label": "Hot Seats Path", "description": "Under Fast Forward", "defaultValue": "3- Hotseats", "enabled": true}
+        ]
+    },
+    "members": [
+        {"id": "alexfantasticimago", "displayName": "Alex Fantastic Imago", "sortOrder": 1, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "jacob.pro95", "displayName": "Jacob Pro95", "sortOrder": 2, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "jessehanca", "displayName": "Jesse Hanca", "sortOrder": 3, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "jmarcostudy", "displayName": "J Marco Study", "sortOrder": 4, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "jozen3943", "displayName": "Jozen 3943", "sortOrder": 5, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "lakocjs84", "displayName": "Lakocjs84", "sortOrder": 6, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "liweihihhh", "displayName": "Li Wei Hihhh", "sortOrder": 7, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "malynak", "displayName": "Malynak", "sortOrder": 8, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "marvinfrost7", "displayName": "Marvin Frost 7", "sortOrder": 9, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "monsterman126", "displayName": "Monsterman 126", "sortOrder": 10, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "naveends798", "displayName": "Naveends 798", "sortOrder": 11, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "princenavarrouno", "displayName": "Prince Navarro Uno", "sortOrder": 12, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "qubalabuz", "displayName": "Qubalabuz", "sortOrder": 13, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "rinabeda", "displayName": "Rinabeda", "sortOrder": 14, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "rohit100316", "displayName": "Rohit 100316", "sortOrder": 15, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "rt500", "displayName": "RT500", "sortOrder": 16, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "sabina.stanojevic91", "displayName": "Sabina Stanojevic 91", "sortOrder": 17, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "shivadevstudio", "displayName": "Shiva Dev Studio", "sortOrder": 18, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""},
+        {"id": "dezikdi", "displayName": "Dezikdi", "sortOrder": 19, "active": true, "notes": "", "paths": {"archiveRoot": "", "nhbCallsPath": "", "fastForwardPath": "", "theoryCallsPath": "", "hotSeatsPath": ""}, "wmFolderPattern": ""}
+    ]
+}
