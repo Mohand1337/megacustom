@@ -13,6 +13,7 @@
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QThread>
+#include <QMap>
 #include <memory>
 
 namespace MegaCustom {
@@ -60,6 +61,8 @@ signals:
     void progress(int fileIndex, int totalFiles, const QString& currentFile, int percent);
     void fileCompleted(int fileIndex, bool success, const QString& outputPath, const QString& error);
     void finished(int successCount, int failCount);
+    void finishedWithMapping(int successCount, int failCount,
+                             const QMap<QString, QStringList>& memberFileMap);
 
 private:
     QStringList m_files;
@@ -88,6 +91,7 @@ signals:
     void watermarkProgress(int current, int total, const QString& file);
     void watermarkCompleted(int success, int failed);
     void sendToDistribution(const QStringList& filePaths);
+    void sendToDistributionMapped(const QMap<QString, QStringList>& memberFileMap);
 
 public slots:
     void refresh();

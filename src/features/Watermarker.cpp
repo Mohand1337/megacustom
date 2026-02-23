@@ -794,6 +794,51 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
 
 // ==================== Path Generation ====================
 
+std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
+                                                const std::string& outputDir,
+                                                const std::string& memberId) const {
+    // Per-member watermarking outputs to a member subdirectory with the
+    // original filename — no suffix needed. Structure:
+    //   outputDir/memberId/original_filename.ext
+    //
+    // This keeps filenames clean for the member receiving them and maps
+    // directly to their MEGA folder for distribution.
+
+    size_t lastSlash = inputPath.find_last_of("/\\");
+    std::string filename = (lastSlash == std::string::npos) ?
+        inputPath : inputPath.substr(lastSlash + 1);
+
+    std::string sourceDir = (lastSlash == std::string::npos) ?
+        "" : inputPath.substr(0, lastSlash);
+    std::string baseDir = outputDir.empty() ? sourceDir : outputDir;
+
+    if (!baseDir.empty() && baseDir.back() != '/' && baseDir.back() != '\\') {
+        baseDir += '/';
+    }
+
+    // Create member subdirectory
+    std::string memberDir = baseDir + memberId + "/";
+    std::filesystem::create_directories(memberDir);
+
+    // Check for existing file and add numbered suffix if needed
+    std::string candidate = memberDir + filename;
+    struct stat stCheck;
+    if (stat(candidate.c_str(), &stCheck) == 0) {
+        size_t lastDot = filename.find_last_of('.');
+        std::string baseName = (lastDot == std::string::npos) ?
+            filename : filename.substr(0, lastDot);
+        std::string ext = (lastDot == std::string::npos) ?
+            "" : filename.substr(lastDot);
+        for (int n = 1; n < 1000; ++n) {
+            candidate = memberDir + baseName + " (" + std::to_string(n) + ")" + ext;
+            if (stat(candidate.c_str(), &stCheck) != 0) {
+                break;
+            }
+        }
+    }
+    return candidate;
+}
+
 std::string Watermarker::generateOutputPath(const std::string& inputPath,
                                              const std::string& outputDir) const {
     // Extract filename (handle both / and \ separators for Windows)
@@ -809,19 +854,28 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
         "" : filename.substr(lastDot);
 
     // Build output path
-    std::string outDir = outputDir.empty() ?
-        inputPath.substr(0, lastSlash == std::string::npos ? 0 : lastSlash) : outputDir;
+    std::string sourceDir = (lastSlash == std::string::npos) ?
+        "" : inputPath.substr(0, lastSlash);
+    std::string outDir = outputDir.empty() ? sourceDir : outputDir;
 
     if (!outDir.empty() && outDir.back() != '/' && outDir.back() != '\\') {
         outDir += '/';
     }
 
+    // Only add suffix when output goes to the same directory as the source
+    // (to avoid overwriting the original). When a different output directory
+    // is specified, the original is safe and the suffix is unnecessary.
+    std::string suffix;
+    if (outputDir.empty() || outDir == sourceDir + "/" || outDir == sourceDir + "\\") {
+        suffix = m_config.outputSuffix;
+    }
+
     // Check if output file already exists; if so, append (1), (2), etc.
-    std::string candidate = outDir + baseName + m_config.outputSuffix + ext;
+    std::string candidate = outDir + baseName + suffix + ext;
     struct stat stCheck;
     if (stat(candidate.c_str(), &stCheck) == 0) {
         for (int n = 1; n < 1000; ++n) {
-            candidate = outDir + baseName + m_config.outputSuffix
+            candidate = outDir + baseName + suffix
                         + " (" + std::to_string(n) + ")" + ext;
             if (stat(candidate.c_str(), &stCheck) != 0) {
                 break;
@@ -883,13 +937,8 @@ WatermarkResult Watermarker::watermarkVideoForMember(const std::string& inputPat
     localConfig.primaryText = member.buildWatermarkText(MegaCustom::BRAND_NAME);
     localConfig.secondaryText = member.buildSecondaryWatermarkText();
 
-    // Generate output path with member ID
-    std::string outPath = generateOutputPath(inputPath, outputDir);
-    // Insert member ID before suffix
-    size_t suffixPos = outPath.find(m_config.outputSuffix);
-    if (suffixPos != std::string::npos) {
-        outPath.insert(suffixPos, "_" + memberId);
-    }
+    // Build output path: member ID is the differentiator, no _wm suffix needed
+    std::string outPath = buildMemberOutputPath(inputPath, outputDir, memberId);
 
     WatermarkConfig saved = m_config;
     m_config = localConfig;
@@ -960,12 +1009,8 @@ WatermarkResult Watermarker::watermarkPdfForMember(const std::string& inputPath,
     localConfig.primaryText = member.buildWatermarkText(MegaCustom::BRAND_NAME);
     localConfig.secondaryText = member.buildSecondaryWatermarkText();
 
-    // Generate output path with member ID
-    std::string outPath = generateOutputPath(inputPath, outputDir);
-    size_t suffixPos = outPath.find(m_config.outputSuffix);
-    if (suffixPos != std::string::npos) {
-        outPath.insert(suffixPos, "_" + memberId);
-    }
+    // Build output path: member ID is the differentiator, no _wm suffix needed
+    std::string outPath = buildMemberOutputPath(inputPath, outputDir, memberId);
 
     WatermarkConfig saved = m_config;
     m_config = localConfig;

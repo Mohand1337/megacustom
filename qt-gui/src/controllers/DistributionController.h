@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QMap>
 #include <QThread>
 #include <memory>
 
@@ -103,9 +104,13 @@ public:
     void setMemberIds(const QStringList& memberIds);
     void setConfig(const QtDistributionConfig& config);
     void setPreviewOnly(bool preview);
+    void setMegaApi(void* api) { m_megaApi = api; }
+    void setMemberFileMap(const QMap<QString, QStringList>& map) { m_memberFileMap = map; }
+    void setDirectUploadMode(bool direct) { m_directUploadMode = direct; }
 
 public slots:
     void process();
+    void processDirectUpload();
     void cancel();
     void pause();
     void resume();
@@ -122,6 +127,9 @@ private:
     QStringList m_memberIds;
     QtDistributionConfig m_config;
     bool m_previewOnly = false;
+    void* m_megaApi = nullptr;
+    QMap<QString, QStringList> m_memberFileMap;  // member ID -> local file paths
+    bool m_directUploadMode = false;             // skip pipeline, upload directly per member
     std::unique_ptr<DistributionPipeline> m_pipeline;
 };
 
@@ -142,6 +150,7 @@ public:
 
     void setConfig(const QtDistributionConfig& config);
     QtDistributionConfig config() const { return m_config; }
+    void setMegaApi(void* api) { m_megaApi = api; }
 
     // ==================== Operations ====================
 
@@ -163,6 +172,13 @@ public:
      * Retry failed distributions from previous result
      */
     void retryFailed(const QtDistributionResult& previousResult);
+
+    /**
+     * Upload pre-watermarked files directly to each member's MEGA folder.
+     * Skips the watermarking step — files are uploaded as-is.
+     * @param memberFileMap Map of member ID to list of local file paths
+     */
+    void uploadToMembers(const QMap<QString, QStringList>& memberFileMap);
 
     // ==================== Control ====================
 
@@ -216,12 +232,15 @@ private:
     bool m_isRunning = false;
     bool m_isPaused = false;
 
+    void* m_megaApi = nullptr;
+
     QThread* m_workerThread = nullptr;
     DistributionWorker* m_worker = nullptr;
 
     // Pending operation data
     QStringList m_pendingSourceFiles;
     QStringList m_pendingMemberIds;
+    QMap<QString, QStringList> m_pendingMemberFileMap;
 };
 
 } // namespace MegaCustom

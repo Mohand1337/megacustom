@@ -1,8 +1,236 @@
 #include "DistributionController.h"
 #include "features/DistributionPipeline.h"
+#include "utils/MemberRegistry.h"
+#include <megaapi.h>
 #include <QDebug>
+#include <QFileInfo>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
 
 namespace MegaCustom {
+
+// ==================== Synchronous Listeners ====================
+
+/**
+ * Synchronous listener for MEGA request operations (folder creation, etc.)
+ * Uses condition_variable to block calling thread until completion.
+ * Safe to use in worker threads — never use on main thread.
+ */
+class SyncRequestListener : public mega::MegaRequestListener {
+public:
+    void onRequestFinish(mega::MegaApi*, mega::MegaRequest* request,
+                        mega::MegaError* error) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_success = (error->getErrorCode() == mega::MegaError::API_OK);
+        m_errorCode = error->getErrorCode();
+        m_errorString = error->getErrorString() ? error->getErrorString() : "";
+        if (request->getNodeHandle()) {
+            m_nodeHandle = request->getNodeHandle();
+        }
+        m_finished = true;
+        m_cv.notify_all();
+    }
+
+    bool waitForCompletion(int timeoutSeconds = 60) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, std::chrono::seconds(timeoutSeconds),
+                            [this] { return m_finished; });
+    }
+
+    bool isSuccess() const { return m_success; }
+    int errorCode() const { return m_errorCode; }
+    std::string errorString() const { return m_errorString; }
+    mega::MegaHandle nodeHandle() const { return m_nodeHandle; }
+
+    void reset() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_finished = false;
+        m_success = false;
+        m_errorCode = 0;
+        m_errorString.clear();
+        m_nodeHandle = mega::INVALID_HANDLE;
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_finished = false;
+    bool m_success = false;
+    int m_errorCode = 0;
+    std::string m_errorString;
+    mega::MegaHandle m_nodeHandle = mega::INVALID_HANDLE;
+};
+
+/**
+ * Synchronous listener for MEGA transfer operations (uploads).
+ * Uses condition_variable to block calling thread until transfer completes.
+ */
+class SyncTransferListener : public mega::MegaTransferListener {
+public:
+    void onTransferFinish(mega::MegaApi*, mega::MegaTransfer*,
+                         mega::MegaError* error) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_success = (error->getErrorCode() == mega::MegaError::API_OK);
+        m_errorCode = error->getErrorCode();
+        m_errorString = error->getErrorString() ? error->getErrorString() : "";
+        m_finished = true;
+        m_cv.notify_all();
+    }
+
+    void onTransferUpdate(mega::MegaApi*, mega::MegaTransfer*) override {
+        // Could track progress here if needed
+    }
+
+    void onTransferTemporaryError(mega::MegaApi*, mega::MegaTransfer*,
+                                  mega::MegaError*) override {
+        // SDK will retry automatically
+    }
+
+    bool waitForCompletion(int timeoutSeconds = 600) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, std::chrono::seconds(timeoutSeconds),
+                            [this] { return m_finished; });
+    }
+
+    bool isSuccess() const { return m_success; }
+    int errorCode() const { return m_errorCode; }
+    std::string errorString() const { return m_errorString; }
+
+    void reset() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_finished = false;
+        m_success = false;
+        m_errorCode = 0;
+        m_errorString.clear();
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_finished = false;
+    bool m_success = false;
+    int m_errorCode = 0;
+    std::string m_errorString;
+};
+
+// ==================== MegaApi Upload Helpers ====================
+
+/**
+ * Ensure a MEGA cloud folder exists, creating it recursively if needed.
+ * @return The MegaNode for the folder, or nullptr on failure.
+ * Caller takes ownership of the returned pointer.
+ */
+static mega::MegaNode* ensureFolderExists(mega::MegaApi* api, const std::string& path) {
+    if (!api || path.empty()) return nullptr;
+
+    // Try to find existing folder
+    mega::MegaNode* node = api->getNodeByPath(path.c_str());
+    if (node) return node;
+
+    // Split path into components
+    std::vector<std::string> components;
+    std::string current;
+    for (char c : path) {
+        if (c == '/') {
+            if (!current.empty()) {
+                components.push_back(current);
+                current.clear();
+            }
+        } else {
+            current += c;
+        }
+    }
+    if (!current.empty()) {
+        components.push_back(current);
+    }
+
+    // Start from root
+    std::unique_ptr<mega::MegaNode> currentNode(api->getRootNode());
+    if (!currentNode) return nullptr;
+
+    SyncRequestListener listener;
+
+    for (const auto& component : components) {
+        std::unique_ptr<mega::MegaNode> childNode(
+            api->getChildNode(currentNode.get(), component.c_str())
+        );
+
+        if (childNode && childNode->isFolder()) {
+            currentNode = std::move(childNode);
+        } else if (!childNode) {
+            // Create folder
+            listener.reset();
+            api->createFolder(component.c_str(), currentNode.get(), &listener);
+
+            if (!listener.waitForCompletion(30)) {
+                qWarning() << "ensureFolderExists: Timeout creating folder:" << component.c_str();
+                return nullptr;
+            }
+
+            if (!listener.isSuccess()) {
+                qWarning() << "ensureFolderExists: Failed to create folder:" << component.c_str()
+                           << "error:" << listener.errorString().c_str();
+                return nullptr;
+            }
+
+            // Get the newly created folder
+            currentNode.reset(api->getChildNode(currentNode.get(), component.c_str()));
+            if (!currentNode) {
+                return nullptr;
+            }
+        } else {
+            // Component exists but is not a folder
+            return nullptr;
+        }
+    }
+
+    return currentNode.release();
+}
+
+/**
+ * Upload a local file to a MEGA cloud folder using MegaApi.
+ * Blocks until completion (for use in worker threads only).
+ */
+static bool megaApiUpload(mega::MegaApi* api, const std::string& localPath,
+                          const std::string& remotePath, std::string& error) {
+    if (!api) {
+        error = "MegaApi not available";
+        return false;
+    }
+
+    // Resolve destination folder
+    std::unique_ptr<mega::MegaNode> destNode(ensureFolderExists(api, remotePath));
+    if (!destNode) {
+        error = "Cannot access or create destination folder: " + remotePath;
+        return false;
+    }
+
+    // Upload file
+    SyncTransferListener listener;
+    api->startUpload(localPath.c_str(),
+                     destNode.get(),
+                     nullptr,   // filename (use original)
+                     0,         // mtime
+                     nullptr,   // appData
+                     false,     // isSourceTemporary
+                     false,     // startFirst
+                     nullptr,   // cancelToken
+                     &listener);
+
+    // Wait for upload to complete (10 min timeout for large files)
+    if (!listener.waitForCompletion(600)) {
+        error = "Upload timeout for: " + localPath;
+        return false;
+    }
+
+    if (!listener.isSuccess()) {
+        error = "Upload failed: " + listener.errorString();
+        return false;
+    }
+
+    return true;
+}
 
 // ==================== Helper Conversions ====================
 
@@ -136,6 +364,12 @@ void DistributionWorker::setPreviewOnly(bool preview) {
 }
 
 void DistributionWorker::process() {
+    // Direct upload mode: upload pre-watermarked files to member folders
+    if (m_directUploadMode && m_megaApi && !m_memberFileMap.isEmpty()) {
+        processDirectUpload();
+        return;
+    }
+
     // Convert Qt types to native
     std::vector<std::string> sourceFiles;
     for (const QString& f : m_sourceFiles) {
@@ -149,6 +383,16 @@ void DistributionWorker::process() {
 
     // Configure pipeline
     m_pipeline->setConfig(toNativeConfig(m_config));
+
+    // Inject MegaApi upload function if available
+    if (m_megaApi) {
+        mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
+        m_pipeline->setUploadFunction(
+            [api](const std::string& localPath, const std::string& remotePath,
+                  std::string& error) -> bool {
+                return megaApiUpload(api, localPath, remotePath, error);
+            });
+    }
 
     // Set progress callback
     m_pipeline->setProgressCallback([this](const DistributionProgress& progress) {
@@ -174,6 +418,94 @@ void DistributionWorker::process() {
 
     // Emit final result
     emit finished(toQtResult(result));
+}
+
+void DistributionWorker::processDirectUpload() {
+    mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
+
+    // Build result
+    QtDistributionResult result;
+    result.jobId = QString::fromStdString(DistributionPipeline::generateJobId());
+    result.totalMembers = m_memberFileMap.size();
+
+    emit started(result.jobId);
+
+    int membersProcessed = 0;
+
+    for (auto it = m_memberFileMap.constBegin(); it != m_memberFileMap.constEnd(); ++it) {
+        const QString& memberId = it.key();
+        const QStringList& files = it.value();
+
+        // Look up member's MEGA folder from MemberRegistry
+        MemberRegistry& registry = MemberRegistry::instance();
+        MemberInfo memberInfo = registry.getMember(memberId);
+
+        QtMemberStatus memberStatus;
+        memberStatus.memberId = memberId;
+        memberStatus.memberName = memberInfo.displayName;
+        memberStatus.destinationFolder = memberInfo.distributionFolder;
+
+        if (memberInfo.distributionFolder.isEmpty()) {
+            memberStatus.state = "skipped";
+            memberStatus.lastError = "No MEGA folder bound for member";
+            result.membersSkipped++;
+            result.memberResults.append(memberStatus);
+            emit memberCompleted(memberStatus);
+            continue;
+        }
+
+        memberStatus.state = "uploading";
+        result.totalFiles += files.size();
+
+        // Emit "uploading" state so UI can update the member's row
+        emit memberCompleted(memberStatus);
+
+        for (const QString& filePath : files) {
+            // Report progress
+            QtDistributionProgress prog;
+            prog.jobId = result.jobId;
+            prog.phase = "uploading";
+            prog.currentMember = memberInfo.displayName;
+            prog.currentFile = QFileInfo(filePath).fileName();
+            prog.currentOperation = "Uploading " + prog.currentFile + " to " + memberInfo.distributionFolder;
+            prog.membersProcessed = membersProcessed;
+            prog.totalMembers = result.totalMembers;
+            prog.filesProcessed = result.filesUploaded + result.filesFailed;
+            prog.totalFiles = result.totalFiles;
+            emit progress(prog);
+
+            std::string error;
+            bool ok = megaApiUpload(api, filePath.toStdString(),
+                                    memberInfo.distributionFolder.toStdString(), error);
+
+            if (ok) {
+                memberStatus.filesUploaded++;
+                result.filesUploaded++;
+            } else {
+                memberStatus.filesFailed++;
+                memberStatus.lastError = QString::fromStdString(error);
+                result.filesFailed++;
+                result.errors.append(QString("%1: %2").arg(memberId, QString::fromStdString(error)));
+            }
+        }
+
+        membersProcessed++;
+
+        if (memberStatus.filesFailed == 0) {
+            memberStatus.state = "completed";
+            result.membersCompleted++;
+        } else {
+            memberStatus.state = "failed";
+            result.membersFailed++;
+        }
+
+        result.memberResults.append(memberStatus);
+        emit memberCompleted(memberStatus);
+    }
+
+    result.success = (result.membersFailed == 0 && result.membersSkipped < result.totalMembers);
+
+    emit finished(result);
 }
 
 void DistributionWorker::cancel() {
@@ -247,6 +579,64 @@ void DistributionController::previewDistribution(const QStringList& sourceFiles,
     startWorker(true);
 }
 
+void DistributionController::uploadToMembers(const QMap<QString, QStringList>& memberFileMap) {
+    if (m_isRunning) {
+        qWarning() << "DistributionController: Distribution already running";
+        return;
+    }
+
+    if (memberFileMap.isEmpty()) {
+        emit distributionError("No member files to upload");
+        return;
+    }
+
+    if (!m_megaApi) {
+        emit distributionError("MegaApi not available for upload");
+        return;
+    }
+
+    m_pendingMemberFileMap = memberFileMap;
+
+    int totalFiles = 0;
+    for (const auto& files : memberFileMap) {
+        totalFiles += files.size();
+    }
+
+    qDebug() << "DistributionController: Direct upload of"
+             << totalFiles << "files to"
+             << memberFileMap.size() << "members";
+
+    // Start worker in direct upload mode
+    cleanupWorker();
+
+    m_workerThread = new QThread(this);
+    m_worker = new DistributionWorker();
+    m_worker->moveToThread(m_workerThread);
+
+    // Configure worker for direct upload
+    m_worker->setMegaApi(m_megaApi);
+    m_worker->setMemberFileMap(m_pendingMemberFileMap);
+    m_worker->setDirectUploadMode(true);
+    m_worker->setConfig(m_config);
+
+    // Connect signals
+    connect(m_workerThread, &QThread::started, m_worker, &DistributionWorker::process);
+    connect(m_worker, &DistributionWorker::started, this, &DistributionController::onWorkerStarted);
+    connect(m_worker, &DistributionWorker::progress, this, &DistributionController::onWorkerProgress);
+    connect(m_worker, &DistributionWorker::memberCompleted, this, &DistributionController::onWorkerMemberCompleted);
+    connect(m_worker, &DistributionWorker::finished, this, &DistributionController::onWorkerFinished);
+    connect(m_worker, &DistributionWorker::error, this, &DistributionController::onWorkerError);
+
+    // Cleanup connections
+    connect(m_worker, &DistributionWorker::finished, m_workerThread, &QThread::quit);
+    connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
+
+    m_isRunning = true;
+    emit runningChanged(true);
+
+    m_workerThread->start();
+}
+
 void DistributionController::retryFailed(const QtDistributionResult& previousResult) {
     // Extract failed member IDs
     QStringList failedMemberIds;
@@ -314,6 +704,7 @@ void DistributionController::startWorker(bool previewOnly) {
     m_worker->setMemberIds(m_pendingMemberIds);
     m_worker->setConfig(m_config);
     m_worker->setPreviewOnly(previewOnly);
+    m_worker->setMegaApi(m_megaApi);
 
     // Connect signals
     connect(m_workerThread, &QThread::started, m_worker, &DistributionWorker::process);

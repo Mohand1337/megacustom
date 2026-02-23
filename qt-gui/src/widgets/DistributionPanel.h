@@ -63,6 +63,13 @@ public slots:
     void refresh();
     void addFilesFromWatermark(const QStringList& filePaths);
 
+    /**
+     * Prepare the table for a direct upload operation.
+     * Called before DistributionController::uploadToMembers() to populate
+     * member rows and set up the UI in upload mode.
+     */
+    void prepareForUpload(const QMap<QString, QStringList>& memberFileMap);
+
 private slots:
     void onScanWmFolder();
     void onSelectAll();
@@ -134,8 +141,12 @@ private:
     // State
     bool m_isRunning = false;
     bool m_isPaused = false;
+    bool m_controllerActive = false;  // True when DistributionController is driving the UI
     int m_successCount = 0;
     int m_failCount = 0;
+
+    // Maps member IDs to table row indices (for controller-driven uploads)
+    QMap<QString, int> m_memberRowMap;
 
     // Async bulk rename tracking
     int m_renameProgress = 0;

@@ -251,6 +251,15 @@ public:
                                    const std::string& outputDir = "") const;
 
     /**
+     * Generate output path for per-member watermarking.
+     * Creates a member subdirectory and uses the original filename.
+     * Output: outputDir/memberId/original_filename.ext
+     */
+    std::string buildMemberOutputPath(const std::string& inputPath,
+                                      const std::string& outputDir,
+                                      const std::string& memberId) const;
+
+    /**
      * Cancel ongoing batch operation
      */
     void cancel() { m_cancelled.store(true); }

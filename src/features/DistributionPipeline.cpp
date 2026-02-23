@@ -375,8 +375,12 @@ bool DistributionPipeline::uploadToMegaFolder(
         return false;
     }
 
-    // Build command for upload - use popen for cross-platform compatibility
-    // Quote paths to handle spaces
+    // Use injected upload function if available (GUI provides MegaApi-based upload)
+    if (m_uploadFunction) {
+        return m_uploadFunction(localPath, megaFolder, error);
+    }
+
+    // Fallback: CLI popen-based upload (for non-GUI usage)
     std::string cmd = "./megacustom upload \"" + localPath + "\" \"" + megaFolder + "\" 2>&1";
 
     FILE* pipe = popen(cmd.c_str(), "r");

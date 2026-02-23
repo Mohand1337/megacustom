@@ -15,6 +15,7 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QDateTime>
+#include <QFileInfo>
 #include <QTimer>
 #include <QMutex>
 #include <QWaitCondition>
@@ -250,37 +251,79 @@ void DistributionPanel::setDistributionController(DistributionController* contro
     m_distController = controller;
 
     if (m_distController) {
-        // Connect controller signals to panel slots
+        // Distribution started — set UI running state
         connect(m_distController, &DistributionController::distributionStarted,
                 this, [this](const QString& jobId) {
-            m_statusLabel->setText(QString("Distribution started (Job: %1)").arg(jobId));
+            Q_UNUSED(jobId);
+            if (!m_controllerActive) return;
+            m_isRunning = true;
+            m_statusLabel->setText("Upload starting...");
         });
 
+        // Progress updates — update status label with current file info
         connect(m_distController, &DistributionController::distributionProgress,
                 this, [this](const QtDistributionProgress& progress) {
-            m_progressBar->setValue(static_cast<int>(progress.overallPercent));
-            m_statusLabel->setText(QString("%1: %2 - %3")
-                .arg(progress.phase)
-                .arg(progress.currentMember)
-                .arg(progress.currentFile));
+            if (!m_controllerActive) return;
+            m_statusLabel->setText(QString("Uploading: %1 - %2")
+                .arg(progress.currentMember, progress.currentFile));
         });
 
+        // Member status updates — update corresponding table row
         connect(m_distController, &DistributionController::memberCompleted,
                 this, [this](const QtMemberStatus& status) {
-            qDebug() << "Member completed:" << status.memberId << "state:" << status.state;
+            if (!m_controllerActive) return;
+            if (!m_memberRowMap.contains(status.memberId)) return;
+
+            int row = m_memberRowMap[status.memberId];
+            QTableWidgetItem* statusItem = m_memberTable->item(row, 5);
+            if (!statusItem) return;
+
+            if (status.state == "uploading") {
+                statusItem->setText("Uploading...");
+                statusItem->setForeground(QColor("#ffd43b"));
+            } else if (status.state == "completed") {
+                statusItem->setText(QString("Done (%1 files)").arg(status.filesUploaded));
+                statusItem->setForeground(QColor("#69db7c"));
+                m_successCount++;
+                m_progressBar->setValue(m_successCount + m_failCount);
+            } else if (status.state == "failed") {
+                statusItem->setText("Failed");
+                statusItem->setForeground(QColor("#ff6b6b"));
+                statusItem->setToolTip(status.lastError);
+                m_failCount++;
+                m_progressBar->setValue(m_successCount + m_failCount);
+            } else if (status.state == "skipped") {
+                statusItem->setText("Skipped");
+                statusItem->setForeground(QColor("#888"));
+                statusItem->setToolTip(status.lastError);
+                m_failCount++;
+                m_progressBar->setValue(m_successCount + m_failCount);
+            }
         });
 
+        // Distribution finished — reset UI and show summary
         connect(m_distController, &DistributionController::distributionFinished,
                 this, [this](const QtDistributionResult& result) {
             m_isRunning = false;
+            m_controllerActive = false;
             m_startBtn->setEnabled(true);
+            m_pauseBtn->setEnabled(false);
+            m_pauseBtn->setText("Pause");
             m_stopBtn->setEnabled(false);
             m_progressBar->setVisible(false);
 
-            m_statusLabel->setText(QString("Distribution complete: %1/%2 members succeeded")
-                .arg(result.membersCompleted).arg(result.totalMembers));
+            m_statusLabel->setText(QString("Upload complete: %1/%2 members, %3 files uploaded")
+                .arg(result.membersCompleted).arg(result.totalMembers).arg(result.filesUploaded));
+
+            QMessageBox::information(this, "Upload Complete",
+                QString("Upload finished.\n\n"
+                        "Members: %1 succeeded, %2 failed, %3 skipped\n"
+                        "Files: %4 uploaded, %5 failed")
+                .arg(result.membersCompleted).arg(result.membersFailed).arg(result.membersSkipped)
+                .arg(result.filesUploaded).arg(result.filesFailed));
         });
 
+        // Error handling
         connect(m_distController, &DistributionController::distributionError,
                 this, [this](const QString& error) {
             m_statusLabel->setText(QString("Error: %1").arg(error));
@@ -578,6 +621,85 @@ void DistributionPanel::addFilesFromWatermark(const QStringList& filePaths) {
     // Trigger a scan to pick up any new files in /latest-wm/
     // The watermarked files should already be in the /latest-wm/ folder
     onScanWmFolder();
+}
+
+void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& memberFileMap) {
+    m_controllerActive = true;
+    m_memberRowMap.clear();
+    m_wmFolders.clear();
+    m_memberTable->setRowCount(0);
+    m_memberTable->setRowCount(memberFileMap.size());
+
+    int row = 0;
+    for (auto it = memberFileMap.constBegin(); it != memberFileMap.constEnd(); ++it) {
+        const QString& memberId = it.key();
+        const QStringList& files = it.value();
+
+        m_memberRowMap[memberId] = row;
+
+        // Checkbox (checked, disabled during upload)
+        QCheckBox* check = new QCheckBox();
+        check->setChecked(true);
+        check->setEnabled(false);
+        QWidget* checkWidget = new QWidget();
+        QHBoxLayout* checkLayout = new QHBoxLayout(checkWidget);
+        checkLayout->addWidget(check);
+        checkLayout->setAlignment(Qt::AlignCenter);
+        checkLayout->setContentsMargins(0, 0, 0, 0);
+        m_memberTable->setCellWidget(row, 0, checkWidget);
+
+        // Member ID / name
+        MemberInfo memberInfo = m_registry->getMember(memberId);
+        QString display = memberInfo.displayName.isEmpty() ? memberId
+            : QString("%1 (%2)").arg(memberInfo.displayName, memberId);
+        auto* idItem = new QTableWidgetItem(display);
+        idItem->setForeground(QColor("#69db7c"));
+        m_memberTable->setItem(row, 1, idItem);
+
+        // Files count
+        auto* countItem = new QTableWidgetItem(QString("%1 file(s)").arg(files.size()));
+        m_memberTable->setItem(row, 2, countItem);
+
+        // Source summary
+        QString sourceSummary = files.size() == 1
+            ? QFileInfo(files.first()).fileName()
+            : QString("%1 files").arg(files.size());
+        auto* sourceItem = new QTableWidgetItem(sourceSummary);
+        sourceItem->setToolTip(files.join("\n"));
+        m_memberTable->setItem(row, 3, sourceItem);
+
+        // Destination
+        QString dest = memberInfo.distributionFolder.isEmpty() ? "(no folder)" : memberInfo.distributionFolder;
+        auto* destItem = new QTableWidgetItem(dest);
+        destItem->setToolTip(dest);
+        m_memberTable->setItem(row, 4, destItem);
+
+        // Status - pending
+        auto* statusItem = new QTableWidgetItem("Pending");
+        statusItem->setTextAlignment(Qt::AlignCenter);
+        statusItem->setForeground(QColor("#888"));
+        m_memberTable->setItem(row, 5, statusItem);
+
+        row++;
+    }
+
+    // Set UI to running state
+    m_startBtn->setEnabled(false);
+    m_pauseBtn->setEnabled(true);
+    m_stopBtn->setEnabled(true);
+    m_progressBar->setVisible(true);
+    m_progressBar->setMaximum(memberFileMap.size());
+    m_progressBar->setValue(0);
+    m_successCount = 0;
+    m_failCount = 0;
+
+    int totalFiles = 0;
+    for (const auto& files : memberFileMap) totalFiles += files.size();
+
+    m_statusLabel->setText(QString("Uploading %1 files to %2 members...")
+        .arg(totalFiles).arg(memberFileMap.size()));
+    m_statsLabel->setText(QString("Members: %1 | Files: %2")
+        .arg(memberFileMap.size()).arg(totalFiles));
 }
 
 void DistributionPanel::onScanWmFolder() {
@@ -1040,13 +1162,30 @@ void DistributionPanel::onStartDistribution() {
 }
 
 void DistributionPanel::onStopDistribution() {
-    if (m_copyWorker) {
+    if (m_controllerActive && m_distController) {
+        m_distController->cancel();
+    } else if (m_copyWorker) {
         m_copyWorker->cancel();
     }
-    m_statusLabel->setText("Stopping distribution...");
+    m_statusLabel->setText("Stopping...");
 }
 
 void DistributionPanel::onPauseDistribution() {
+    if (m_controllerActive && m_distController) {
+        if (m_isPaused) {
+            m_distController->resume();
+            m_isPaused = false;
+            m_pauseBtn->setText("Pause");
+            m_statusLabel->setText("Upload resumed");
+        } else {
+            m_distController->pause();
+            m_isPaused = true;
+            m_pauseBtn->setText("Resume");
+            m_statusLabel->setText("Upload paused");
+        }
+        return;
+    }
+
     if (!m_copyWorker) return;
 
     if (m_isPaused) {

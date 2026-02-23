@@ -71,6 +71,7 @@ void WatermarkWorker::process() {
     if (!m_memberIds.isEmpty()) {
         int total = m_files.size() * m_memberIds.size();
         int idx = 0;
+        QMap<QString, QStringList> memberFileMap;  // Track member -> output files
 
         watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
             emit this->progress(progress.currentIndex, total,
@@ -100,6 +101,7 @@ void WatermarkWorker::process() {
 
                 if (result.success) {
                     successCount++;
+                    memberFileMap[memberId].append(QString::fromStdString(result.outputFile));
                 } else {
                     failCount++;
                 }
@@ -112,6 +114,7 @@ void WatermarkWorker::process() {
         }
 
         emit finished(successCount, failCount);
+        emit finishedWithMapping(successCount, failCount, memberFileMap);
         return;
     }
 
@@ -863,6 +866,12 @@ void WatermarkPanel::onStartWatermark() {
     connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);
     connect(m_worker, &WatermarkWorker::fileCompleted, this, &WatermarkPanel::onWorkerFileCompleted);
     connect(m_worker, &WatermarkWorker::finished, this, &WatermarkPanel::onWorkerFinished);
+    connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
+            [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
+                if (!memberFileMap.isEmpty()) {
+                    emit sendToDistributionMapped(memberFileMap);
+                }
+            });
     connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);

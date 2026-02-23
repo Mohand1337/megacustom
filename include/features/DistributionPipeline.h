@@ -150,6 +150,15 @@ struct DistributionProgress {
 using DistributionProgressCallback = std::function<void(const DistributionProgress&)>;
 
 /**
+ * Upload function signature for injectable upload mechanism.
+ * The GUI injects a MegaApi-based implementation; CLI uses popen fallback.
+ */
+using UploadFunction = std::function<bool(
+    const std::string& localPath,
+    const std::string& remotePath,
+    std::string& error)>;
+
+/**
  * DistributionPipeline - Orchestrates the complete distribution workflow
  *
  * Workflow:
@@ -186,6 +195,12 @@ public:
      * Default: ~/.megacustom/members.json
      */
     void setMemberDatabasePath(const std::string& path) { m_memberDbPath = path; }
+
+    /**
+     * Set custom upload function (replaces default popen-based upload).
+     * When set, uploadToMegaFolder() calls this instead of shelling out to CLI.
+     */
+    void setUploadFunction(UploadFunction fn) { m_uploadFunction = fn; }
 
     // ==================== Distribution Operations ====================
 
@@ -278,6 +293,7 @@ public:
 private:
     DistributionConfig m_config;
     DistributionProgressCallback m_progressCallback;
+    UploadFunction m_uploadFunction;
     std::string m_memberDbPath;
 
     std::atomic<bool> m_cancelled{false};

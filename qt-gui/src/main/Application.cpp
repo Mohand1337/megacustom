@@ -156,6 +156,7 @@ bool Application::initializeBackend()
         m_smartSyncController = std::make_unique<SmartSyncController>(megaManager.getMegaApi());
         m_cloudCopierController = std::make_unique<CloudCopierController>(megaManager.getMegaApi());
         m_distributionController = std::make_unique<DistributionController>();
+        m_distributionController->setMegaApi(megaManager.getMegaApi());
         m_watermarkerController = std::make_unique<WatermarkerController>();
 
         // Create scheduler and connect to controllers
