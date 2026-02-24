@@ -1,6 +1,6 @@
 #include "core/AuthenticationModule.h"
 #include "core/Crypto.h"
-#include "megaapi.h"
+#include "MegaWrapper.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>

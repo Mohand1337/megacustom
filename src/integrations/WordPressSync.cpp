@@ -17,7 +17,9 @@
 #include <chrono>
 #include <algorithm>
 #include <cstdlib>
+#ifdef USE_CURL
 #include <curl/curl.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -50,10 +52,12 @@ namespace MegaCustom {
 
 // ==================== CURL Callback ====================
 
+#ifdef USE_CURL
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
     userp->append(static_cast<char*>(contents), size * nmemb);
     return size * nmemb;
 }
+#endif
 
 // ==================== Constructor ====================
 
@@ -101,6 +105,7 @@ std::vector<std::string> WordPressSync::getSupportedMemberFields() {
 }
 
 std::string WordPressSync::urlEncode(const std::string& str) {
+#ifdef USE_CURL
     CURL* curl = curl_easy_init();
     if (!curl) return str;
 
@@ -111,6 +116,23 @@ std::string WordPressSync::urlEncode(const std::string& str) {
     }
     curl_easy_cleanup(curl);
     return result;
+#else
+    // Fallback URL encoding (simplified)
+    std::ostringstream escaped;
+    escaped.fill('0');
+    escaped << std::hex;
+
+    for (char c : str) {
+        if (isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+            escaped << c;
+        } else {
+            escaped << std::uppercase;
+            escaped << '%' << std::setw(2) << int((unsigned char)c);
+            escaped << std::nouppercase;
+        }
+    }
+    return escaped.str();
+#endif
 }
 
 std::string WordPressSync::base64Encode(const std::string& str) {
@@ -294,6 +316,7 @@ std::string WordPressSync::buildAuthHeader() const {
 WordPressSync::HttpResponse WordPressSync::httpGet(const std::string& url) {
     HttpResponse response;
 
+#ifdef USE_CURL
     CURL* curl = curl_easy_init();
     if (!curl) {
         response.error = "Failed to initialize CURL";
@@ -329,6 +352,9 @@ WordPressSync::HttpResponse WordPressSync::httpGet(const std::string& url) {
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
+#else
+    response.error = "CURL support disabled";
+#endif
 
     return response;
 }
@@ -336,6 +362,7 @@ WordPressSync::HttpResponse WordPressSync::httpGet(const std::string& url) {
 WordPressSync::HttpResponse WordPressSync::httpPost(const std::string& url, const std::string& body) {
     HttpResponse response;
 
+#ifdef USE_CURL
     CURL* curl = curl_easy_init();
     if (!curl) {
         response.error = "Failed to initialize CURL";
@@ -369,6 +396,9 @@ WordPressSync::HttpResponse WordPressSync::httpPost(const std::string& url, cons
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
+#else
+    response.error = "CURL support disabled";
+#endif
 
     return response;
 }

@@ -5,7 +5,7 @@
 
 #include "operations/FolderManager.h"
 #include "core/MegaManager.h"
-#include <megaapi.h>
+#include "MegaWrapper.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>

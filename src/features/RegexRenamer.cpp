@@ -11,7 +11,7 @@
  */
 
 #include "features/RegexRenamer.h"
-#include <megaapi.h>
+#include "MegaWrapper.h"
 #include <iostream>
 #include <algorithm>
 #include <iomanip>

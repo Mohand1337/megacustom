@@ -1,7 +1,7 @@
 #ifndef TRANSFER_LISTENER_BASE_H
 #define TRANSFER_LISTENER_BASE_H
 
-#include <megaapi.h>
+#include "MegaWrapper.h"
 #include <string>
 #include <mutex>
 #include <condition_variable>
