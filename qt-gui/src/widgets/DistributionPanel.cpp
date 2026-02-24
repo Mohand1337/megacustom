@@ -26,11 +26,11 @@ namespace MegaCustom {
 // ==================== Copy Task Structure ====================
 
 struct FolderCopyTask {
-    int index;
+    int index = 0;
     QString sourcePath;
     QString destPath;
     QString memberId;
-    bool copyFolderItself;
+    bool copyFolderItself = false;
 };
 
 // ==================== FolderCopyWorker ====================

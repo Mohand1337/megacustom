@@ -45,12 +45,12 @@ void LogViewerPanel::setupUI() {
 
     // Title
     QLabel* titleLabel = new QLabel("Activity Logs");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #e0e0e0;");
+    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
     mainLayout->addWidget(titleLabel);
 
     // Description
     QLabel* descLabel = new QLabel("View activity logs, errors, and distribution history for all operations.");
-    descLabel->setStyleSheet("color: #888; margin-bottom: 8px;");
+    descLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
@@ -58,22 +58,22 @@ void LogViewerPanel::setupUI() {
     m_tabWidget = new QTabWidget();
     m_tabWidget->setStyleSheet(R"(
         QTabWidget::pane {
-            border: 1px solid #444;
+            border: 1px solid #DCDDDD;
             border-radius: 4px;
-            background-color: #1e1e1e;
+            background-color: #FFFFFF;
         }
         QTabBar::tab {
-            background-color: #2a2a2a;
-            color: #888;
+            background-color: #EFEFF0;
+            color: #666;
             padding: 8px 16px;
-            border: 1px solid #444;
+            border: 1px solid #DCDDDD;
             border-bottom: none;
             border-top-left-radius: 4px;
             border-top-right-radius: 4px;
         }
         QTabBar::tab:selected {
-            background-color: #1e1e1e;
-            color: #e0e0e0;
+            background-color: #FFFFFF;
+            color: #333;
         }
     )");
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &LogViewerPanel::onTabChanged);
@@ -165,6 +165,7 @@ void LogViewerPanel::setupUI() {
 
     // Activity table
     m_activityTable = new QTableWidget();
+    m_activityTable->setObjectName("ActivityLogTable");
     m_activityTable->setColumnCount(6);
     m_activityTable->setHorizontalHeaderLabels({
         "Time", "Level", "Category", "Action", "Message", "Details"
@@ -189,24 +190,27 @@ void LogViewerPanel::setupUI() {
     m_activityTable->setColumnWidth(5, 150);
 
     m_activityTable->setStyleSheet(R"(
-        QTableWidget {
-            background-color: #1e1e1e;
-            border: 1px solid #444;
+        #ActivityLogTable {
+            background-color: #FFFFFF;
+            alternate-background-color: #F7F7F7;
+            border: 1px solid #DCDDDD;
             border-radius: 4px;
-            gridline-color: #333;
+            gridline-color: #E0E0E0;
+            color: #333;
         }
-        QTableWidget::item {
+        #ActivityLogTable::item {
             padding: 4px;
         }
-        QTableWidget::item:selected {
-            background-color: #0d6efd;
+        #ActivityLogTable::item:selected {
+            background-color: #FFE6E7;
+            color: #333;
         }
-        QHeaderView::section {
-            background-color: #2a2a2a;
-            color: #e0e0e0;
+        #ActivityLogTable QHeaderView::section {
+            background-color: #F7F7F7;
+            color: #333;
             padding: 6px;
             border: none;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid #DCDDDD;
         }
     )");
 
@@ -259,6 +263,7 @@ void LogViewerPanel::setupUI() {
 
     // Distribution table
     m_distributionTable = new QTableWidget();
+    m_distributionTable->setObjectName("DistributionLogTable");
     m_distributionTable->setColumnCount(8);
     m_distributionTable->setHorizontalHeaderLabels({
         "Time", "Member", "Source File", "Destination", "Status", "Size", "WM Time", "Upload Time"
@@ -286,7 +291,30 @@ void LogViewerPanel::setupUI() {
     m_distributionTable->setColumnWidth(6, 80);
     m_distributionTable->setColumnWidth(7, 80);
 
-    m_distributionTable->setStyleSheet(m_activityTable->styleSheet());
+    m_distributionTable->setStyleSheet(R"(
+        #DistributionLogTable {
+            background-color: #FFFFFF;
+            alternate-background-color: #F7F7F7;
+            border: 1px solid #DCDDDD;
+            border-radius: 4px;
+            gridline-color: #E0E0E0;
+            color: #333;
+        }
+        #DistributionLogTable::item {
+            padding: 4px;
+        }
+        #DistributionLogTable::item:selected {
+            background-color: #FFE6E7;
+            color: #333;
+        }
+        #DistributionLogTable QHeaderView::section {
+            background-color: #F7F7F7;
+            color: #333;
+            padding: 6px;
+            border: none;
+            border-bottom: 1px solid #DCDDDD;
+        }
+    )");
 
     connect(m_distributionTable, &QTableWidget::itemSelectionChanged,
             this, &LogViewerPanel::onDistributionTableSelectionChanged);
@@ -336,14 +364,14 @@ void LogViewerPanel::setupUI() {
     bottomLayout->addWidget(m_lastRefreshedLabel);
 
     m_countLabel = new QLabel();
-    m_countLabel->setStyleSheet("color: #888;");
+    m_countLabel->setStyleSheet("color: #666;");
     bottomLayout->addWidget(m_countLabel);
 
     mainLayout->addLayout(bottomLayout);
 
     // Stats bar
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet("color: #888; padding-top: 4px; border-top: 1px solid #333;");
+    m_statsLabel->setStyleSheet("color: #666; padding-top: 4px; border-top: 1px solid #E0E0E0;");
     mainLayout->addWidget(m_statsLabel);
 }
 
@@ -839,21 +867,21 @@ QString LogViewerPanel::formatDuration(qint64 ms) const {
 QColor LogViewerPanel::getLevelColor(int level) const {
     switch (level) {
         case 0: return QColor("#888");      // Debug - gray
-        case 1: return QColor("#e0e0e0");   // Info - white
-        case 2: return QColor("#fbbf24");   // Warning - yellow
-        case 3: return QColor("#f87171");   // Error - red
-        default: return QColor("#e0e0e0");
+        case 1: return QColor("#333");      // Info - dark text
+        case 2: return QColor("#b45309");   // Warning - dark amber
+        case 3: return QColor("#dc2626");   // Error - red
+        default: return QColor("#333");
     }
 }
 
 QColor LogViewerPanel::getStatusColor(int status) const {
     switch (status) {
         case 0: return QColor("#888");      // Pending - gray
-        case 1: return QColor("#60a5fa");   // Watermarking - blue
-        case 2: return QColor("#818cf8");   // Uploading - purple
-        case 3: return QColor("#4ade80");   // Completed - green
-        case 4: return QColor("#f87171");   // Failed - red
-        default: return QColor("#e0e0e0");
+        case 1: return QColor("#2563eb");   // Watermarking - blue
+        case 2: return QColor("#6366f1");   // Uploading - purple
+        case 3: return QColor("#16a34a");   // Completed - green
+        case 4: return QColor("#dc2626");   // Failed - red
+        default: return QColor("#333");
     }
 }
 

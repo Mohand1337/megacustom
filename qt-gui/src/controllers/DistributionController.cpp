@@ -503,7 +503,8 @@ void DistributionWorker::processDirectUpload() {
         emit memberCompleted(memberStatus);
     }
 
-    result.success = (result.membersFailed == 0 && result.membersSkipped < result.totalMembers);
+    // Success = no failures AND at least one member was actually processed (not all skipped)
+    result.success = (result.membersFailed == 0 && result.membersCompleted > 0);
 
     emit finished(result);
 }

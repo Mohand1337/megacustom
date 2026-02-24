@@ -292,12 +292,17 @@ DownloaderPanel::DownloaderPanel(QWidget* parent)
 
 DownloaderPanel::~DownloaderPanel() {
     if (m_workerThread) {
-        if (m_worker) {
-            m_worker->cancel();
+        if (m_workerThread->isRunning()) {
+            if (m_worker) m_worker->cancel();
+            m_workerThread->quit();
+            if (!m_workerThread->wait(5000)) {
+                m_workerThread->terminate();
+                m_workerThread->wait();
+            }
         }
-        m_workerThread->quit();
-        m_workerThread->wait();
-        delete m_workerThread;
+        // deleteLater via QThread::finished handles actual deletion
+        m_workerThread = nullptr;
+        m_worker = nullptr;
     }
 }
 

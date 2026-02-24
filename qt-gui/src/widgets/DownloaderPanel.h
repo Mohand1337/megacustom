@@ -37,7 +37,7 @@ enum class DownloadSourceType {
 struct DownloadItemInfo {
     QString url;
     QString fileName;              // Detected or extracted filename
-    DownloadSourceType sourceType;
+    DownloadSourceType sourceType = DownloadSourceType::Unknown;
     bool isValid = true;           // URL validation result
     QString status;                // "pending", "downloading", "complete", "error", "skipped"
     int progressPercent = 0;
