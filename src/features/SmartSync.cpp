@@ -1,5 +1,5 @@
 #include "features/SmartSync.h"
-#include <megaapi.h>
+#include "MegaWrapper.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>

@@ -1,5 +1,5 @@
 #include "core/Error.h"
-#include <megaapi.h>
+#include "MegaWrapper.h"
 
 namespace MegaCustom {
 
