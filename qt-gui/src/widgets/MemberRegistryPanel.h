@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QMap>
 #include <QTabWidget>
+#include <QTimer>
 
 namespace MegaCustom {
 
@@ -122,6 +123,10 @@ private:
     QPushButton* m_groupDeselectAllBtn = nullptr;
     QLabel* m_groupStatsLabel = nullptr;
     bool m_suppressGroupRefresh = false;  // Guard to prevent rebuild during checkbox toggles
+
+    // Debounce timers
+    QTimer* m_searchDebounce = nullptr;
+    QTimer* m_groupSearchDebounce = nullptr;
 
     // Controllers
     MemberRegistry* m_registry;

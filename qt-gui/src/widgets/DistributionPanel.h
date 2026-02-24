@@ -77,7 +77,6 @@ private slots:
     void onStartDistribution();
     void onStopDistribution();
     void onPauseDistribution();
-    void onTableSelectionChanged();
     void onBulkRename();
     void onPreviewDistribution();
     void onFileListReceived(const QVariantList& files);
@@ -124,6 +123,7 @@ private:
     QCheckBox* m_skipExistingCheck;      // Skip existing files instead of overwriting
     QCheckBox* m_moveFilesCheck;         // Move files (delete source after transfer)
 
+    QLabel* m_modeIndicator;
     QProgressBar* m_progressBar;
     QLabel* m_statusLabel;
     QLabel* m_statsLabel;
@@ -150,9 +150,8 @@ private:
     // Maps member IDs to table row indices (for controller-driven uploads)
     QMap<QString, int> m_memberRowMap;
 
-    // Async bulk rename tracking
-    int m_renameProgress = 0;
-    int m_renameTotal = 0;
+    // Files received from the Watermark pipeline (for reference/highlighting)
+    QStringList m_receivedWatermarkFiles;
 
     // Helper methods
     void cleanupWorkerThread();
