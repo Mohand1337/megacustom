@@ -11,6 +11,25 @@ namespace MegaCustom {
 
 MemberRegistry* MemberRegistry::s_instance = nullptr;
 
+// MemberStatusInfo JSON serialization
+QJsonObject MemberStatusInfo::toJson() const {
+    QJsonObject obj;
+    if (!lastWatermarkDate.isEmpty()) obj["lastWatermarkDate"] = lastWatermarkDate;
+    if (!lastDistributionDate.isEmpty()) obj["lastDistributionDate"] = lastDistributionDate;
+    if (watermarkCount > 0) obj["watermarkCount"] = watermarkCount;
+    if (distributionCount > 0) obj["distributionCount"] = distributionCount;
+    return obj;
+}
+
+MemberStatusInfo MemberStatusInfo::fromJson(const QJsonObject& obj) {
+    MemberStatusInfo s;
+    s.lastWatermarkDate = obj["lastWatermarkDate"].toString();
+    s.lastDistributionDate = obj["lastDistributionDate"].toString();
+    s.watermarkCount = obj["watermarkCount"].toInt(0);
+    s.distributionCount = obj["distributionCount"].toInt(0);
+    return s;
+}
+
 // MemberInfo JSON serialization
 QJsonObject MemberInfo::toJson() const {
     QJsonObject obj;
@@ -50,6 +69,10 @@ QJsonObject MemberInfo::toJson() const {
     // Phase 2: Distribution folder
     if (!distributionFolder.isEmpty()) obj["distributionFolder"] = distributionFolder;
     if (!distributionFolderHandle.isEmpty()) obj["distributionFolderHandle"] = distributionFolderHandle;
+
+    // Pipeline status
+    QJsonObject statusObj = pipelineStatus.toJson();
+    if (!statusObj.isEmpty()) obj["pipelineStatus"] = statusObj;
 
     // Timestamps
     if (createdAt > 0) obj["createdAt"] = createdAt;
@@ -94,6 +117,11 @@ MemberInfo MemberInfo::fromJson(const QJsonObject& obj) {
     // Phase 2: Distribution folder
     info.distributionFolder = obj["distributionFolder"].toString();
     info.distributionFolderHandle = obj["distributionFolderHandle"].toString();
+
+    // Pipeline status
+    if (obj.contains("pipelineStatus")) {
+        info.pipelineStatus = MemberStatusInfo::fromJson(obj["pipelineStatus"].toObject());
+    }
 
     // Timestamps
     info.createdAt = obj["createdAt"].toInteger(0);
@@ -613,6 +641,28 @@ QList<MemberInfo> MemberRegistry::getUnsyncedMembers() const {
         }
     }
     return list;
+}
+
+// ==================== Pipeline Status ====================
+
+void MemberRegistry::recordWatermark(const QString& memberId, int fileCount) {
+    if (!m_members.contains(memberId)) return;
+    auto& status = m_members[memberId].pipelineStatus;
+    status.lastWatermarkDate = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm");
+    status.watermarkCount += fileCount;
+    m_members[memberId].updatedAt = QDateTime::currentSecsSinceEpoch();
+    save();
+    emit memberUpdated(memberId);
+}
+
+void MemberRegistry::recordDistribution(const QString& memberId, int fileCount) {
+    if (!m_members.contains(memberId)) return;
+    auto& status = m_members[memberId].pipelineStatus;
+    status.lastDistributionDate = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm");
+    status.distributionCount += fileCount;
+    m_members[memberId].updatedAt = QDateTime::currentSecsSinceEpoch();
+    save();
+    emit memberUpdated(memberId);
 }
 
 // ==================== Phase 2: CSV Import/Export ====================

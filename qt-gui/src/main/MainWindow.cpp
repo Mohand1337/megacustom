@@ -7,6 +7,7 @@
 #include "widgets/SmartSyncPanel.h"
 #include "widgets/CloudCopierPanel.h"
 #include "widgets/MemberRegistryPanel.h"
+#include "utils/MemberRegistry.h"
 #include "widgets/DistributionPanel.h"
 #include "widgets/DownloaderPanel.h"
 #include "widgets/WatermarkPanel.h"
@@ -663,9 +664,26 @@ void MainWindow::setupUI()
                 }
             });
 
+    // Pipeline status tracking — record activity per member
+    if (m_distributionController) {
+        connect(m_distributionController, &DistributionController::memberCompleted,
+                this, [](const QtMemberStatus& status) {
+            if (status.state == "completed" && status.filesUploaded > 0) {
+                MemberRegistry::instance()->recordDistribution(
+                    status.memberId, status.filesUploaded);
+            }
+        });
+    }
+
     // Connect MemberRegistry -> Watermark (member selection integration)
     connect(m_memberRegistryPanel, &MemberRegistryPanel::memberSelected,
             m_watermarkPanel, &WatermarkPanel::selectMember);
+
+    // Connect LogViewerPanel log selection to status bar
+    connect(m_logViewerPanel, &LogViewerPanel::logEntrySelected,
+            this, [this](const QString& details) {
+                statusBar()->showMessage(details, 5000);
+            });
 
     // Advanced Search Panel (Tools menu only, no sidebar)
     m_advancedSearchPanel = new AdvancedSearchPanel(this);

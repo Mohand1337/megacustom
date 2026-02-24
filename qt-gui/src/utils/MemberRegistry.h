@@ -34,6 +34,19 @@ struct MemberPaths {
 };
 
 /**
+ * Lightweight pipeline activity tracking per member
+ */
+struct MemberStatusInfo {
+    QString lastWatermarkDate;     // e.g., "2026-02-24 14:30"
+    QString lastDistributionDate;  // e.g., "2026-02-24 14:35"
+    int watermarkCount = 0;        // Total files watermarked
+    int distributionCount = 0;     // Total files distributed
+
+    QJsonObject toJson() const;
+    static MemberStatusInfo fromJson(const QJsonObject& obj);
+};
+
+/**
  * Member info with all relevant data
  * Extended for Phase 2: watermarking, distribution, WordPress sync
  */
@@ -63,6 +76,9 @@ struct MemberInfo {
     // === Phase 2: Distribution Folder (direct binding) ===
     QString distributionFolder;      // Direct MEGA folder for distributions (alternative to paths)
     QString distributionFolderHandle; // MEGA node handle for fast access
+
+    // === Pipeline Status Tracking ===
+    MemberStatusInfo pipelineStatus;
 
     // Timestamps
     qint64 createdAt = 0;
@@ -208,6 +224,10 @@ public:
     QList<MemberInfo> filterMembers(const QString& searchText,
                                     bool activeOnly = false,
                                     bool withDistributionFolder = false) const;
+
+    // === Pipeline Status ===
+    void recordWatermark(const QString& memberId, int fileCount);
+    void recordDistribution(const QString& memberId, int fileCount);
 
     // === Member Groups ===
     QList<MemberGroup> getAllGroups() const;
