@@ -351,6 +351,16 @@ void MainWindow::setDistributionController(DistributionController* controller)
 
     if (m_distributionController && m_distributionPanel) {
         m_distributionPanel->setDistributionController(controller);
+
+        // Pipeline status tracking — record distribution activity per member
+        connect(m_distributionController, &DistributionController::memberCompleted,
+                this, [](const QtMemberStatus& status) {
+            if (status.state == "completed" && status.filesUploaded > 0) {
+                MemberRegistry::instance()->recordDistribution(
+                    status.memberId, status.filesUploaded);
+            }
+        });
+
         qDebug() << "MainWindow: DistributionController connected to DistributionPanel";
     }
 }
@@ -663,17 +673,6 @@ void MainWindow::setupUI()
                     m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Distribution);
                 }
             });
-
-    // Pipeline status tracking — record activity per member
-    if (m_distributionController) {
-        connect(m_distributionController, &DistributionController::memberCompleted,
-                this, [](const QtMemberStatus& status) {
-            if (status.state == "completed" && status.filesUploaded > 0) {
-                MemberRegistry::instance()->recordDistribution(
-                    status.memberId, status.filesUploaded);
-            }
-        });
-    }
 
     // Connect MemberRegistry -> Watermark (member selection integration)
     connect(m_memberRegistryPanel, &MemberRegistryPanel::memberSelected,
