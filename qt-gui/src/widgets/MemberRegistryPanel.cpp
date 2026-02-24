@@ -57,12 +57,12 @@ void MemberRegistryPanel::setupUI() {
 
     // Title
     QLabel* titleLabel = new QLabel("Member Registry");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #e0e0e0;");
+    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
     mainLayout->addWidget(titleLabel);
 
     // Description
     QLabel* descLabel = new QLabel("Manage members with distribution folders, watermark settings, and contact info for personalized file distribution.");
-    descLabel->setStyleSheet("color: #888; margin-bottom: 8px;");
+    descLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
@@ -74,7 +74,13 @@ void MemberRegistryPanel::setupUI() {
     m_searchEdit->setPlaceholderText("Search members...");
     m_searchEdit->setClearButtonEnabled(true);
     m_searchEdit->setMinimumWidth(200);
-    connect(m_searchEdit, &QLineEdit::textChanged, this, &MemberRegistryPanel::onSearchChanged);
+    m_searchDebounce = new QTimer(this);
+    m_searchDebounce->setSingleShot(true);
+    m_searchDebounce->setInterval(300);
+    connect(m_searchDebounce, &QTimer::timeout, this, [this]() {
+        onSearchChanged(m_searchEdit->text());
+    });
+    connect(m_searchEdit, &QLineEdit::textChanged, this, [this]() { m_searchDebounce->start(); });
     filterLayout->addWidget(m_searchEdit);
 
     m_activeOnlyCheck = new QCheckBox("Active only");
@@ -94,22 +100,22 @@ void MemberRegistryPanel::setupUI() {
     QTabWidget* tabWidget = new QTabWidget();
     tabWidget->setStyleSheet(R"(
         QTabWidget::pane {
-            border: 1px solid #444;
+            border: 1px solid #DCDDDD;
             border-radius: 4px;
-            background-color: #1e1e1e;
+            background-color: #FFFFFF;
         }
         QTabBar::tab {
-            background-color: #2a2a2a;
-            color: #888;
+            background-color: #EFEFF0;
+            color: #616366;
             padding: 8px 16px;
-            border: 1px solid #444;
+            border: 1px solid #DCDDDD;
             border-bottom: none;
             border-top-left-radius: 4px;
             border-top-right-radius: 4px;
         }
         QTabBar::tab:selected {
-            background-color: #1e1e1e;
-            color: #e0e0e0;
+            background-color: #FFFFFF;
+            color: #303233;
         }
     )");
 
@@ -120,9 +126,10 @@ void MemberRegistryPanel::setupUI() {
 
     // Members table with extended columns
     m_memberTable = new QTableWidget();
-    m_memberTable->setColumnCount(8);
+    m_memberTable->setObjectName("MemberRegistryTable");
+    m_memberTable->setColumnCount(9);
     m_memberTable->setHorizontalHeaderLabels({
-        "#", "ID", "Display Name", "Email", "Distribution Folder", "WM Fields", "Active", "Groups"
+        "#", "ID", "Display Name", "Email", "Distribution Folder", "WM Fields", "Active", "Groups", "Last Activity"
     });
     m_memberTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_memberTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -139,6 +146,7 @@ void MemberRegistryPanel::setupUI() {
     m_memberTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Interactive); // WM Fields
     m_memberTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);      // Active
     m_memberTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Interactive); // Groups
+    m_memberTable->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Interactive); // Last Activity
     m_memberTable->setColumnWidth(0, 40);
     m_memberTable->setColumnWidth(1, 100);
     m_memberTable->setColumnWidth(2, 120);
@@ -146,26 +154,34 @@ void MemberRegistryPanel::setupUI() {
     m_memberTable->setColumnWidth(5, 100);
     m_memberTable->setColumnWidth(6, 60);
     m_memberTable->setColumnWidth(7, 120);
+    m_memberTable->setColumnWidth(8, 130);
 
     m_memberTable->setStyleSheet(R"(
-        QTableWidget {
-            background-color: #1e1e1e;
-            border: 1px solid #444;
-            border-radius: 4px;
-            gridline-color: #333;
+        #MemberRegistryTable {
+            background-color: #FFFFFF;
+            alternate-background-color: #F7F7F7;
+            border: 1px solid #DCDDDD;
+            border-radius: 8px;
+            gridline-color: #F6F6F7;
+            color: #303233;
         }
-        QTableWidget::item {
-            padding: 4px;
+        #MemberRegistryTable::item {
+            padding: 6px 8px;
+            border-bottom: 1px solid #F6F6F7;
+            color: #303233;
         }
-        QTableWidget::item:selected {
-            background-color: #0d6efd;
+        #MemberRegistryTable::item:selected {
+            background-color: rgba(221, 20, 5, 0.1);
+            color: #303233;
         }
-        QHeaderView::section {
-            background-color: #2a2a2a;
-            color: #e0e0e0;
-            padding: 6px;
+        #MemberRegistryTable QHeaderView::section {
+            background-color: #F7F7F7;
+            color: #303233;
+            padding: 8px 6px;
             border: none;
-            border-bottom: 1px solid #444;
+            border-bottom: 2px solid #DCDDDD;
+            font-weight: 600;
+            font-size: 12px;
         }
     )");
 
@@ -299,7 +315,7 @@ void MemberRegistryPanel::setupUI() {
     templateMainLayout->setContentsMargins(8, 8, 8, 8);
 
     QLabel* templateDescLabel = new QLabel("Configure default path types for new members. Enable/disable path types to customize which paths are available.");
-    templateDescLabel->setStyleSheet("color: #888;");
+    templateDescLabel->setStyleSheet("color: #666;");
     templateDescLabel->setWordWrap(true);
     templateMainLayout->addWidget(templateDescLabel);
 
@@ -372,7 +388,7 @@ void MemberRegistryPanel::setupUI() {
 
     QLabel* groupsDescLabel = new QLabel(
         "Create named groups of members for quick selection in Watermark and Distribution panels.");
-    groupsDescLabel->setStyleSheet("color: #888;");
+    groupsDescLabel->setStyleSheet("color: #666;");
     groupsDescLabel->setWordWrap(true);
     groupsLayout->addWidget(groupsDescLabel);
 
@@ -384,25 +400,29 @@ void MemberRegistryPanel::setupUI() {
     groupListLayout->setContentsMargins(0, 0, 0, 0);
 
     QLabel* groupListLabel = new QLabel("Groups");
-    groupListLabel->setStyleSheet("font-weight: bold; color: #e0e0e0;");
+    groupListLabel->setStyleSheet("font-weight: bold; color: #303233;");
     groupListLayout->addWidget(groupListLabel);
 
     m_groupList = new QListWidget();
+    m_groupList->setObjectName("GroupList");
     m_groupList->setStyleSheet(R"(
-        QListWidget {
-            background-color: #1e1e1e;
-            border: 1px solid #444;
+        #GroupList {
+            background-color: #FFFFFF;
+            alternate-background-color: #F7F7F7;
+            border: 1px solid #DCDDDD;
             border-radius: 4px;
+            color: #303233;
         }
-        QListWidget::item {
+        #GroupList::item {
             padding: 6px;
-            color: #e0e0e0;
+            color: #303233;
         }
-        QListWidget::item:selected {
-            background-color: #0d6efd;
+        #GroupList::item:selected {
+            background-color: rgba(221, 20, 5, 0.1);
+            color: #303233;
         }
-        QListWidget::item:hover {
-            background-color: #333;
+        #GroupList::item:hover {
+            background-color: #F7F7F7;
         }
     )");
     m_groupList->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -423,10 +443,10 @@ void MemberRegistryPanel::setupUI() {
     groupBtnsLayout->setSpacing(4);
 
     QString groupBtnStyle =
-        "QPushButton { background-color: #444; color: white; "
+        "QPushButton { background-color: #E4E4E5; color: #333; "
         "border: none; border-radius: 4px; padding: 5px 10px; } "
-        "QPushButton:hover { background-color: #555; } "
-        "QPushButton:disabled { background-color: #333; color: #666; }";
+        "QPushButton:hover { background-color: #D0D0D0; } "
+        "QPushButton:disabled { background-color: #AAAAAA; color: #888; }";
 
     m_addGroupBtn = new QPushButton("+ New");
     m_addGroupBtn->setStyleSheet(groupBtnStyle);
@@ -439,10 +459,10 @@ void MemberRegistryPanel::setupUI() {
 
     m_deleteGroupBtn = new QPushButton("Delete");
     m_deleteGroupBtn->setStyleSheet(
-        "QPushButton { background-color: #444; color: #ff6b6b; "
+        "QPushButton { background-color: #E4E4E5; color: #D90007; "
         "border: none; border-radius: 4px; padding: 5px 10px; } "
-        "QPushButton:hover { background-color: #555; } "
-        "QPushButton:disabled { background-color: #333; color: #666; }");
+        "QPushButton:hover { background-color: #D0D0D0; } "
+        "QPushButton:disabled { background-color: #AAAAAA; color: #888; }");
     m_deleteGroupBtn->setEnabled(false);
     connect(m_deleteGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onDeleteGroup);
 
@@ -465,26 +485,35 @@ void MemberRegistryPanel::setupUI() {
     groupMemberLayout->setContentsMargins(0, 0, 0, 0);
 
     QLabel* groupMemberLabel = new QLabel("Members in group:");
-    groupMemberLabel->setStyleSheet("font-weight: bold; color: #e0e0e0;");
+    groupMemberLabel->setStyleSheet("font-weight: bold; color: #303233;");
     groupMemberLayout->addWidget(groupMemberLabel);
 
     m_groupSearchEdit = new QLineEdit();
     m_groupSearchEdit->setPlaceholderText("Search members...");
     m_groupSearchEdit->setClearButtonEnabled(true);
+    m_groupSearchDebounce = new QTimer(this);
+    m_groupSearchDebounce->setSingleShot(true);
+    m_groupSearchDebounce->setInterval(300);
+    connect(m_groupSearchDebounce, &QTimer::timeout, this, [this]() {
+        onGroupSearchChanged(m_groupSearchEdit->text());
+    });
     connect(m_groupSearchEdit, &QLineEdit::textChanged,
-            this, &MemberRegistryPanel::onGroupSearchChanged);
+            this, [this]() { m_groupSearchDebounce->start(); });
     groupMemberLayout->addWidget(m_groupSearchEdit);
 
     m_groupMemberList = new QListWidget();
+    m_groupMemberList->setObjectName("GroupMemberList");
     m_groupMemberList->setStyleSheet(R"(
-        QListWidget {
-            background-color: #1e1e1e;
-            border: 1px solid #444;
+        #GroupMemberList {
+            background-color: #FFFFFF;
+            alternate-background-color: #F7F7F7;
+            border: 1px solid #DCDDDD;
             border-radius: 4px;
+            color: #303233;
         }
-        QListWidget::item {
+        #GroupMemberList::item {
             padding: 4px;
-            color: #e0e0e0;
+            color: #303233;
         }
     )");
     connect(m_groupMemberList, &QListWidget::itemChanged,
@@ -515,7 +544,7 @@ void MemberRegistryPanel::setupUI() {
     groupsLayout->addWidget(groupSplitter, 1);
 
     m_groupStatsLabel = new QLabel();
-    m_groupStatsLabel->setStyleSheet("color: #888;");
+    m_groupStatsLabel->setStyleSheet("color: #666;");
     groupsLayout->addWidget(m_groupStatsLabel);
 
     tabWidget->addTab(groupsTab, "Groups");
@@ -524,7 +553,7 @@ void MemberRegistryPanel::setupUI() {
 
     // Stats
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet("color: #888;");
+    m_statsLabel->setStyleSheet("color: #666;");
     mainLayout->addWidget(m_statsLabel);
 }
 
@@ -612,7 +641,7 @@ void MemberRegistryPanel::populateTable() {
         if (m.hasDistributionFolder()) {
             folderItem->setText(m.distributionFolder);
             folderItem->setIcon(QIcon(":/icons/folder.svg"));
-            folderItem->setForeground(QColor("#4ade80")); // Green
+            folderItem->setForeground(QColor("#009B48")); // Green
         } else {
             folderItem->setText("Not bound");
             folderItem->setForeground(QColor("#666"));
@@ -623,7 +652,7 @@ void MemberRegistryPanel::populateTable() {
         QTableWidgetItem* wmItem = new QTableWidgetItem();
         if (m.useGlobalWatermark) {
             wmItem->setText("Global");
-            wmItem->setForeground(QColor("#fbbf24")); // Yellow
+            wmItem->setForeground(QColor("#F7A308")); // Yellow/amber
         } else if (!m.watermarkFields.isEmpty()) {
             wmItem->setText(m.watermarkFields.join(", "));
         } else {
@@ -648,9 +677,30 @@ void MemberRegistryPanel::populateTable() {
             groupsItem->setForeground(QColor("#666"));
         } else {
             groupsItem->setText(memberGroups.join(", "));
-            groupsItem->setForeground(QColor("#60a5fa"));
+            groupsItem->setForeground(QColor("#4A90D9"));
         }
         m_memberTable->setItem(row, 7, groupsItem);
+
+        // Last Activity
+        QTableWidgetItem* activityItem = new QTableWidgetItem();
+        const auto& ps = m.pipelineStatus;
+        // Show whichever is more recent
+        QString lastDate = ps.lastDistributionDate.isEmpty() ? ps.lastWatermarkDate
+            : (ps.lastWatermarkDate.isEmpty() ? ps.lastDistributionDate
+               : (ps.lastDistributionDate > ps.lastWatermarkDate ? ps.lastDistributionDate : ps.lastWatermarkDate));
+        if (lastDate.isEmpty()) {
+            activityItem->setText("-");
+            activityItem->setForeground(QColor("#666"));
+        } else {
+            activityItem->setText(lastDate);
+            activityItem->setToolTip(
+                QString("WM: %1 (%2 files)\nDist: %3 (%4 files)")
+                    .arg(ps.lastWatermarkDate.isEmpty() ? "never" : ps.lastWatermarkDate)
+                    .arg(ps.watermarkCount)
+                    .arg(ps.lastDistributionDate.isEmpty() ? "never" : ps.lastDistributionDate)
+                    .arg(ps.distributionCount));
+        }
+        m_memberTable->setItem(row, 8, activityItem);
     }
 }
 
@@ -686,8 +736,7 @@ void MemberRegistryPanel::onTableDoubleClicked(int row, int column) {
     }
 }
 
-void MemberRegistryPanel::onSearchChanged(const QString& text) {
-    Q_UNUSED(text);
+void MemberRegistryPanel::onSearchChanged(const QString& /*text*/) {
     populateTable();
 }
 
@@ -772,7 +821,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QVBoxLayout* wmFieldsLayout = new QVBoxLayout(wmFieldsGroup);
 
     QLabel* wmFieldsLabel = new QLabel("Select which fields to include in personalized watermarks:");
-    wmFieldsLabel->setStyleSheet("color: #888;");
+    wmFieldsLabel->setStyleSheet("color: #666;");
     wmFieldsLayout->addWidget(wmFieldsLabel);
 
     QMap<QString, QCheckBox*> wmFieldChecks;
@@ -797,7 +846,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QGroupBox* previewGroup = new QGroupBox("Watermark Preview");
     QVBoxLayout* previewLayout = new QVBoxLayout(previewGroup);
     QLabel* previewLabel = new QLabel();
-    previewLabel->setStyleSheet("font-family: monospace; color: #d4a760; padding: 8px; background: #2a2a2a; border-radius: 4px;");
+    previewLabel->setStyleSheet("font-family: monospace; color: #333; padding: 8px; background: #F7F7F7; border: 1px solid #DCDDDD; border-radius: 4px;");
     previewLabel->setWordWrap(true);
 
     auto updatePreview = [=]() {
@@ -843,7 +892,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QVBoxLayout* distLayout = new QVBoxLayout(distTab);
 
     QLabel* distLabel = new QLabel("MEGA folder where distributed files will be uploaded for this member:");
-    distLabel->setStyleSheet("color: #888;");
+    distLabel->setStyleSheet("color: #666;");
     distLabel->setWordWrap(true);
     distLayout->addWidget(distLabel);
 
@@ -891,7 +940,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
         ? QDateTime::fromSecsSinceEpoch(member.lastWpSync).toString("yyyy-MM-dd hh:mm:ss")
         : "Never";
     QLabel* lastSyncLabel = new QLabel(lastSyncText);
-    lastSyncLabel->setStyleSheet("color: #888;");
+    lastSyncLabel->setStyleSheet("color: #666;");
     wpForm->addRow("Last Synced:", lastSyncLabel);
 
     distLayout->addWidget(wpGroup);
@@ -904,7 +953,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QVBoxLayout* pathsLayout = new QVBoxLayout(pathsTab);
 
     QLabel* pathsLabel = new QLabel("Legacy path configuration (for archive-based distribution):");
-    pathsLabel->setStyleSheet("color: #888;");
+    pathsLabel->setStyleSheet("color: #666;");
     pathsLabel->setWordWrap(true);
     pathsLayout->addWidget(pathsLabel);
 

@@ -288,18 +288,18 @@ void DistributionPanel::setDistributionController(DistributionController* contro
                 statusItem->setForeground(QColor("#ffd43b"));
             } else if (status.state == "completed") {
                 statusItem->setText(QString("Done (%1 files)").arg(status.filesUploaded));
-                statusItem->setForeground(QColor("#69db7c"));
+                statusItem->setForeground(QColor("#009B48"));
                 m_successCount++;
                 m_progressBar->setValue(m_successCount + m_failCount);
             } else if (status.state == "failed") {
                 statusItem->setText("Failed");
-                statusItem->setForeground(QColor("#ff6b6b"));
+                statusItem->setForeground(QColor("#E31B57"));
                 statusItem->setToolTip(status.lastError);
                 m_failCount++;
                 m_progressBar->setValue(m_successCount + m_failCount);
             } else if (status.state == "skipped") {
                 statusItem->setText("Skipped");
-                statusItem->setForeground(QColor("#888"));
+                statusItem->setForeground(QColor("#616366"));
                 statusItem->setToolTip(status.lastError);
                 m_failCount++;
                 m_progressBar->setValue(m_successCount + m_failCount);
@@ -316,6 +316,12 @@ void DistributionPanel::setDistributionController(DistributionController* contro
             m_pauseBtn->setText("Pause");
             m_stopBtn->setEnabled(false);
             m_progressBar->setVisible(false);
+
+            // Reset mode indicator
+            m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+            m_modeIndicator->setStyleSheet(
+                "background: #F7F7F7; color: #333; padding: 6px 12px; "
+                "border: 1px solid #DCDDDD; border-radius: 4px; font-weight: bold;");
 
             m_statusLabel->setText(QString("Upload complete: %1/%2 members, %3 files uploaded")
                 .arg(result.membersCompleted).arg(result.totalMembers).arg(result.filesUploaded));
@@ -345,15 +351,22 @@ void DistributionPanel::setupUI() {
 
     // Title
     QLabel* titleLabel = new QLabel("Content Distribution");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #e0e0e0;");
+    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
     mainLayout->addWidget(titleLabel);
 
     QLabel* descLabel = new QLabel(
         "Distribute watermarked content from /latest-wm/ to registered members. "
         "Scans for timestamped folders, matches them to members, and copies to destinations.");
-    descLabel->setStyleSheet("color: #888; margin-bottom: 8px;");
+    descLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
+
+    // Mode indicator
+    m_modeIndicator = new QLabel("Mode: Cloud Copy (scan and distribute)");
+    m_modeIndicator->setStyleSheet(
+        "background: #F7F7F7; color: #333; padding: 6px 12px; "
+        "border: 1px solid #DCDDDD; border-radius: 4px; font-weight: bold;");
+    mainLayout->addWidget(m_modeIndicator);
 
     // Move mode warning banner (hidden by default)
     m_moveWarningBanner = new QLabel("WARNING: MOVE MODE \xe2\x80\x94 Source files will be DELETED after transfer");
@@ -365,9 +378,9 @@ void DistributionPanel::setupUI() {
     // Source/Destination Config
     QGroupBox* configGroup = new QGroupBox("CONFIGURATION");
     configGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #444; "
+        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
         "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #e0e0e0; }");
+        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     QGridLayout* configLayout = new QGridLayout(configGroup);
     configLayout->setSpacing(8);
 
@@ -392,7 +405,7 @@ void DistributionPanel::setupUI() {
         QString error;
         bool valid = TemplateExpander::validateTemplate(text, &error);
         m_destTemplateEdit->setStyleSheet(valid
-            ? "QLineEdit { border: 1px solid #555; }"
+            ? "QLineEdit { border: 1px solid #DCDDDD; }"
             : "QLineEdit { border: 1px solid #DC3545; }");
         m_destTemplateEdit->setToolTip(valid
             ? "Destination path template. Use {member}, {member_id}, {year}, {month}, etc."
@@ -425,9 +438,9 @@ void DistributionPanel::setupUI() {
     m_previewPathsBtn = new QPushButton("Preview Paths");
     m_previewPathsBtn->setToolTip("Preview expanded destination paths for selected members");
     m_previewPathsBtn->setStyleSheet(
-        "QPushButton { background-color: #2196F3; color: white; "
+        "QPushButton { background-color: #4A90D9; color: white; "
         "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #1976D2; }");
+        "QPushButton:hover { background-color: #3A80C9; }");
     connect(m_previewPathsBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewPathsClicked);
     previewRow->addWidget(m_previewPathsBtn);
     previewRow->addStretch();
@@ -438,9 +451,9 @@ void DistributionPanel::setupUI() {
     // Options Group
     QGroupBox* optionsGroup = new QGroupBox("OPTIONS");
     optionsGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #444; "
+        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
         "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #e0e0e0; }");
+        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     QGridLayout* optionsLayout = new QGridLayout(optionsGroup);
     optionsLayout->setSpacing(8);
 
@@ -478,12 +491,13 @@ void DistributionPanel::setupUI() {
     // Members Table Group
     QGroupBox* tableGroup = new QGroupBox("DETECTED FOLDERS");
     tableGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #444; "
+        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
         "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #e0e0e0; }");
+        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     QVBoxLayout* tableLayout = new QVBoxLayout(tableGroup);
 
     m_memberTable = new QTableWidget();
+    m_memberTable->setObjectName("DistributionTable");
     m_memberTable->setColumnCount(6);
     m_memberTable->setHorizontalHeaderLabels({"", "Member ID", "Timestamp", "WM Folder", "Destination", "Status"});
     m_memberTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -500,24 +514,31 @@ void DistributionPanel::setupUI() {
     m_memberTable->setColumnWidth(2, 140);
     m_memberTable->setColumnWidth(5, 100);  // Wider for status text
     m_memberTable->setStyleSheet(R"(
-        QTableWidget {
-            background-color: #1e1e1e;
-            border: 1px solid #444;
-            border-radius: 4px;
-            gridline-color: #333;
+        #DistributionTable {
+            background-color: #FFFFFF;
+            alternate-background-color: #F7F7F7;
+            border: 1px solid #DCDDDD;
+            border-radius: 8px;
+            gridline-color: #F6F6F7;
+            color: #303233;
         }
-        QTableWidget::item {
-            padding: 4px;
+        #DistributionTable::item {
+            padding: 6px 8px;
+            border-bottom: 1px solid #F6F6F7;
+            color: #303233;
         }
-        QTableWidget::item:selected {
-            background-color: #0d6efd;
+        #DistributionTable::item:selected {
+            background-color: rgba(221, 20, 5, 0.1);
+            color: #303233;
         }
-        QHeaderView::section {
-            background-color: #2a2a2a;
-            color: #e0e0e0;
-            padding: 6px;
+        #DistributionTable QHeaderView::section {
+            background-color: #F7F7F7;
+            color: #303233;
+            padding: 8px 6px;
             border: none;
-            border-bottom: 1px solid #444;
+            border-bottom: 2px solid #DCDDDD;
+            font-weight: 600;
+            font-size: 12px;
         }
     )");
     tableLayout->addWidget(m_memberTable, 1);
@@ -527,10 +548,10 @@ void DistributionPanel::setupUI() {
     QHBoxLayout* selectionLayout = new QHBoxLayout();
 
     QString secondaryBtnStyle =
-        "QPushButton { background-color: #444; color: white; "
+        "QPushButton { background-color: #E4E4E5; color: #333; "
         "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #555; } "
-        "QPushButton:disabled { background-color: #333; color: #666; }";
+        "QPushButton:hover { background-color: #D0D0D0; } "
+        "QPushButton:disabled { background-color: #AAAAAA; color: #888; }";
 
     m_selectAllBtn = new QPushButton("Select All");
     m_selectAllBtn->setToolTip("Select all members for distribution");
@@ -596,29 +617,30 @@ void DistributionPanel::setupUI() {
     m_previewBtn->setIcon(QIcon(":/icons/eye.svg"));
     m_previewBtn->setToolTip("Preview what will be copied");
     m_previewBtn->setStyleSheet(
-        "QPushButton { background-color: #2196F3; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #1976D2; }");
+        "QPushButton { background-color: #4A90D9; color: white; "
+        "border: none; border-radius: 6px; padding: 6px 12px; } "
+        "QPushButton:hover { background-color: #3A80C9; } "
+        "QPushButton:disabled { background-color: #AAAAAA; }");
     connect(m_previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewDistribution);
 
     m_startBtn = new QPushButton("Start Distribution");
     m_startBtn->setIcon(QIcon(":/icons/play.svg"));
     m_startBtn->setToolTip("Start copying to all selected members");
     m_startBtn->setStyleSheet(
-        "QPushButton { background-color: #198754; color: white; "
-        "border: none; border-radius: 4px; padding: 8px 16px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #157347; } "
-        "QPushButton:disabled { background-color: #333; color: #666; }");
+        "QPushButton { background-color: #D90007; color: white; "
+        "border: none; border-radius: 6px; padding: 10px 24px; font-weight: bold; } "
+        "QPushButton:hover { background-color: #C00006; } "
+        "QPushButton:disabled { background-color: #AAAAAA; }");
     connect(m_startBtn, &QPushButton::clicked, this, &DistributionPanel::onStartDistribution);
 
     m_pauseBtn = new QPushButton("Pause");
     m_pauseBtn->setIcon(QIcon(":/icons/pause.svg"));
     m_pauseBtn->setToolTip("Pause/Resume distribution");
     m_pauseBtn->setStyleSheet(
-        "QPushButton { background-color: #FFC107; color: #333; "
-        "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #FFB300; } "
-        "QPushButton:disabled { background-color: #333; color: #666; }");
+        "QPushButton { background-color: #F7A308; color: white; "
+        "border: none; border-radius: 6px; padding: 6px 12px; } "
+        "QPushButton:hover { background-color: #E09300; } "
+        "QPushButton:disabled { background-color: #AAAAAA; }");
     m_pauseBtn->setEnabled(false);
     connect(m_pauseBtn, &QPushButton::clicked, this, &DistributionPanel::onPauseDistribution);
 
@@ -626,10 +648,10 @@ void DistributionPanel::setupUI() {
     m_stopBtn->setIcon(QIcon(":/icons/x.svg"));
     m_stopBtn->setToolTip("Cancel distribution");
     m_stopBtn->setStyleSheet(
-        "QPushButton { background-color: #DC3545; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #C82333; } "
-        "QPushButton:disabled { background-color: #333; color: #666; }");
+        "QPushButton { background-color: #E31B57; color: white; "
+        "border: none; border-radius: 6px; padding: 6px 12px; } "
+        "QPushButton:hover { background-color: #C8164C; } "
+        "QPushButton:disabled { background-color: #AAAAAA; }");
     m_stopBtn->setEnabled(false);
     connect(m_stopBtn, &QPushButton::clicked, this, &DistributionPanel::onStopDistribution);
 
@@ -649,11 +671,11 @@ void DistributionPanel::setupUI() {
     // Status
     QHBoxLayout* statusLayout = new QHBoxLayout();
     m_statusLabel = new QLabel("Click 'Scan' to detect watermarked folders");
-    m_statusLabel->setStyleSheet("color: #888;");
+    m_statusLabel->setStyleSheet("color: #666;");
     statusLayout->addWidget(m_statusLabel);
 
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet("color: #888;");
+    m_statsLabel->setStyleSheet("color: #666;");
     statusLayout->addWidget(m_statsLabel);
     statusLayout->addStretch();
 
@@ -682,23 +704,29 @@ void DistributionPanel::addFilesFromWatermark(const QStringList& filePaths) {
         return;
     }
 
-    // Add received files to the distribution list
-    // These files should be in /latest-wm/ format from WatermarkPanel
-    m_statusLabel->setText(QString("Received %1 file(s) from Watermark panel").arg(filePaths.size()));
+    // Store received files for reference and potential highlighting
+    m_receivedWatermarkFiles = filePaths;
 
-    // Log received files
+    m_statusLabel->setText(QString("Received %1 file(s) from Watermark panel — scanning cloud...").arg(filePaths.size()));
+
     qDebug() << "DistributionPanel: Received" << filePaths.size() << "files from Watermark:";
     for (const QString& path : filePaths) {
         qDebug() << "  -" << path;
     }
 
-    // Trigger a scan to pick up any new files in /latest-wm/
-    // The watermarked files should already be in the /latest-wm/ folder
+    // Scan /latest-wm/ to populate the table.
+    // Note: In single-member mode, files must already be uploaded to /latest-wm/
+    // on MEGA for the scan to find them. The all-members/group pipeline handles
+    // this automatically via sendToDistributionMapped + DistributionController.
     onScanWmFolder();
 }
 
 void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& memberFileMap) {
     m_controllerActive = true;
+    m_modeIndicator->setText("Mode: Auto-Upload (watermark \xe2\x86\x92 member folders)");
+    m_modeIndicator->setStyleSheet(
+        "background: #FFF3F3; color: #D90007; padding: 6px 12px; "
+        "border: 1px solid #D90007; border-radius: 4px; font-weight: bold;");
     m_memberRowMap.clear();
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
@@ -727,7 +755,7 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
         QString display = memberInfo.displayName.isEmpty() ? memberId
             : QString("%1 (%2)").arg(memberInfo.displayName, memberId);
         auto* idItem = new QTableWidgetItem(display);
-        idItem->setForeground(QColor("#69db7c"));
+        idItem->setForeground(QColor("#009B48"));
         m_memberTable->setItem(row, 1, idItem);
 
         // Files count
@@ -751,7 +779,7 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
         // Status - pending
         auto* statusItem = new QTableWidgetItem("Pending");
         statusItem->setTextAlignment(Qt::AlignCenter);
-        statusItem->setForeground(QColor("#888"));
+        statusItem->setForeground(QColor("#616366"));
         m_memberTable->setItem(row, 5, statusItem);
 
         row++;
@@ -781,6 +809,14 @@ void DistributionPanel::onScanWmFolder() {
         m_statusLabel->setText("Error: Not connected to MEGA");
         return;
     }
+
+    // Reset to cloud copy mode (user-initiated scan)
+    m_controllerActive = false;
+    m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+    m_modeIndicator->setStyleSheet(
+        "background: #F7F7F7; color: #333; padding: 6px 12px; "
+        "border: 1px solid #DCDDDD; border-radius: 4px; font-weight: bold;");
+    m_startBtn->setEnabled(true);
 
     // Reload member registry to pick up any new members
     m_registry->load();
@@ -945,7 +981,7 @@ void DistributionPanel::populateTable() {
                 }
             }
 
-            memberCombo->setStyleSheet("QComboBox { background-color: #3d3d3d; color: #ff6b6b; }");
+            memberCombo->setStyleSheet("QComboBox { color: #E31B57; }");
             memberCombo->setToolTip("Select member for this folder");
             connect(memberCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                     [this, row, memberCombo]() {
@@ -963,7 +999,7 @@ void DistributionPanel::populateTable() {
                         // Update status
                         if (m_memberTable->item(row, 5)) {
                             m_memberTable->item(row, 5)->setText("Ready");
-                            m_memberTable->item(row, 5)->setForeground(QColor("#69db7c"));
+                            m_memberTable->item(row, 5)->setForeground(QColor("#009B48"));
                         }
                         // Check the checkbox
                         QWidget* w = m_memberTable->cellWidget(row, 0);
@@ -972,7 +1008,7 @@ void DistributionPanel::populateTable() {
                             if (c) c->setChecked(true);
                         }
                         // Update combo style
-                        memberCombo->setStyleSheet("QComboBox { background-color: #3d3d3d; color: #69db7c; }");
+                        memberCombo->setStyleSheet("QComboBox { color: #009B48; }");
                     }
                 }
             });
@@ -981,10 +1017,10 @@ void DistributionPanel::populateTable() {
             // Plain text for matched members
             QTableWidgetItem* idItem = new QTableWidgetItem(info.memberId);
             if (!info.matched) {
-                idItem->setForeground(QColor("#ff6b6b"));
+                idItem->setForeground(QColor("#E31B57"));
                 idItem->setToolTip("Member not found in registry (no members available)");
             } else {
-                idItem->setForeground(QColor("#69db7c"));
+                idItem->setForeground(QColor("#009B48"));
                 // Show display name if available
                 MemberInfo memberInfo = m_registry->getMember(info.memberId);
                 if (!memberInfo.displayName.isEmpty() && memberInfo.displayName != info.memberId) {
@@ -1014,9 +1050,9 @@ void DistributionPanel::populateTable() {
         QTableWidgetItem* statusItem = new QTableWidgetItem(status);
         statusItem->setTextAlignment(Qt::AlignCenter);
         if (!info.matched) {
-            statusItem->setForeground(QColor("#ff6b6b"));
+            statusItem->setForeground(QColor("#E31B57"));
         } else {
-            statusItem->setForeground(QColor("#69db7c"));
+            statusItem->setForeground(QColor("#009B48"));
         }
         m_memberTable->setItem(row, 5, statusItem);
     }
@@ -1263,7 +1299,7 @@ void DistributionPanel::onPauseDistribution() {
             m_isPaused = true;
             m_pauseBtn->setText("Resume");
             m_statusLabel->setText("Upload paused");
-            m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #666; }");
+            m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #AAAAAA; }");
         }
         return;
     }
@@ -1281,7 +1317,7 @@ void DistributionPanel::onPauseDistribution() {
         m_isPaused = true;
         m_pauseBtn->setText("Resume");
         m_statusLabel->setText("Distribution paused");
-        m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #666; }");
+        m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #AAAAAA; }");
     }
 }
 
@@ -1312,7 +1348,7 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
         m_successCount++;
         if (statusItem) {
             statusItem->setText("Done");
-            statusItem->setForeground(QColor("#69db7c"));
+            statusItem->setForeground(QColor("#009B48"));
         }
 
         // Trigger bulk rename if option is checked
@@ -1324,7 +1360,7 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
         m_failCount++;
         if (statusItem) {
             statusItem->setText("Failed");
-            statusItem->setForeground(QColor("#ff6b6b"));
+            statusItem->setForeground(QColor("#E31B57"));
             statusItem->setToolTip(error);
         }
         qDebug() << "Task failed:" << m_wmFolders[index].memberId << "-" << error;
@@ -1492,10 +1528,6 @@ void DistributionPanel::onBulkRename() {
     QMessageBox::information(this, "Bulk Rename",
         QString("Bulk rename operation completed for %1 folders.\n\n"
                 "Note: Files will be renamed asynchronously.").arg(selectedFolders.size()));
-}
-
-void DistributionPanel::onTableSelectionChanged() {
-    // Nothing specific needed
 }
 
 void DistributionPanel::onVariableHelpClicked() {
