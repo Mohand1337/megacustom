@@ -51,6 +51,10 @@ void WatermarkWorker::setMemberIds(const QStringList& memberIds) {
     m_memberIds = memberIds;
 }
 
+void WatermarkWorker::setMemberDbPath(const QString& path) {
+    m_memberDbPath = path;
+}
+
 void WatermarkWorker::cancel() {
     m_cancelled = true;
 }
@@ -90,10 +94,11 @@ void WatermarkWorker::process() {
                 emit progress(idx, total, label, 0);
 
                 WatermarkResult result;
+                std::string dbPath = m_memberDbPath.toStdString();
                 if (Watermarker::isVideoFile(inputStd)) {
-                    result = watermarker.watermarkVideoForMember(inputStd, memberId.toStdString(), outputDir);
+                    result = watermarker.watermarkVideoForMember(inputStd, memberId.toStdString(), outputDir, dbPath);
                 } else if (Watermarker::isPdfFile(inputStd)) {
-                    result = watermarker.watermarkPdfForMember(inputStd, memberId.toStdString(), outputDir);
+                    result = watermarker.watermarkPdfForMember(inputStd, memberId.toStdString(), outputDir, dbPath);
                 } else {
                     result.success = false;
                     result.error = "Unsupported file type";
@@ -138,10 +143,11 @@ void WatermarkWorker::process() {
 
         if (!m_memberId.isEmpty()) {
             // Per-member watermarking
+            std::string dbPath = m_memberDbPath.toStdString();
             if (Watermarker::isVideoFile(inputStd)) {
-                result = watermarker.watermarkVideoForMember(inputStd, m_memberId.toStdString(), outputDir);
+                result = watermarker.watermarkVideoForMember(inputStd, m_memberId.toStdString(), outputDir, dbPath);
             } else if (Watermarker::isPdfFile(inputStd)) {
-                result = watermarker.watermarkPdfForMember(inputStd, m_memberId.toStdString(), outputDir);
+                result = watermarker.watermarkPdfForMember(inputStd, m_memberId.toStdString(), outputDir, dbPath);
             } else {
                 result.success = false;
                 result.error = "Unsupported file type";
@@ -391,21 +397,64 @@ void WatermarkPanel::setupUI() {
             this, &WatermarkPanel::onModeChanged);
     modeLayout->addWidget(m_modeCombo);
 
-    // Member selection (hidden by default)
-    m_memberWidget = new QWidget();
-    QHBoxLayout* memberLayout = new QHBoxLayout(m_memberWidget);
-    memberLayout->setContentsMargins(0, 0, 0, 0);
-    memberLayout->addWidget(new QLabel("Member:"));
-    m_memberCombo = new QComboBox();
-    m_memberCombo->setMinimumWidth(200);
-    connect(m_memberCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &WatermarkPanel::onMemberChanged);
-    memberLayout->addWidget(m_memberCombo);
-    m_memberWidget->setVisible(false);
-
-    modeLayout->addWidget(m_memberWidget);
     modeLayout->addStretch();
     settingsLayout->addLayout(modeLayout);
+
+    // Member multi-select (hidden by default, shown in Per-Member mode)
+    m_memberWidget = new QWidget();
+    QVBoxLayout* memberVLayout = new QVBoxLayout(m_memberWidget);
+    memberVLayout->setContentsMargins(0, 4, 0, 0);
+    memberVLayout->setSpacing(4);
+
+    // Toolbar: All / None / Add Group / Search / count
+    QHBoxLayout* memberToolbar = new QHBoxLayout();
+    memberToolbar->setSpacing(6);
+
+    m_selectAllMembersBtn = new QPushButton("All");
+    m_selectAllMembersBtn->setToolTip("Select all members");
+    m_selectAllMembersBtn->setFixedWidth(40);
+    connect(m_selectAllMembersBtn, &QPushButton::clicked,
+            this, &WatermarkPanel::onSelectAllMembers);
+
+    m_deselectAllMembersBtn = new QPushButton("None");
+    m_deselectAllMembersBtn->setToolTip("Deselect all members");
+    m_deselectAllMembersBtn->setFixedWidth(50);
+    connect(m_deselectAllMembersBtn, &QPushButton::clicked,
+            this, &WatermarkPanel::onDeselectAllMembers);
+
+    m_groupQuickSelectCombo = new QComboBox();
+    m_groupQuickSelectCombo->setMinimumWidth(150);
+    m_groupQuickSelectCombo->setToolTip("Add all members from a group (additive)");
+    m_groupQuickSelectCombo->addItem("-- Add Group --", "");
+    connect(m_groupQuickSelectCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &WatermarkPanel::onGroupQuickSelect);
+
+    m_memberSearchEdit = new QLineEdit();
+    m_memberSearchEdit->setPlaceholderText("Filter...");
+    m_memberSearchEdit->setClearButtonEnabled(true);
+    m_memberSearchEdit->setMaximumWidth(140);
+    connect(m_memberSearchEdit, &QLineEdit::textChanged,
+            this, &WatermarkPanel::onMemberSearchChanged);
+
+    m_selectionSummaryLabel = new QLabel("0 selected");
+    m_selectionSummaryLabel->setStyleSheet("color: #888; font-size: 11px;");
+
+    memberToolbar->addWidget(m_selectAllMembersBtn);
+    memberToolbar->addWidget(m_deselectAllMembersBtn);
+    memberToolbar->addWidget(m_groupQuickSelectCombo);
+    memberToolbar->addWidget(m_memberSearchEdit);
+    memberToolbar->addStretch();
+    memberToolbar->addWidget(m_selectionSummaryLabel);
+    memberVLayout->addLayout(memberToolbar);
+
+    // Checkable member list
+    m_memberListWidget = new QListWidget();
+    m_memberListWidget->setMaximumHeight(140);
+    m_memberListWidget->setSelectionMode(QAbstractItemView::NoSelection);
+    memberVLayout->addWidget(m_memberListWidget);
+
+    m_memberWidget->setVisible(false);
+    settingsLayout->addWidget(m_memberWidget);
 
     // Watermark text (for global mode)
     QGridLayout* textGrid = new QGridLayout();
@@ -652,44 +701,86 @@ void WatermarkPanel::selectMember(const QString& memberId) {
     }
 
     // Switch to Per-Member mode if not already
-    int perMemberIndex = m_modeCombo->findText("Per-Member");
+    int perMemberIndex = m_modeCombo->findData("member");
     if (perMemberIndex >= 0 && m_modeCombo->currentIndex() != perMemberIndex) {
         m_modeCombo->setCurrentIndex(perMemberIndex);
     }
 
-    // Find and select the member in the combo box
-    for (int i = 0; i < m_memberCombo->count(); ++i) {
-        if (m_memberCombo->itemData(i).toString() == memberId) {
-            m_memberCombo->setCurrentIndex(i);
-            m_statusLabel->setText(QString("Selected member: %1").arg(m_memberCombo->currentText()));
+    // Find and check the member in the list widget
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        if (item->data(Qt::UserRole).toString() == memberId) {
+            item->setCheckState(Qt::Checked);
+            m_memberListWidget->scrollToItem(item);
             break;
         }
     }
+    m_memberListWidget->blockSignals(false);
+    onMemberSelectionChanged();
+
+    m_statusLabel->setText(QString("Selected member: %1").arg(memberId));
 }
 
 void WatermarkPanel::loadMembers() {
-    m_memberCombo->clear();
-    m_memberCombo->addItem("-- Select Member --", "");
-    m_memberCombo->addItem("-- All Members --", "ALL");
-
-    // Add groups
-    QStringList groupNames = m_registry->getGroupNames();
-    if (!groupNames.isEmpty()) {
-        m_memberCombo->insertSeparator(m_memberCombo->count());
-        for (const QString& name : groupNames) {
-            int count = m_registry->getGroupMemberIds(name).size();
-            m_memberCombo->addItem(
-                QString("[Group] %1 (%2)").arg(name).arg(count),
-                "GROUP:" + name);
+    // Preserve current selections
+    QSet<QString> previouslyChecked;
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        if (item->checkState() == Qt::Checked) {
+            previouslyChecked.insert(item->data(Qt::UserRole).toString());
         }
     }
 
+    m_memberListWidget->blockSignals(true);
+    m_memberListWidget->clear();
+
+    // Add groups
+    QStringList groupNames = m_registry->getGroupNames();
+    for (const QString& name : groupNames) {
+        int count = m_registry->getGroupMemberIds(name).size();
+        QListWidgetItem* item = new QListWidgetItem(
+            QString("[Group] %1 (%2 members)").arg(name).arg(count));
+        item->setData(Qt::UserRole, "GROUP:" + name);
+        item->setCheckState(previouslyChecked.contains("GROUP:" + name) ? Qt::Checked : Qt::Unchecked);
+        item->setForeground(QColor("#2196F3"));
+        m_memberListWidget->addItem(item);
+    }
+
     // Add individual members
-    m_memberCombo->insertSeparator(m_memberCombo->count());
     QList<MemberInfo> members = m_registry->getActiveMembers();
     for (const MemberInfo& m : members) {
-        m_memberCombo->addItem(QString("%1 (%2)").arg(m.displayName).arg(m.id), m.id);
+        QString label = QString("%1 (%2)").arg(m.displayName).arg(m.id);
+        // Show email/ip hints
+        QStringList hints;
+        if (!m.email.isEmpty()) hints << m.email;
+        if (!m.ipAddress.isEmpty()) hints << "IP:" + m.ipAddress;
+        if (!hints.isEmpty()) label += " — " + hints.join(", ");
+
+        QListWidgetItem* item = new QListWidgetItem(label);
+        item->setData(Qt::UserRole, m.id);
+        item->setCheckState(previouslyChecked.contains(m.id) ? Qt::Checked : Qt::Unchecked);
+        m_memberListWidget->addItem(item);
     }
+    m_memberListWidget->blockSignals(false);
+
+    // Connect itemChanged for selection tracking (disconnect first to avoid duplicates)
+    disconnect(m_memberListWidget, &QListWidget::itemChanged, nullptr, nullptr);
+    connect(m_memberListWidget, &QListWidget::itemChanged,
+            this, &WatermarkPanel::onMemberSelectionChanged);
+
+    // Populate group quick-select combo
+    m_groupQuickSelectCombo->blockSignals(true);
+    m_groupQuickSelectCombo->clear();
+    m_groupQuickSelectCombo->addItem("-- Add Group --", "");
+    for (const QString& name : groupNames) {
+        int count = m_registry->getGroupMemberIds(name).size();
+        m_groupQuickSelectCombo->addItem(
+            QString("%1 (%2)").arg(name).arg(count), name);
+    }
+    m_groupQuickSelectCombo->blockSignals(false);
+
+    onMemberSelectionChanged();
 }
 
 void WatermarkPanel::onAddFiles() {
@@ -820,25 +911,11 @@ void WatermarkPanel::onStartWatermark() {
             return;
         }
     } else {
-        QString selectedMember = m_memberCombo->currentData().toString();
-        if (selectedMember.isEmpty()) {
-            QMessageBox::warning(this, "No Member", "Please select a member.");
+        QStringList selectedIds = getSelectedMemberIds();
+        if (selectedIds.isEmpty()) {
+            QMessageBox::warning(this, "No Members",
+                "Please select at least one member or group.");
             return;
-        }
-        if (selectedMember == "ALL") {
-            QList<MemberInfo> activeMembers = m_registry->getActiveMembers();
-            if (activeMembers.isEmpty()) {
-                QMessageBox::warning(this, "No Members", "No active members found.");
-                return;
-            }
-        } else if (selectedMember.startsWith("GROUP:")) {
-            QString groupName = selectedMember.mid(6);
-            QStringList groupIds = m_registry->getGroupMemberIds(groupName);
-            if (groupIds.isEmpty()) {
-                QMessageBox::warning(this, "Empty Group",
-                    QString("Group '%1' has no active members.").arg(groupName));
-                return;
-            }
         }
     }
 
@@ -861,17 +938,11 @@ void WatermarkPanel::onStartWatermark() {
     QString memberId;
     QStringList allMemberIds;
     if (m_modeCombo->currentData().toString() == "member") {
-        QString selected = m_memberCombo->currentData().toString();
-        if (selected == "ALL") {
-            QList<MemberInfo> activeMembers = m_registry->getActiveMembers();
-            for (const MemberInfo& m : activeMembers) {
-                allMemberIds.append(m.id);
-            }
-        } else if (selected.startsWith("GROUP:")) {
-            QString groupName = selected.mid(6);
-            allMemberIds = m_registry->getGroupMemberIds(groupName);
-        } else {
-            memberId = selected;
+        allMemberIds = getSelectedMemberIds();
+        // Optimize: single member uses the single-member code path
+        if (allMemberIds.size() == 1) {
+            memberId = allMemberIds.first();
+            allMemberIds.clear();
         }
     }
 
@@ -894,6 +965,7 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setConfig(config);
     m_worker->setMemberId(memberId);
     m_worker->setMemberIds(allMemberIds);
+    m_worker->setMemberDbPath(m_registry->configPath());
 
     connect(m_workerThread, &QThread::started, m_worker, &WatermarkWorker::process);
     connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);
@@ -990,9 +1062,93 @@ void WatermarkPanel::onModeChanged(int index) {
     m_secondaryTextEdit->setEnabled(isGlobal);
 }
 
-void WatermarkPanel::onMemberChanged(int index) {
-    Q_UNUSED(index);
-    // Could preview member watermark text here
+void WatermarkPanel::onMemberSelectionChanged() {
+    QStringList selected = getSelectedMemberIds();
+    m_selectionSummaryLabel->setText(
+        QString("%1 selected").arg(selected.size()));
+    updateButtonStates();
+}
+
+void WatermarkPanel::onSelectAllMembers() {
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        if (!item->isHidden()) {
+            item->setCheckState(Qt::Checked);
+        }
+    }
+    m_memberListWidget->blockSignals(false);
+    onMemberSelectionChanged();
+}
+
+void WatermarkPanel::onDeselectAllMembers() {
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        m_memberListWidget->item(i)->setCheckState(Qt::Unchecked);
+    }
+    m_memberListWidget->blockSignals(false);
+    onMemberSelectionChanged();
+}
+
+void WatermarkPanel::onGroupQuickSelect(int index) {
+    QString groupName = m_groupQuickSelectCombo->itemData(index).toString();
+    if (groupName.isEmpty()) return;
+
+    // Additive: check the group item and its individual members
+    QStringList groupMemberIds = m_registry->getGroupMemberIds(groupName);
+
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        QString data = item->data(Qt::UserRole).toString();
+        if (data == "GROUP:" + groupName) {
+            item->setCheckState(Qt::Checked);
+        }
+        if (groupMemberIds.contains(data)) {
+            item->setCheckState(Qt::Checked);
+        }
+    }
+    m_memberListWidget->blockSignals(false);
+
+    // Reset combo to prompt
+    m_groupQuickSelectCombo->blockSignals(true);
+    m_groupQuickSelectCombo->setCurrentIndex(0);
+    m_groupQuickSelectCombo->blockSignals(false);
+
+    onMemberSelectionChanged();
+}
+
+void WatermarkPanel::onMemberSearchChanged() {
+    QString filter = m_memberSearchEdit->text().trimmed();
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        if (filter.isEmpty()) {
+            item->setHidden(false);
+        } else {
+            item->setHidden(!item->text().contains(filter, Qt::CaseInsensitive));
+        }
+    }
+}
+
+QStringList WatermarkPanel::getSelectedMemberIds() const {
+    QSet<QString> idSet;
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        if (item->checkState() != Qt::Checked) continue;
+
+        QString data = item->data(Qt::UserRole).toString();
+        if (data.startsWith("GROUP:")) {
+            // Expand group to individual member IDs
+            QString groupName = data.mid(6);
+            QStringList groupIds = m_registry->getGroupMemberIds(groupName);
+            for (const QString& id : groupIds) {
+                idSet.insert(id);
+            }
+        } else if (!data.isEmpty()) {
+            idSet.insert(data);
+        }
+    }
+    return idSet.values();
 }
 
 void WatermarkPanel::onWorkerProgress(int fileIndex, int totalFiles, const QString& currentFile, int percent) {
@@ -1172,7 +1328,11 @@ void WatermarkPanel::updateButtonStates() {
     m_addFilesBtn->setEnabled(!m_isRunning);
     m_addFolderBtn->setEnabled(!m_isRunning);
     m_modeCombo->setEnabled(!m_isRunning);
-    m_memberCombo->setEnabled(!m_isRunning);
+    m_memberListWidget->setEnabled(!m_isRunning);
+    m_selectAllMembersBtn->setEnabled(!m_isRunning);
+    m_deselectAllMembersBtn->setEnabled(!m_isRunning);
+    m_groupQuickSelectCombo->setEnabled(!m_isRunning);
+    m_memberSearchEdit->setEnabled(!m_isRunning);
     m_primaryTextEdit->setEnabled(!m_isRunning && m_modeCombo->currentData().toString() == "global");
     m_secondaryTextEdit->setEnabled(!m_isRunning && m_modeCombo->currentData().toString() == "global");
     m_presetCombo->setEnabled(!m_isRunning);
@@ -1192,17 +1352,17 @@ WatermarkConfig WatermarkPanel::buildConfig() const {
     if (TemplateExpander::hasVariables(primaryText) || TemplateExpander::hasVariables(secondaryText)) {
         TemplateExpander::Variables vars;
 
-        // Check if per-member mode with a selected member
-        if (m_modeCombo->currentData().toString() == "member" && m_memberCombo->currentIndex() > 0) {
-            QString memberId = m_memberCombo->currentData().toString();
-            MemberInfo member = m_registry->getMember(memberId);
+        // Check if per-member mode with a single selected member
+        QStringList selectedIds = getSelectedMemberIds();
+        if (m_modeCombo->currentData().toString() == "member" && selectedIds.size() == 1) {
+            MemberInfo member = m_registry->getMember(selectedIds.first());
             if (!member.id.isEmpty()) {
                 vars = TemplateExpander::Variables::fromMember(member);
             } else {
                 vars = TemplateExpander::Variables::withCurrentDateTime();
             }
         } else {
-            // Global mode - just use date/time variables
+            // Global mode or multi-member — worker expands per-member during processing
             vars = TemplateExpander::Variables::withCurrentDateTime();
         }
 
@@ -1402,9 +1562,9 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
     QString memberInfo;
     QString mode;
 
-    if (m_modeCombo->currentData().toString() == "member" && m_memberCombo->currentIndex() > 0) {
-        QString memberId = m_memberCombo->currentData().toString();
-        MemberInfo member = m_registry->getMember(memberId);
+    QStringList selectedIds = getSelectedMemberIds();
+    if (m_modeCombo->currentData().toString() == "member" && selectedIds.size() == 1) {
+        MemberInfo member = m_registry->getMember(selectedIds.first());
         if (!member.id.isEmpty()) {
             vars = TemplateExpander::Variables::fromMember(member);
             memberInfo = QString("<b>Member:</b> %1 (%2)").arg(member.displayName).arg(member.id);
@@ -1414,6 +1574,10 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
             memberInfo = "<i>Member not found - using date/time only</i>";
             mode = "Per-Member Mode (member not found)";
         }
+    } else if (m_modeCombo->currentData().toString() == "member" && selectedIds.size() > 1) {
+        vars = TemplateExpander::Variables::withCurrentDateTime();
+        memberInfo = QString("<i>%1 members selected - member variables expand per-member during processing</i>").arg(selectedIds.size());
+        mode = "Per-Member Mode (multi)";
     } else {
         vars = TemplateExpander::Variables::withCurrentDateTime();
         memberInfo = "<i>No member selected - using date/time only</i>";

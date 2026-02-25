@@ -93,6 +93,22 @@ void MemberRegistryPanel::setupUI() {
     connect(m_withFolderOnlyCheck, &QCheckBox::toggled, this, &MemberRegistryPanel::onFilterChanged);
     filterLayout->addWidget(m_withFolderOnlyCheck);
 
+    m_withEmailCheck = new QCheckBox("With email");
+    m_withEmailCheck->setChecked(false);
+    connect(m_withEmailCheck, &QCheckBox::toggled, this, &MemberRegistryPanel::onFilterChanged);
+    filterLayout->addWidget(m_withEmailCheck);
+
+    m_withIpCheck = new QCheckBox("With IP");
+    m_withIpCheck->setChecked(false);
+    connect(m_withIpCheck, &QCheckBox::toggled, this, &MemberRegistryPanel::onFilterChanged);
+    filterLayout->addWidget(m_withIpCheck);
+
+    m_missingWmInfoCheck = new QCheckBox("Missing WM info");
+    m_missingWmInfoCheck->setChecked(false);
+    m_missingWmInfoCheck->setToolTip("Show members missing email or IP address");
+    connect(m_missingWmInfoCheck, &QCheckBox::toggled, this, &MemberRegistryPanel::onFilterChanged);
+    filterLayout->addWidget(m_missingWmInfoCheck);
+
     filterLayout->addStretch();
     mainLayout->addLayout(filterLayout);
 
@@ -184,6 +200,12 @@ void MemberRegistryPanel::setupUI() {
             font-size: 12px;
         }
     )");
+
+    // Column header click sorting
+    m_memberTable->horizontalHeader()->setSortIndicatorShown(true);
+    m_memberTable->horizontalHeader()->setSortIndicator(0, Qt::AscendingOrder);
+    connect(m_memberTable->horizontalHeader(), &QHeaderView::sectionClicked,
+            this, &MemberRegistryPanel::onSortByColumn);
 
     connect(m_memberTable, &QTableWidget::itemSelectionChanged,
             this, &MemberRegistryPanel::onTableSelectionChanged);
@@ -565,8 +587,15 @@ void MemberRegistryPanel::refresh() {
     QList<MemberInfo> all = m_registry->getAllMembers();
     QList<MemberInfo> active = m_registry->getActiveMembers();
     QList<MemberInfo> withFolder = m_registry->getMembersWithDistributionFolders();
-    m_statsLabel->setText(QString("Total: %1 members | %2 active | %3 with distribution folders")
-        .arg(all.size()).arg(active.size()).arg(withFolder.size()));
+    int withEmailCount = 0, withIpCount = 0;
+    for (const MemberInfo& m : all) {
+        if (!m.email.isEmpty()) withEmailCount++;
+        if (!m.ipAddress.isEmpty()) withIpCount++;
+    }
+    m_statsLabel->setText(
+        QString("Total: %1 | %2 active | %3 with folders | %4 with email | %5 with IP")
+            .arg(all.size()).arg(active.size()).arg(withFolder.size())
+            .arg(withEmailCount).arg(withIpCount));
 }
 
 void MemberRegistryPanel::refreshTemplate() {
@@ -607,8 +636,49 @@ void MemberRegistryPanel::populateTable() {
     QString searchText = m_searchEdit->text();
     bool activeOnly = m_activeOnlyCheck->isChecked();
     bool withFolderOnly = m_withFolderOnlyCheck->isChecked();
+    bool withEmail = m_withEmailCheck->isChecked();
+    bool withIp = m_withIpCheck->isChecked();
+    bool missingWmInfo = m_missingWmInfoCheck->isChecked();
 
-    QList<MemberInfo> members = m_registry->filterMembers(searchText, activeOnly, withFolderOnly);
+    QList<MemberInfo> members = m_registry->filterMembers(
+        searchText, activeOnly, withFolderOnly, withEmail, withIp, missingWmInfo);
+
+    // Apply column sorting
+    if (m_sortColumn >= 0) {
+        auto* registry = m_registry;
+        std::sort(members.begin(), members.end(),
+            [this, registry](const MemberInfo& a, const MemberInfo& b) {
+                int cmp = 0;
+                switch (m_sortColumn) {
+                    case 0: cmp = a.sortOrder - b.sortOrder; break;
+                    case 1: cmp = a.id.compare(b.id, Qt::CaseInsensitive); break;
+                    case 2: cmp = a.displayName.compare(b.displayName, Qt::CaseInsensitive); break;
+                    case 3: cmp = a.email.compare(b.email, Qt::CaseInsensitive); break;
+                    case 4: cmp = a.distributionFolder.compare(b.distributionFolder, Qt::CaseInsensitive); break;
+                    case 5: cmp = a.watermarkFields.join(",").compare(
+                                b.watermarkFields.join(","), Qt::CaseInsensitive); break;
+                    case 6: cmp = (a.active ? 1 : 0) - (b.active ? 1 : 0); break;
+                    case 7: {
+                        QString ga = registry->getGroupsForMember(a.id).join(",");
+                        QString gb = registry->getGroupsForMember(b.id).join(",");
+                        cmp = ga.compare(gb, Qt::CaseInsensitive);
+                        break;
+                    }
+                    case 8: {
+                        // Sort by most recent activity date
+                        QString da = a.pipelineStatus.lastWatermarkDate > a.pipelineStatus.lastDistributionDate
+                                     ? a.pipelineStatus.lastWatermarkDate : a.pipelineStatus.lastDistributionDate;
+                        QString db = b.pipelineStatus.lastWatermarkDate > b.pipelineStatus.lastDistributionDate
+                                     ? b.pipelineStatus.lastWatermarkDate : b.pipelineStatus.lastDistributionDate;
+                        cmp = da.compare(db, Qt::CaseInsensitive);
+                        break;
+                    }
+                    default: cmp = a.sortOrder - b.sortOrder; break;
+                }
+                return m_sortAscending ? cmp < 0 : cmp > 0;
+            });
+    }
+
     m_memberTable->setRowCount(members.size());
 
     for (int row = 0; row < members.size(); ++row) {
@@ -741,6 +811,18 @@ void MemberRegistryPanel::onSearchChanged(const QString& /*text*/) {
 }
 
 void MemberRegistryPanel::onFilterChanged() {
+    populateTable();
+}
+
+void MemberRegistryPanel::onSortByColumn(int column) {
+    if (m_sortColumn == column) {
+        m_sortAscending = !m_sortAscending;
+    } else {
+        m_sortColumn = column;
+        m_sortAscending = true;
+    }
+    m_memberTable->horizontalHeader()->setSortIndicator(
+        column, m_sortAscending ? Qt::AscendingOrder : Qt::DescendingOrder);
     populateTable();
 }
 

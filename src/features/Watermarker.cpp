@@ -916,9 +916,10 @@ WatermarkResult Watermarker::watermarkVideo(const std::string& inputPath,
 
 WatermarkResult Watermarker::watermarkVideoForMember(const std::string& inputPath,
                                                       const std::string& memberId,
-                                                      const std::string& outputDir) {
-    // Load member info
-    MemberDatabase db;
+                                                      const std::string& outputDir,
+                                                      const std::string& memberDbPath) {
+    // Load member info (use provided path to match GUI's MemberRegistry location)
+    MemberDatabase db(memberDbPath);
     auto memberResult = db.getMember(memberId);
 
     if (!memberResult.success || !memberResult.member) {
@@ -988,9 +989,10 @@ WatermarkResult Watermarker::watermarkPdf(const std::string& inputPath,
 
 WatermarkResult Watermarker::watermarkPdfForMember(const std::string& inputPath,
                                                     const std::string& memberId,
-                                                    const std::string& outputDir) {
-    // Load member info
-    MemberDatabase db;
+                                                    const std::string& outputDir,
+                                                    const std::string& memberDbPath) {
+    // Load member info (use provided path to match GUI's MemberRegistry location)
+    MemberDatabase db(memberDbPath);
     auto memberResult = db.getMember(memberId);
 
     if (!memberResult.success || !memberResult.member) {

@@ -12,6 +12,7 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QListWidget>
 #include <QThread>
 #include <QMap>
 #include <memory>
@@ -51,6 +52,7 @@ public:
     void setConfig(const WatermarkConfig& config);
     void setMemberId(const QString& memberId);
     void setMemberIds(const QStringList& memberIds);
+    void setMemberDbPath(const QString& path);
 
 public slots:
     void process();
@@ -69,6 +71,7 @@ private:
     QString m_outputDir;
     QString m_memberId;
     QStringList m_memberIds;
+    QString m_memberDbPath;
     std::shared_ptr<WatermarkConfig> m_config;
     bool m_cancelled = false;
 };
@@ -110,7 +113,11 @@ private slots:
     void onCheckDependencies();
     void onTableSelectionChanged();
     void onModeChanged(int index);
-    void onMemberChanged(int index);
+    void onMemberSelectionChanged();
+    void onSelectAllMembers();
+    void onDeselectAllMembers();
+    void onGroupQuickSelect(int index);
+    void onMemberSearchChanged();
     void onSendToDistribution();
     void onWatermarkHelpClicked();
     void onPreviewWatermarkClicked();
@@ -130,6 +137,7 @@ private:
     void updateStats();
     void updateButtonStates();
     void loadMembers();
+    QStringList getSelectedMemberIds() const;
     WatermarkConfig buildConfig() const;
     QString formatFileSize(qint64 bytes) const;
     void loadPresets();
@@ -147,10 +155,15 @@ private:
     QPushButton* m_browseOutputBtn;
     QCheckBox* m_sameAsInputCheck;
 
-    // UI Components - Mode
-    QComboBox* m_modeCombo;          // Global / Per-Member
-    QComboBox* m_memberCombo;         // Member selection (when per-member)
-    QWidget* m_memberWidget;          // Container for member selection
+    // UI Components - Mode & Member Selection
+    QComboBox* m_modeCombo;              // Global / Per-Member
+    QWidget* m_memberWidget;             // Container for member multi-select
+    QListWidget* m_memberListWidget;     // Checkable member/group list
+    QPushButton* m_selectAllMembersBtn;
+    QPushButton* m_deselectAllMembersBtn;
+    QComboBox* m_groupQuickSelectCombo;  // Additive group selection
+    QLineEdit* m_memberSearchEdit;       // Filter the member list
+    QLabel* m_selectionSummaryLabel;     // "N members selected"
 
     // UI Components - Quick Settings
     QLineEdit* m_primaryTextEdit;

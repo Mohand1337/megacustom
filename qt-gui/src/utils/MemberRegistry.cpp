@@ -757,7 +757,10 @@ bool MemberRegistry::importFromCsv(const QString& filePath, bool skipHeader) {
 
 QList<MemberInfo> MemberRegistry::filterMembers(const QString& searchText,
                                                  bool activeOnly,
-                                                 bool withDistributionFolder) const {
+                                                 bool withDistributionFolder,
+                                                 bool withEmail,
+                                                 bool withIp,
+                                                 bool missingWmInfo) const {
     QList<MemberInfo> list;
 
     for (const MemberInfo& info : m_members) {
@@ -767,11 +770,21 @@ QList<MemberInfo> MemberRegistry::filterMembers(const QString& searchText,
         // Distribution folder filter
         if (withDistributionFolder && info.distributionFolder.isEmpty()) continue;
 
+        // Email filter
+        if (withEmail && info.email.isEmpty()) continue;
+
+        // IP filter
+        if (withIp && info.ipAddress.isEmpty()) continue;
+
+        // Missing watermark info filter (show members missing email OR IP)
+        if (missingWmInfo && !info.email.isEmpty() && !info.ipAddress.isEmpty()) continue;
+
         // Search filter
         if (!searchText.isEmpty()) {
             bool match = info.id.contains(searchText, Qt::CaseInsensitive) ||
                          info.displayName.contains(searchText, Qt::CaseInsensitive) ||
-                         info.email.contains(searchText, Qt::CaseInsensitive);
+                         info.email.contains(searchText, Qt::CaseInsensitive) ||
+                         info.ipAddress.contains(searchText, Qt::CaseInsensitive);
             if (!match) continue;
         }
 

@@ -61,6 +61,7 @@ private slots:
     void onUnbindFolder();
     void onSearchChanged(const QString& text);
     void onFilterChanged();
+    void onSortByColumn(int column);
     void onWordPressSync();
     void onWpSyncCompleted(int created, int updated);
 
@@ -94,6 +95,13 @@ private:
     QLineEdit* m_searchEdit;
     QCheckBox* m_activeOnlyCheck;
     QCheckBox* m_withFolderOnlyCheck;
+    QCheckBox* m_withEmailCheck;
+    QCheckBox* m_withIpCheck;
+    QCheckBox* m_missingWmInfoCheck;
+
+    // Column sorting
+    int m_sortColumn = 0;        // Current sort column
+    bool m_sortAscending = true;  // Sort direction
 
     // Actions
     QPushButton* m_addBtn;

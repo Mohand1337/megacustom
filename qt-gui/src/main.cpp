@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QDir>
 #include <QTextStream>
 #include <QDebug>
 #include <QMessageBox>
@@ -244,6 +245,22 @@ int main(int argc, char *argv[])
 
         // Load settings
         MegaCustom::Settings::instance().load();
+
+        // Configure LogManager with the correct (portable-aware) log path
+        {
+            QString logDir = MegaCustom::Settings::instance().configDirectory() + "/logs";
+            QDir().mkpath(logDir);  // Ensure directory exists (handles nested paths)
+            MegaCustom::LogManager::instance().setLogDirectory(logDir.toStdString());
+
+            // Update crash log path now that log directory is correct
+            g_crashLogPath = logDir.toStdString() + "/crash.log";
+
+            MegaCustom::LogManager::instance().log(
+                MegaCustom::LogLevel::Info,
+                MegaCustom::LogCategory::System,
+                "startup",
+                "Log directory: " + logDir.toStdString());
+        }
 
         if (splash) {
             splash->showMessage("Initializing Mega SDK...",

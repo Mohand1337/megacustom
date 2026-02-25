@@ -223,7 +223,10 @@ public:
     // === Phase 2: Filter/search ===
     QList<MemberInfo> filterMembers(const QString& searchText,
                                     bool activeOnly = false,
-                                    bool withDistributionFolder = false) const;
+                                    bool withDistributionFolder = false,
+                                    bool withEmail = false,
+                                    bool withIp = false,
+                                    bool missingWmInfo = false) const;
 
     // === Pipeline Status ===
     void recordWatermark(const QString& memberId, int fileCount);

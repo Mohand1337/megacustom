@@ -152,7 +152,8 @@ public:
      */
     WatermarkResult watermarkVideoForMember(const std::string& inputPath,
                                             const std::string& memberId,
-                                            const std::string& outputDir = "");
+                                            const std::string& outputDir = "",
+                                            const std::string& memberDbPath = "");
 
     /**
      * Async version of watermarkVideoForMember
@@ -193,7 +194,8 @@ public:
      */
     WatermarkResult watermarkPdfForMember(const std::string& inputPath,
                                           const std::string& memberId,
-                                          const std::string& outputDir = "");
+                                          const std::string& outputDir = "",
+                                          const std::string& memberDbPath = "");
 
     /**
      * Batch watermark multiple PDFs

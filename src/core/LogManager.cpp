@@ -257,10 +257,11 @@ void LogManager::setLogDirectory(const std::string& path) {
 }
 
 void LogManager::ensureLogDirectory() {
-    int result = mkdir(m_logDir.c_str(), 0755);
-    if (result != 0 && errno != EEXIST) {
+    try {
+        std::filesystem::create_directories(m_logDir);
+    } catch (const std::filesystem::filesystem_error& e) {
         std::cerr << "LogManager: Failed to create log directory '" << m_logDir
-                  << "': " << strerror(errno) << std::endl;
+                  << "': " << e.what() << std::endl;
     }
 }
 
