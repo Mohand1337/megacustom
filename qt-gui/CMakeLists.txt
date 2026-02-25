@@ -109,6 +109,7 @@ set(SOURCES
     src/widgets/SwitchButton.cpp
     src/widgets/LogViewerPanel.cpp
     src/utils/MemberRegistry.cpp
+    src/utils/AnimationHelper.cpp
     src/utils/IconProvider.cpp
     src/utils/TemplateExpander.cpp
     src/dialogs/LoginDialog.cpp
@@ -191,6 +192,7 @@ set(HEADERS
     src/widgets/SwitchButton.h
     src/widgets/LogViewerPanel.h
     src/utils/MemberRegistry.h
+    src/utils/AnimationHelper.h
     src/utils/IconProvider.h
     src/utils/TemplateExpander.h
     src/dialogs/LoginDialog.h

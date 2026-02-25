@@ -16,6 +16,7 @@
 #include <QThread>
 #include <QMap>
 #include <memory>
+#include <atomic>
 
 namespace MegaCustom {
 
@@ -73,7 +74,7 @@ private:
     QStringList m_memberIds;
     QString m_memberDbPath;
     std::shared_ptr<WatermarkConfig> m_config;
-    bool m_cancelled = false;
+    std::atomic<bool> m_cancelled{false};
 };
 
 /**

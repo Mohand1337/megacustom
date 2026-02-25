@@ -17,7 +17,10 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QTimer>
+#include <QScrollArea>
+#include <QStyle>
 #include <QMutex>
+#include "utils/AnimationHelper.h"
 #include <QWaitCondition>
 #include <QDebug>
 
@@ -214,6 +217,7 @@ DistributionPanel::DistributionPanel(QWidget* parent)
     , m_successCount(0)
     , m_failCount(0)
 {
+    setObjectName("DistributionPanel");
     setupUI();
     loadGroups();
 
@@ -290,19 +294,19 @@ void DistributionPanel::setDistributionController(DistributionController* contro
                 statusItem->setText(QString("Done (%1 files)").arg(status.filesUploaded));
                 statusItem->setForeground(QColor("#009B48"));
                 m_successCount++;
-                m_progressBar->setValue(m_successCount + m_failCount);
+                AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
             } else if (status.state == "failed") {
                 statusItem->setText("Failed");
                 statusItem->setForeground(QColor("#E31B57"));
                 statusItem->setToolTip(status.lastError);
                 m_failCount++;
-                m_progressBar->setValue(m_successCount + m_failCount);
+                AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
             } else if (status.state == "skipped") {
                 statusItem->setText("Skipped");
                 statusItem->setForeground(QColor("#616366"));
                 statusItem->setToolTip(status.lastError);
                 m_failCount++;
-                m_progressBar->setValue(m_successCount + m_failCount);
+                AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
             }
         });
 
@@ -315,13 +319,12 @@ void DistributionPanel::setDistributionController(DistributionController* contro
             m_pauseBtn->setEnabled(false);
             m_pauseBtn->setText("Pause");
             m_stopBtn->setEnabled(false);
-            m_progressBar->setVisible(false);
+            AnimationHelper::smoothHide(m_progressBar);
 
             // Reset mode indicator
             m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
-            m_modeIndicator->setStyleSheet(
-                "background: #F7F7F7; color: #333; padding: 6px 12px; "
-                "border: 1px solid #DCDDDD; border-radius: 4px; font-weight: bold;");
+            m_modeIndicator->setProperty("mode", "");
+            m_modeIndicator->style()->polish(m_modeIndicator);
 
             m_statusLabel->setText(QString("Upload complete: %1/%2 members, %3 files uploaded")
                 .arg(result.membersCompleted).arg(result.totalMembers).arg(result.filesUploaded));
@@ -345,42 +348,44 @@ void DistributionPanel::setDistributionController(DistributionController* contro
 }
 
 void DistributionPanel::setupUI() {
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(16, 16, 16, 16);
-    mainLayout->setSpacing(12);
+    QVBoxLayout* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    QScrollArea* scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    QWidget* contentWidget = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
+    mainLayout->setSpacing(16);
 
     // Title
     QLabel* titleLabel = new QLabel("Content Distribution");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+    titleLabel->setObjectName("PanelTitle");
     mainLayout->addWidget(titleLabel);
 
     QLabel* descLabel = new QLabel(
         "Distribute watermarked content from /latest-wm/ to registered members. "
         "Scans for timestamped folders, matches them to members, and copies to destinations.");
-    descLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
+    descLabel->setObjectName("PanelSubtitle");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
     // Mode indicator
     m_modeIndicator = new QLabel("Mode: Cloud Copy (scan and distribute)");
-    m_modeIndicator->setStyleSheet(
-        "background: #F7F7F7; color: #333; padding: 6px 12px; "
-        "border: 1px solid #DCDDDD; border-radius: 4px; font-weight: bold;");
+    m_modeIndicator->setObjectName("ModeIndicator");
     mainLayout->addWidget(m_modeIndicator);
 
     // Move mode warning banner (hidden by default)
     m_moveWarningBanner = new QLabel("WARNING: MOVE MODE \xe2\x80\x94 Source files will be DELETED after transfer");
-    m_moveWarningBanner->setStyleSheet(
-        "background: #DC3545; color: white; padding: 8px; font-weight: bold; border-radius: 4px;");
+    m_moveWarningBanner->setObjectName("WarningBanner");
     m_moveWarningBanner->setVisible(false);
     mainLayout->addWidget(m_moveWarningBanner);
 
     // Source/Destination Config
     QGroupBox* configGroup = new QGroupBox("CONFIGURATION");
-    configGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     QGridLayout* configLayout = new QGridLayout(configGroup);
     configLayout->setSpacing(8);
 
@@ -404,9 +409,8 @@ void DistributionPanel::setupUI() {
     connect(m_destTemplateEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
         QString error;
         bool valid = TemplateExpander::validateTemplate(text, &error);
-        m_destTemplateEdit->setStyleSheet(valid
-            ? "QLineEdit { border: 1px solid #DCDDDD; }"
-            : "QLineEdit { border: 1px solid #DC3545; }");
+        m_destTemplateEdit->setProperty("error", !valid);
+        m_destTemplateEdit->style()->polish(m_destTemplateEdit);
         m_destTemplateEdit->setToolTip(valid
             ? "Destination path template. Use {member}, {member_id}, {year}, {month}, etc."
             : QString("Invalid template: %1").arg(error));
@@ -436,11 +440,8 @@ void DistributionPanel::setupUI() {
     // Preview paths button row
     QHBoxLayout* previewRow = new QHBoxLayout();
     m_previewPathsBtn = new QPushButton("Preview Paths");
+    m_previewPathsBtn->setObjectName("PanelSecondaryButton");
     m_previewPathsBtn->setToolTip("Preview expanded destination paths for selected members");
-    m_previewPathsBtn->setStyleSheet(
-        "QPushButton { background-color: #4A90D9; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #3A80C9; }");
     connect(m_previewPathsBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewPathsClicked);
     previewRow->addWidget(m_previewPathsBtn);
     previewRow->addStretch();
@@ -450,10 +451,6 @@ void DistributionPanel::setupUI() {
 
     // Options Group
     QGroupBox* optionsGroup = new QGroupBox("OPTIONS");
-    optionsGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     QGridLayout* optionsLayout = new QGridLayout(optionsGroup);
     optionsLayout->setSpacing(8);
 
@@ -482,18 +479,17 @@ void DistributionPanel::setupUI() {
     m_moveFilesCheck->setToolTip("If checked, files will be MOVED (source deleted after transfer).\n"
                                  "This is a server-side operation - no bandwidth is used.\n\n"
                                  "WARNING: Source files will be permanently deleted after successful transfer!");
-    m_moveFilesCheck->setStyleSheet("QCheckBox { color: #D90007; }");  // Red text for warning
+    m_moveFilesCheck->setProperty("error", true);  // Red text for warning via QSS
     optionsLayout->addWidget(m_moveFilesCheck, 2, 0, 1, 2);  // Span both columns
-    connect(m_moveFilesCheck, &QCheckBox::toggled, m_moveWarningBanner, &QLabel::setVisible);
+    connect(m_moveFilesCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) AnimationHelper::smoothShow(m_moveWarningBanner);
+        else AnimationHelper::smoothHide(m_moveWarningBanner);
+    });
 
     mainLayout->addWidget(optionsGroup);
 
     // Members Table Group
     QGroupBox* tableGroup = new QGroupBox("DETECTED FOLDERS");
-    tableGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     QVBoxLayout* tableLayout = new QVBoxLayout(tableGroup);
 
     m_memberTable = new QTableWidget();
@@ -513,54 +509,18 @@ void DistributionPanel::setupUI() {
     m_memberTable->setColumnWidth(1, 200);  // Wider for member dropdown
     m_memberTable->setColumnWidth(2, 140);
     m_memberTable->setColumnWidth(5, 100);  // Wider for status text
-    m_memberTable->setStyleSheet(R"(
-        #DistributionTable {
-            background-color: #FFFFFF;
-            alternate-background-color: #F7F7F7;
-            border: 1px solid #DCDDDD;
-            border-radius: 8px;
-            gridline-color: #F6F6F7;
-            color: #303233;
-        }
-        #DistributionTable::item {
-            padding: 6px 8px;
-            border-bottom: 1px solid #F6F6F7;
-            color: #303233;
-        }
-        #DistributionTable::item:selected {
-            background-color: rgba(221, 20, 5, 0.1);
-            color: #303233;
-        }
-        #DistributionTable QHeaderView::section {
-            background-color: #F7F7F7;
-            color: #303233;
-            padding: 8px 6px;
-            border: none;
-            border-bottom: 2px solid #DCDDDD;
-            font-weight: 600;
-            font-size: 12px;
-        }
-    )");
     tableLayout->addWidget(m_memberTable, 1);
     mainLayout->addWidget(tableGroup, 1);
 
     // Action Buttons - Row 1: Selection controls
     QHBoxLayout* selectionLayout = new QHBoxLayout();
 
-    QString secondaryBtnStyle =
-        "QPushButton { background-color: #E4E4E5; color: #333; "
-        "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #D0D0D0; } "
-        "QPushButton:disabled { background-color: #AAAAAA; color: #888; }";
-
     m_selectAllBtn = new QPushButton("Select All");
     m_selectAllBtn->setToolTip("Select all members for distribution");
-    m_selectAllBtn->setStyleSheet(secondaryBtnStyle);
     connect(m_selectAllBtn, &QPushButton::clicked, this, &DistributionPanel::onSelectAll);
 
     m_deselectAllBtn = new QPushButton("Deselect All");
     m_deselectAllBtn->setToolTip("Deselect all members");
-    m_deselectAllBtn->setStyleSheet(secondaryBtnStyle);
     connect(m_deselectAllBtn, &QPushButton::clicked, this, &DistributionPanel::onDeselectAll);
 
     m_groupCombo = new QComboBox();
@@ -594,12 +554,9 @@ void DistributionPanel::setupUI() {
     });
 
     m_bulkRenameBtn = new QPushButton("Bulk Rename");
+    m_bulkRenameBtn->setObjectName("PanelSecondaryButton");
     m_bulkRenameBtn->setIcon(QIcon(":/icons/edit.svg"));
     m_bulkRenameBtn->setToolTip("Remove '_watermarked' suffix from files in selected folders");
-    m_bulkRenameBtn->setStyleSheet(
-        "QPushButton { background-color: #FF9800; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #F57C00; }");
     connect(m_bulkRenameBtn, &QPushButton::clicked, this, &DistributionPanel::onBulkRename);
 
     selectionLayout->addWidget(m_selectAllBtn);
@@ -614,44 +571,28 @@ void DistributionPanel::setupUI() {
     QHBoxLayout* actionsLayout = new QHBoxLayout();
 
     m_previewBtn = new QPushButton("Preview");
+    m_previewBtn->setObjectName("PanelSecondaryButton");
     m_previewBtn->setIcon(QIcon(":/icons/eye.svg"));
     m_previewBtn->setToolTip("Preview what will be copied");
-    m_previewBtn->setStyleSheet(
-        "QPushButton { background-color: #4A90D9; color: white; "
-        "border: none; border-radius: 6px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #3A80C9; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
     connect(m_previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewDistribution);
 
     m_startBtn = new QPushButton("Start Distribution");
+    m_startBtn->setObjectName("PanelPrimaryButton");
     m_startBtn->setIcon(QIcon(":/icons/play.svg"));
     m_startBtn->setToolTip("Start copying to all selected members");
-    m_startBtn->setStyleSheet(
-        "QPushButton { background-color: #D90007; color: white; "
-        "border: none; border-radius: 6px; padding: 10px 24px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #C00006; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
     connect(m_startBtn, &QPushButton::clicked, this, &DistributionPanel::onStartDistribution);
 
     m_pauseBtn = new QPushButton("Pause");
+    m_pauseBtn->setProperty("type", "warning");
     m_pauseBtn->setIcon(QIcon(":/icons/pause.svg"));
     m_pauseBtn->setToolTip("Pause/Resume distribution");
-    m_pauseBtn->setStyleSheet(
-        "QPushButton { background-color: #F7A308; color: white; "
-        "border: none; border-radius: 6px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #E09300; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
     m_pauseBtn->setEnabled(false);
     connect(m_pauseBtn, &QPushButton::clicked, this, &DistributionPanel::onPauseDistribution);
 
     m_stopBtn = new QPushButton("Stop");
+    m_stopBtn->setObjectName("PanelDangerButton");
     m_stopBtn->setIcon(QIcon(":/icons/x.svg"));
     m_stopBtn->setToolTip("Cancel distribution");
-    m_stopBtn->setStyleSheet(
-        "QPushButton { background-color: #E31B57; color: white; "
-        "border: none; border-radius: 6px; padding: 6px 12px; } "
-        "QPushButton:hover { background-color: #C8164C; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
     m_stopBtn->setEnabled(false);
     connect(m_stopBtn, &QPushButton::clicked, this, &DistributionPanel::onStopDistribution);
 
@@ -671,15 +612,18 @@ void DistributionPanel::setupUI() {
     // Status
     QHBoxLayout* statusLayout = new QHBoxLayout();
     m_statusLabel = new QLabel("Click 'Scan' to detect watermarked folders");
-    m_statusLabel->setStyleSheet("color: #666;");
+    m_statusLabel->setProperty("type", "secondary");
     statusLayout->addWidget(m_statusLabel);
 
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet("color: #666;");
+    m_statsLabel->setProperty("type", "secondary");
     statusLayout->addWidget(m_statsLabel);
     statusLayout->addStretch();
 
     mainLayout->addLayout(statusLayout);
+
+    scrollArea->setWidget(contentWidget);
+    outerLayout->addWidget(scrollArea);
 }
 
 void DistributionPanel::refresh() {
@@ -724,9 +668,8 @@ void DistributionPanel::addFilesFromWatermark(const QStringList& filePaths) {
 void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& memberFileMap) {
     m_controllerActive = true;
     m_modeIndicator->setText("Mode: Auto-Upload (watermark \xe2\x86\x92 member folders)");
-    m_modeIndicator->setStyleSheet(
-        "background: #FFF3F3; color: #D90007; padding: 6px 12px; "
-        "border: 1px solid #D90007; border-radius: 4px; font-weight: bold;");
+    m_modeIndicator->setProperty("mode", "active");
+    m_modeIndicator->style()->polish(m_modeIndicator);
     m_memberRowMap.clear();
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
@@ -789,9 +732,9 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
     m_startBtn->setEnabled(false);
     m_pauseBtn->setEnabled(true);
     m_stopBtn->setEnabled(true);
-    m_progressBar->setVisible(true);
-    m_progressBar->setMaximum(memberFileMap.size());
     m_progressBar->setValue(0);
+    m_progressBar->setMaximum(memberFileMap.size());
+    AnimationHelper::smoothShow(m_progressBar);
     m_successCount = 0;
     m_failCount = 0;
 
@@ -813,9 +756,8 @@ void DistributionPanel::onScanWmFolder() {
     // Reset to cloud copy mode (user-initiated scan)
     m_controllerActive = false;
     m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
-    m_modeIndicator->setStyleSheet(
-        "background: #F7F7F7; color: #333; padding: 6px 12px; "
-        "border: 1px solid #DCDDDD; border-radius: 4px; font-weight: bold;");
+    m_modeIndicator->setProperty("mode", "");
+    m_modeIndicator->style()->polish(m_modeIndicator);
     m_startBtn->setEnabled(true);
 
     // Reload member registry to pick up any new members
@@ -981,7 +923,7 @@ void DistributionPanel::populateTable() {
                 }
             }
 
-            memberCombo->setStyleSheet("QComboBox { color: #E31B57; }");
+            memberCombo->setProperty("error", true);
             memberCombo->setToolTip("Select member for this folder");
             connect(memberCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                     [this, row, memberCombo]() {
@@ -1007,8 +949,9 @@ void DistributionPanel::populateTable() {
                             QCheckBox* c = w->findChild<QCheckBox*>();
                             if (c) c->setChecked(true);
                         }
-                        // Update combo style
-                        memberCombo->setStyleSheet("QComboBox { color: #009B48; }");
+                        // Update combo style — remove error state
+                        memberCombo->setProperty("error", false);
+                        memberCombo->style()->polish(memberCombo);
                     }
                 }
             });
@@ -1162,6 +1105,8 @@ void DistributionPanel::onPreviewDistribution() {
 }
 
 void DistributionPanel::onStartDistribution() {
+    if (m_isRunning) return;
+
     if (!m_cloudCopier) {
         QMessageBox::warning(this, "Error", "CloudCopier not available. Make sure you're logged in.");
         return;
@@ -1228,9 +1173,9 @@ void DistributionPanel::onStartDistribution() {
     m_startBtn->setEnabled(false);
     m_pauseBtn->setEnabled(true);
     m_stopBtn->setEnabled(true);
-    m_progressBar->setVisible(true);
-    m_progressBar->setMaximum(tasks.size());
     m_progressBar->setValue(0);
+    m_progressBar->setMaximum(tasks.size());
+    AnimationHelper::smoothShow(m_progressBar);
     m_successCount = 0;
     m_failCount = 0;
 
@@ -1283,7 +1228,8 @@ void DistributionPanel::onStopDistribution() {
         m_copyWorker->cancel();
     }
     m_statusLabel->setText("Stopping...");
-    m_progressBar->setStyleSheet("");
+    m_progressBar->setProperty("paused", false);
+    m_progressBar->style()->polish(m_progressBar);
 }
 
 void DistributionPanel::onPauseDistribution() {
@@ -1293,13 +1239,15 @@ void DistributionPanel::onPauseDistribution() {
             m_isPaused = false;
             m_pauseBtn->setText("Pause");
             m_statusLabel->setText("Upload resumed");
-            m_progressBar->setStyleSheet("");
+            m_progressBar->setProperty("paused", false);
+            m_progressBar->style()->polish(m_progressBar);
         } else {
             m_distController->pause();
             m_isPaused = true;
             m_pauseBtn->setText("Resume");
             m_statusLabel->setText("Upload paused");
-            m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #AAAAAA; }");
+            m_progressBar->setProperty("paused", true);
+            m_progressBar->style()->polish(m_progressBar);
         }
         return;
     }
@@ -1311,13 +1259,15 @@ void DistributionPanel::onPauseDistribution() {
         m_isPaused = false;
         m_pauseBtn->setText("Pause");
         m_statusLabel->setText("Distribution resumed");
-        m_progressBar->setStyleSheet("");
+        m_progressBar->setProperty("paused", false);
+        m_progressBar->style()->polish(m_progressBar);
     } else {
         m_copyWorker->pause();
         m_isPaused = true;
         m_pauseBtn->setText("Resume");
         m_statusLabel->setText("Distribution paused");
-        m_progressBar->setStyleSheet("QProgressBar::chunk { background-color: #AAAAAA; }");
+        m_progressBar->setProperty("paused", true);
+        m_progressBar->style()->polish(m_progressBar);
     }
 }
 
@@ -1366,7 +1316,7 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
         qDebug() << "Task failed:" << m_wmFolders[index].memberId << "-" << error;
     }
 
-    m_progressBar->setValue(m_successCount + m_failCount);
+    AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
 }
 
 void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
@@ -1376,7 +1326,7 @@ void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
     m_pauseBtn->setEnabled(false);
     m_pauseBtn->setText("Pause");
     m_stopBtn->setEnabled(false);
-    m_progressBar->setVisible(false);
+    AnimationHelper::smoothHide(m_progressBar);
 
     m_statusLabel->setText(QString("Distribution complete: %1 succeeded, %2 failed")
         .arg(success).arg(failed));
@@ -1393,7 +1343,7 @@ void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
 void DistributionPanel::onWorkerProgress(int current, int total, const QString& currentItem) {
     // Update progress bar
     m_progressBar->setMaximum(total);
-    m_progressBar->setValue(current);
+    AnimationHelper::animateProgress(m_progressBar, current);
 
     // Update status label with current item
     if (!currentItem.isEmpty()) {

@@ -4,6 +4,7 @@
 #include "dialogs/RemoteFolderBrowserDialog.h"
 #include "dialogs/BulkPathEditorDialog.h"
 #include "utils/PathUtils.h"
+#include "utils/AnimationHelper.h"
 #include <QScrollArea>
 #include <QFileDialog>
 #include <QInputDialog>
@@ -13,6 +14,7 @@
 #include <QDialog>
 #include <QApplication>
 #include <QShortcut>
+#include <QStyle>
 #include <QTime>
 
 namespace MegaCustom {
@@ -20,6 +22,7 @@ namespace MegaCustom {
 CloudCopierPanel::CloudCopierPanel(QWidget* parent)
     : QWidget(parent)
 {
+    setObjectName("CloudCopierPanel");
     setupUI();
     updateButtonStates();
 }
@@ -104,13 +107,11 @@ void CloudCopierPanel::setupUI() {
     // Title
     QLabel* titleLabel = new QLabel("CLOUD COPIER", this);
     titleLabel->setObjectName("PanelTitle");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
     mainLayout->addWidget(titleLabel);
 
     QLabel* subtitleLabel = new QLabel(
         "Copy files and folders within MEGA to multiple destinations", this);
     subtitleLabel->setObjectName("PanelSubtitle");
-    subtitleLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
     subtitleLabel->setWordWrap(true);
     mainLayout->addWidget(subtitleLabel);
 
@@ -210,10 +211,6 @@ void CloudCopierPanel::onSelectAllShortcut() {
 
 void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
     QGroupBox* sourceGroup = new QGroupBox("SOURCE", this);
-    sourceGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
 
     QVBoxLayout* sourceLayout = new QVBoxLayout(sourceGroup);
 
@@ -228,7 +225,7 @@ void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
 
     // Source summary
     m_sourceSummaryLabel = new QLabel("0 items selected", this);
-    m_sourceSummaryLabel->setStyleSheet("color: #666;");
+    m_sourceSummaryLabel->setProperty("type", "secondary");
     sourceLayout->addWidget(m_sourceSummaryLabel);
 
     // Source buttons
@@ -248,11 +245,7 @@ void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
 
     m_editSourcesBtn = new QPushButton("Edit All", this);
     m_editSourcesBtn->setToolTip("Smart bulk edit - change common path segments while keeping unique parts");
-    m_editSourcesBtn->setStyleSheet(
-        "QPushButton { background-color: #FF9800; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #F57C00; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
+    m_editSourcesBtn->setObjectName("PanelSecondaryButton");
     connect(m_editSourcesBtn, &QPushButton::clicked, this, &CloudCopierPanel::onEditSourcesClicked);
     srcBtnLayout->addWidget(m_editSourcesBtn);
 
@@ -276,10 +269,6 @@ void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
 
 void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
     QGroupBox* destGroup = new QGroupBox("DESTINATIONS", this);
-    destGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
 
     QVBoxLayout* destLayout = new QVBoxLayout(destGroup);
 
@@ -294,7 +283,7 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
 
     // Destination summary
     m_destSummaryLabel = new QLabel("0 destinations", this);
-    m_destSummaryLabel->setStyleSheet("color: #666;");
+    m_destSummaryLabel->setProperty("type", "secondary");
     destLayout->addWidget(m_destSummaryLabel);
 
     // Destination buttons
@@ -314,11 +303,7 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
 
     m_editDestsBtn = new QPushButton("Edit All", this);
     m_editDestsBtn->setToolTip("Smart bulk edit - change common path segments (e.g., month, year) while keeping unique parts");
-    m_editDestsBtn->setStyleSheet(
-        "QPushButton { background-color: #FF9800; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #F57C00; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
+    m_editDestsBtn->setObjectName("PanelSecondaryButton");
     connect(m_editDestsBtn, &QPushButton::clicked, this, &CloudCopierPanel::onEditDestinationsClicked);
     destBtnLayout->addWidget(m_editDestsBtn);
 
@@ -336,11 +321,7 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
 
     m_validateDestsBtn = new QPushButton("Validate", this);
     m_validateDestsBtn->setToolTip("Check which destinations exist in MEGA cloud");
-    m_validateDestsBtn->setStyleSheet(
-        "QPushButton { background-color: #6A5ACD; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #5A4ABD; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
+    m_validateDestsBtn->setObjectName("PanelSecondaryButton");
     connect(m_validateDestsBtn, &QPushButton::clicked, this, &CloudCopierPanel::onValidateDestinationsClicked);
     destBtnLayout->addWidget(m_validateDestsBtn);
 
@@ -352,10 +333,6 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
 
 void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
     m_memberGroup = new QGroupBox("MEMBER MODE", this);
-    m_memberGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
 
     QVBoxLayout* memberLayout = new QVBoxLayout(m_memberGroup);
 
@@ -401,7 +378,7 @@ void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
     memberRow->addWidget(m_allMembersCheck);
 
     m_memberCountLabel = new QLabel("(0 available)", this);
-    m_memberCountLabel->setStyleSheet("color: #666;");
+    m_memberCountLabel->setProperty("type", "secondary");
     memberRow->addWidget(m_memberCountLabel);
 
     memberRow->addStretch();
@@ -434,11 +411,7 @@ void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
 
     m_previewExpansionBtn = new QPushButton("Preview Paths", this);
     m_previewExpansionBtn->setToolTip("Preview expanded paths for selected members");
-    m_previewExpansionBtn->setStyleSheet(
-        "QPushButton { background-color: #2196F3; color: white; "
-        "border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #1976D2; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
+    m_previewExpansionBtn->setObjectName("PanelSecondaryButton");
     connect(m_previewExpansionBtn, &QPushButton::clicked,
             this, &CloudCopierPanel::onPreviewExpansionClicked);
     actionRow->addWidget(m_previewExpansionBtn);
@@ -454,7 +427,7 @@ void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
 
     // Expansion preview label
     m_expansionPreviewLabel = new QLabel(this);
-    m_expansionPreviewLabel->setStyleSheet("color: #666; font-style: italic;");
+    m_expansionPreviewLabel->setProperty("type", "secondary");
     m_expansionPreviewLabel->setWordWrap(true);
     m_expansionPreviewLabel->hide();
     memberSelLayout->addWidget(m_expansionPreviewLabel);
@@ -473,10 +446,6 @@ void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
 
 void CloudCopierPanel::setupTemplateSection(QVBoxLayout* mainLayout) {
     QGroupBox* templateGroup = new QGroupBox("TEMPLATES & IMPORT", this);
-    templateGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
 
     QVBoxLayout* templateLayout = new QVBoxLayout(templateGroup);
 
@@ -535,10 +504,6 @@ void CloudCopierPanel::setupTemplateSection(QVBoxLayout* mainLayout) {
 
 void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
     QGroupBox* taskGroup = new QGroupBox("COPY TASKS", this);
-    taskGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
 
     QVBoxLayout* taskLayout = new QVBoxLayout(taskGroup);
 
@@ -563,7 +528,7 @@ void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
     filterLayout->addStretch();
 
     m_taskCountLabel = new QLabel("0 tasks", this);
-    m_taskCountLabel->setStyleSheet("color: #666;");
+    m_taskCountLabel->setProperty("type", "secondary");
     filterLayout->addWidget(m_taskCountLabel);
 
     taskLayout->addLayout(filterLayout);
@@ -591,10 +556,6 @@ void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
 
 void CloudCopierPanel::setupProgressSection(QVBoxLayout* mainLayout) {
     m_progressGroup = new QGroupBox("PROGRESS", this);
-    m_progressGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }");
     m_progressGroup->setVisible(false);
 
     QVBoxLayout* progressLayout = new QVBoxLayout(m_progressGroup);
@@ -603,18 +564,14 @@ void CloudCopierPanel::setupProgressSection(QVBoxLayout* mainLayout) {
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
     m_progressBar->setTextVisible(true);
-    m_progressBar->setStyleSheet(
-        "QProgressBar { border: 1px solid #E0E0E0; border-radius: 4px; "
-        "background-color: #E8E8E8; height: 20px; text-align: center; } "
-        "QProgressBar::chunk { background-color: #D90007; border-radius: 3px; }");
     progressLayout->addWidget(m_progressBar);
 
     m_currentItemLabel = new QLabel("", this);
-    m_currentItemLabel->setStyleSheet("color: #666;");
+    m_currentItemLabel->setProperty("type", "secondary");
     progressLayout->addWidget(m_currentItemLabel);
 
     m_statsLabel = new QLabel("", this);
-    m_statsLabel->setStyleSheet("color: #666;");
+    m_statsLabel->setProperty("type", "secondary");
     progressLayout->addWidget(m_statsLabel);
 
     mainLayout->addWidget(m_progressGroup);
@@ -623,10 +580,6 @@ void CloudCopierPanel::setupProgressSection(QVBoxLayout* mainLayout) {
 void CloudCopierPanel::setupControlButtons(QVBoxLayout* mainLayout) {
     // Operation mode row (Copy vs Move)
     m_operationModeGroup = new QGroupBox("Operation Mode", this);
-    m_operationModeGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 6px; padding: 8px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }");
 
     QHBoxLayout* modeLayout = new QHBoxLayout(m_operationModeGroup);
 
@@ -643,7 +596,7 @@ void CloudCopierPanel::setupControlButtons(QVBoxLayout* mainLayout) {
                                 "This is a server-side operation - no bandwidth is used.\n\n"
                                 "WARNING: For multiple destinations, files are MOVED to the first destination,\n"
                                 "then COPIED to the remaining destinations.");
-    m_moveModeRadio->setStyleSheet("QRadioButton { color: #D90007; }");  // Red to indicate danger
+    m_moveModeRadio->setProperty("error", true);
     m_operationModeButtonGroup->addButton(m_moveModeRadio, 1);
     modeLayout->addWidget(m_moveModeRadio);
 
@@ -676,22 +629,13 @@ void CloudCopierPanel::setupControlButtons(QVBoxLayout* mainLayout) {
 
     m_previewBtn = new QPushButton("Preview", this);
     m_previewBtn->setToolTip("Show what will be copied and where BEFORE starting");
-    m_previewBtn->setStyleSheet(
-        "QPushButton { background-color: #4A90D9; color: white; "
-        "border: none; border-radius: 6px; padding: 10px 20px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #3A80C9; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
+    m_previewBtn->setObjectName("PanelSecondaryButton");
     connect(m_previewBtn, &QPushButton::clicked, this, &CloudCopierPanel::onPreviewCopyClicked);
     controlLayout->addWidget(m_previewBtn);
 
     m_startBtn = new QPushButton("Start Copy", this);
     m_startBtn->setToolTip("Start copying files to destinations");
     m_startBtn->setObjectName("PanelPrimaryButton");
-    m_startBtn->setStyleSheet(
-        "QPushButton { background-color: #D90007; color: white; "
-        "border: none; border-radius: 6px; padding: 10px 24px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #C00006; } "
-        "QPushButton:disabled { background-color: #AAAAAA; }");
     connect(m_startBtn, &QPushButton::clicked, this, &CloudCopierPanel::onStartCopyClicked);
     controlLayout->addWidget(m_startBtn);
 
@@ -728,11 +672,6 @@ void CloudCopierPanel::setupErrorLogSection(QVBoxLayout* mainLayout) {
     m_errorLogGroup = new QGroupBox("Error Log (0)", this);
     m_errorLogGroup->setCheckable(true);
     m_errorLogGroup->setChecked(false);  // Collapsed by default
-    m_errorLogGroup->setStyleSheet(
-        "QGroupBox { font-weight: bold; border: 1px solid #E0E0E0; "
-        "border-radius: 6px; margin-top: 12px; padding-top: 16px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; } "
-        "QGroupBox::indicator { width: 13px; height: 13px; } ");
 
     QVBoxLayout* errorLayout = new QVBoxLayout(m_errorLogGroup);
 
@@ -740,9 +679,6 @@ void CloudCopierPanel::setupErrorLogSection(QVBoxLayout* mainLayout) {
     m_errorLogEdit->setReadOnly(true);
     m_errorLogEdit->setMaximumHeight(150);
     m_errorLogEdit->setPlaceholderText("Errors and warnings will appear here...");
-    m_errorLogEdit->setStyleSheet(
-        "QTextEdit { background-color: #FFF8F8; border: 1px solid #FFCCCC; border-radius: 4px; "
-        "font-family: monospace; font-size: 11px; }");
     errorLayout->addWidget(m_errorLogEdit);
 
     QHBoxLayout* errorBtnLayout = new QHBoxLayout();
@@ -1102,14 +1038,14 @@ void CloudCopierPanel::onCopyStarted(int totalTasks) {
 
 void CloudCopierPanel::onCopyProgress(int completed, int total, const QString& currentItem, const QString& currentDest) {
     int progress = (total > 0) ? (completed * 100 / total) : 0;
-    m_progressBar->setValue(progress);
+    AnimationHelper::animateProgress(m_progressBar, progress);
     m_currentItemLabel->setText(QString("Copying: %1").arg(shortenPath(currentItem, 50)));
     m_statsLabel->setText(QString("%1 / %2 tasks").arg(completed).arg(total));
 }
 
 void CloudCopierPanel::onCopyCompleted(int successful, int failed, int skipped) {
     m_isCopying = false;
-    m_progressBar->setValue(100);
+    AnimationHelper::animateProgress(m_progressBar, 100);
     m_currentItemLabel->setText("Copy operation completed");
     m_statsLabel->setText(QString("Completed: %1 | Failed: %2 | Skipped: %3")
                          .arg(successful).arg(failed).arg(skipped));
@@ -1958,10 +1894,12 @@ void CloudCopierPanel::onTemplateExpansionReady(const TemplateExpansionPreview& 
     if (preview.validCount > 0) {
         m_expansionPreviewLabel->setText(
             QString("Preview: %1 destinations ready").arg(preview.validCount));
-        m_expansionPreviewLabel->setStyleSheet("color: #060; font-style: italic;");
+        m_expansionPreviewLabel->setProperty("validation", "success");
+        m_expansionPreviewLabel->style()->polish(m_expansionPreviewLabel);
     } else {
         m_expansionPreviewLabel->setText("No valid destinations");
-        m_expansionPreviewLabel->setStyleSheet("color: #C00; font-style: italic;");
+        m_expansionPreviewLabel->setProperty("validation", "error");
+        m_expansionPreviewLabel->style()->polish(m_expansionPreviewLabel);
     }
     m_expansionPreviewLabel->show();
 }

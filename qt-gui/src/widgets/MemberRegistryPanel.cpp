@@ -30,6 +30,7 @@ MemberRegistryPanel::MemberRegistryPanel(QWidget* parent)
     : QWidget(parent)
     , m_registry(MemberRegistry::instance())
 {
+    setObjectName("MemberRegistryPanel");
     setupUI();
     refresh();
 
@@ -51,18 +52,29 @@ void MemberRegistryPanel::setFileController(FileController* controller) {
 }
 
 void MemberRegistryPanel::setupUI() {
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(16, 16, 16, 16);
+    QVBoxLayout* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    QScrollArea* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    QWidget* contentWidget = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
     mainLayout->setSpacing(16);
 
     // Title
     QLabel* titleLabel = new QLabel("Member Registry");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+    titleLabel->setObjectName("PanelTitle");
     mainLayout->addWidget(titleLabel);
 
     // Description
     QLabel* descLabel = new QLabel("Manage members with distribution folders, watermark settings, and contact info for personalized file distribution.");
-    descLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
+    descLabel->setObjectName("PanelSubtitle");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
@@ -114,26 +126,6 @@ void MemberRegistryPanel::setupUI() {
 
     // Tab widget for members table and template config
     QTabWidget* tabWidget = new QTabWidget();
-    tabWidget->setStyleSheet(R"(
-        QTabWidget::pane {
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            background-color: #FFFFFF;
-        }
-        QTabBar::tab {
-            background-color: #EFEFF0;
-            color: #616366;
-            padding: 8px 16px;
-            border: 1px solid #DCDDDD;
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-        }
-        QTabBar::tab:selected {
-            background-color: #FFFFFF;
-            color: #303233;
-        }
-    )");
 
     // === Members Tab ===
     QWidget* membersTab = new QWidget();
@@ -172,34 +164,6 @@ void MemberRegistryPanel::setupUI() {
     m_memberTable->setColumnWidth(7, 120);
     m_memberTable->setColumnWidth(8, 130);
 
-    m_memberTable->setStyleSheet(R"(
-        #MemberRegistryTable {
-            background-color: #FFFFFF;
-            alternate-background-color: #F7F7F7;
-            border: 1px solid #DCDDDD;
-            border-radius: 8px;
-            gridline-color: #F6F6F7;
-            color: #303233;
-        }
-        #MemberRegistryTable::item {
-            padding: 6px 8px;
-            border-bottom: 1px solid #F6F6F7;
-            color: #303233;
-        }
-        #MemberRegistryTable::item:selected {
-            background-color: rgba(221, 20, 5, 0.1);
-            color: #303233;
-        }
-        #MemberRegistryTable QHeaderView::section {
-            background-color: #F7F7F7;
-            color: #303233;
-            padding: 8px 6px;
-            border: none;
-            border-bottom: 2px solid #DCDDDD;
-            font-weight: 600;
-            font-size: 12px;
-        }
-    )");
 
     // Column header click sorting
     m_memberTable->horizontalHeader()->setSortIndicatorShown(true);
@@ -257,6 +221,7 @@ void MemberRegistryPanel::setupUI() {
     actionsLayout1->setSpacing(8);
 
     m_addBtn = new QPushButton("Add Member");
+    m_addBtn->setObjectName("PanelPrimaryButton");
     m_addBtn->setIcon(QIcon(":/icons/plus.svg"));
     connect(m_addBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onAddMember);
 
@@ -266,6 +231,7 @@ void MemberRegistryPanel::setupUI() {
     connect(m_editBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onEditMember);
 
     m_removeBtn = new QPushButton("Remove");
+    m_removeBtn->setObjectName("PanelDangerButton");
     m_removeBtn->setIcon(QIcon(":/icons/trash-2.svg"));
     m_removeBtn->setEnabled(false);
     connect(m_removeBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onRemoveMember);
@@ -337,7 +303,7 @@ void MemberRegistryPanel::setupUI() {
     templateMainLayout->setContentsMargins(8, 8, 8, 8);
 
     QLabel* templateDescLabel = new QLabel("Configure default path types for new members. Enable/disable path types to customize which paths are available.");
-    templateDescLabel->setStyleSheet("color: #666;");
+    templateDescLabel->setObjectName("PanelSubtitle");
     templateDescLabel->setWordWrap(true);
     templateMainLayout->addWidget(templateDescLabel);
 
@@ -348,11 +314,11 @@ void MemberRegistryPanel::setupUI() {
 
     // Headers
     QLabel* enabledHeader = new QLabel("Enabled");
-    enabledHeader->setStyleSheet("font-weight: bold; color: #888;");
+    enabledHeader->setObjectName("SectionHeader");
     QLabel* typeHeader = new QLabel("Path Type");
-    typeHeader->setStyleSheet("font-weight: bold; color: #888;");
+    typeHeader->setObjectName("SectionHeader");
     QLabel* defaultHeader = new QLabel("Default Value");
-    defaultHeader->setStyleSheet("font-weight: bold; color: #888;");
+    defaultHeader->setObjectName("SectionHeader");
 
     pathTypesGrid->addWidget(enabledHeader, 0, 0);
     pathTypesGrid->addWidget(typeHeader, 0, 1);
@@ -410,7 +376,7 @@ void MemberRegistryPanel::setupUI() {
 
     QLabel* groupsDescLabel = new QLabel(
         "Create named groups of members for quick selection in Watermark and Distribution panels.");
-    groupsDescLabel->setStyleSheet("color: #666;");
+    groupsDescLabel->setObjectName("PanelSubtitle");
     groupsDescLabel->setWordWrap(true);
     groupsLayout->addWidget(groupsDescLabel);
 
@@ -422,31 +388,11 @@ void MemberRegistryPanel::setupUI() {
     groupListLayout->setContentsMargins(0, 0, 0, 0);
 
     QLabel* groupListLabel = new QLabel("Groups");
-    groupListLabel->setStyleSheet("font-weight: bold; color: #303233;");
+    groupListLabel->setObjectName("SectionHeader");
     groupListLayout->addWidget(groupListLabel);
 
     m_groupList = new QListWidget();
     m_groupList->setObjectName("GroupList");
-    m_groupList->setStyleSheet(R"(
-        #GroupList {
-            background-color: #FFFFFF;
-            alternate-background-color: #F7F7F7;
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            color: #303233;
-        }
-        #GroupList::item {
-            padding: 6px;
-            color: #303233;
-        }
-        #GroupList::item:selected {
-            background-color: rgba(221, 20, 5, 0.1);
-            color: #303233;
-        }
-        #GroupList::item:hover {
-            background-color: #F7F7F7;
-        }
-    )");
     m_groupList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_groupList, &QListWidget::currentRowChanged,
             this, &MemberRegistryPanel::onGroupSelectionChanged);
@@ -464,32 +410,19 @@ void MemberRegistryPanel::setupUI() {
     QHBoxLayout* groupBtnsLayout = new QHBoxLayout();
     groupBtnsLayout->setSpacing(4);
 
-    QString groupBtnStyle =
-        "QPushButton { background-color: #E4E4E5; color: #333; "
-        "border: none; border-radius: 4px; padding: 5px 10px; } "
-        "QPushButton:hover { background-color: #D0D0D0; } "
-        "QPushButton:disabled { background-color: #AAAAAA; color: #888; }";
-
     m_addGroupBtn = new QPushButton("+ New");
-    m_addGroupBtn->setStyleSheet(groupBtnStyle);
     connect(m_addGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onAddGroup);
 
     m_renameGroupBtn = new QPushButton("Rename");
-    m_renameGroupBtn->setStyleSheet(groupBtnStyle);
     m_renameGroupBtn->setEnabled(false);
     connect(m_renameGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onRenameGroup);
 
     m_deleteGroupBtn = new QPushButton("Delete");
-    m_deleteGroupBtn->setStyleSheet(
-        "QPushButton { background-color: #E4E4E5; color: #D90007; "
-        "border: none; border-radius: 4px; padding: 5px 10px; } "
-        "QPushButton:hover { background-color: #D0D0D0; } "
-        "QPushButton:disabled { background-color: #AAAAAA; color: #888; }");
+    m_deleteGroupBtn->setObjectName("PanelDangerButton");
     m_deleteGroupBtn->setEnabled(false);
     connect(m_deleteGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onDeleteGroup);
 
     m_duplicateGroupBtn = new QPushButton("Duplicate");
-    m_duplicateGroupBtn->setStyleSheet(groupBtnStyle);
     m_duplicateGroupBtn->setEnabled(false);
     connect(m_duplicateGroupBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onDuplicateGroup);
 
@@ -507,7 +440,7 @@ void MemberRegistryPanel::setupUI() {
     groupMemberLayout->setContentsMargins(0, 0, 0, 0);
 
     QLabel* groupMemberLabel = new QLabel("Members in group:");
-    groupMemberLabel->setStyleSheet("font-weight: bold; color: #303233;");
+    groupMemberLabel->setObjectName("SectionHeader");
     groupMemberLayout->addWidget(groupMemberLabel);
 
     m_groupSearchEdit = new QLineEdit();
@@ -525,19 +458,6 @@ void MemberRegistryPanel::setupUI() {
 
     m_groupMemberList = new QListWidget();
     m_groupMemberList->setObjectName("GroupMemberList");
-    m_groupMemberList->setStyleSheet(R"(
-        #GroupMemberList {
-            background-color: #FFFFFF;
-            alternate-background-color: #F7F7F7;
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            color: #303233;
-        }
-        #GroupMemberList::item {
-            padding: 4px;
-            color: #303233;
-        }
-    )");
     connect(m_groupMemberList, &QListWidget::itemChanged,
             this, &MemberRegistryPanel::onGroupMemberToggled);
     groupMemberLayout->addWidget(m_groupMemberList, 1);
@@ -546,12 +466,10 @@ void MemberRegistryPanel::setupUI() {
     groupMemberBtnsLayout->setSpacing(4);
 
     m_groupSelectAllBtn = new QPushButton("Select All");
-    m_groupSelectAllBtn->setStyleSheet(groupBtnStyle);
     m_groupSelectAllBtn->setEnabled(false);
     connect(m_groupSelectAllBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onGroupSelectAll);
 
     m_groupDeselectAllBtn = new QPushButton("Deselect All");
-    m_groupDeselectAllBtn->setStyleSheet(groupBtnStyle);
     m_groupDeselectAllBtn->setEnabled(false);
     connect(m_groupDeselectAllBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onGroupDeselectAll);
 
@@ -566,7 +484,7 @@ void MemberRegistryPanel::setupUI() {
     groupsLayout->addWidget(groupSplitter, 1);
 
     m_groupStatsLabel = new QLabel();
-    m_groupStatsLabel->setStyleSheet("color: #666;");
+    m_groupStatsLabel->setProperty("type", "secondary");
     groupsLayout->addWidget(m_groupStatsLabel);
 
     tabWidget->addTab(groupsTab, "Groups");
@@ -575,8 +493,11 @@ void MemberRegistryPanel::setupUI() {
 
     // Stats
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet("color: #666;");
+    m_statsLabel->setProperty("type", "secondary");
     mainLayout->addWidget(m_statsLabel);
+
+    scrollArea->setWidget(contentWidget);
+    outerLayout->addWidget(scrollArea);
 }
 
 void MemberRegistryPanel::refresh() {
@@ -903,7 +824,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QVBoxLayout* wmFieldsLayout = new QVBoxLayout(wmFieldsGroup);
 
     QLabel* wmFieldsLabel = new QLabel("Select which fields to include in personalized watermarks:");
-    wmFieldsLabel->setStyleSheet("color: #666;");
+    wmFieldsLabel->setProperty("type", "secondary");
     wmFieldsLayout->addWidget(wmFieldsLabel);
 
     QMap<QString, QCheckBox*> wmFieldChecks;
@@ -928,7 +849,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QGroupBox* previewGroup = new QGroupBox("Watermark Preview");
     QVBoxLayout* previewLayout = new QVBoxLayout(previewGroup);
     QLabel* previewLabel = new QLabel();
-    previewLabel->setStyleSheet("font-family: monospace; color: #333; padding: 8px; background: #F7F7F7; border: 1px solid #DCDDDD; border-radius: 4px;");
+    previewLabel->setObjectName("WatermarkPreviewLabel");
     previewLabel->setWordWrap(true);
 
     auto updatePreview = [=]() {
@@ -974,7 +895,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QVBoxLayout* distLayout = new QVBoxLayout(distTab);
 
     QLabel* distLabel = new QLabel("MEGA folder where distributed files will be uploaded for this member:");
-    distLabel->setStyleSheet("color: #666;");
+    distLabel->setProperty("type", "secondary");
     distLabel->setWordWrap(true);
     distLayout->addWidget(distLabel);
 
@@ -1022,7 +943,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
         ? QDateTime::fromSecsSinceEpoch(member.lastWpSync).toString("yyyy-MM-dd hh:mm:ss")
         : "Never";
     QLabel* lastSyncLabel = new QLabel(lastSyncText);
-    lastSyncLabel->setStyleSheet("color: #666;");
+    lastSyncLabel->setProperty("type", "secondary");
     wpForm->addRow("Last Synced:", lastSyncLabel);
 
     distLayout->addWidget(wpGroup);
@@ -1035,7 +956,7 @@ void MemberRegistryPanel::showMemberEditDialog(const MemberInfo& member, bool is
     QVBoxLayout* pathsLayout = new QVBoxLayout(pathsTab);
 
     QLabel* pathsLabel = new QLabel("Legacy path configuration (for archive-based distribution):");
-    pathsLabel->setStyleSheet("color: #666;");
+    pathsLabel->setProperty("type", "secondary");
     pathsLabel->setWordWrap(true);
     pathsLayout->addWidget(pathsLabel);
 

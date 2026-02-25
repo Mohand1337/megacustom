@@ -1,6 +1,7 @@
 #include "DownloaderPanel.h"
 #include "styles/ThemeManager.h"
 #include "core/LogManager.h"
+#include "utils/AnimationHelper.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -286,6 +287,7 @@ void DownloadWorker::parseProgressLine(const QString& line) {
 DownloaderPanel::DownloaderPanel(QWidget* parent)
     : QWidget(parent)
 {
+    setObjectName("DownloaderPanel");
     setupUI();
     updateButtonStates();
 }
@@ -307,20 +309,29 @@ DownloaderPanel::~DownloaderPanel() {
 }
 
 void DownloaderPanel::setupUI() {
-    auto& tm = ThemeManager::instance();
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(16, 16, 16, 16);
+    QVBoxLayout* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    QScrollArea* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    QWidget* contentWidget = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
     mainLayout->setSpacing(16);
 
     // Title
     QLabel* titleLabel = new QLabel("Downloader Tool");
-    titleLabel->setStyleSheet(QString("font-size: 18px; font-weight: bold; color: %1;")
-        .arg(tm.textPrimary().name()));
+    titleLabel->setObjectName("PanelTitle");
     mainLayout->addWidget(titleLabel);
 
     // Description
     QLabel* descLabel = new QLabel("Download content from BunnyCDN, Google Drive, Dropbox, and more. First step in the content pipeline.");
-    descLabel->setStyleSheet(QString("color: %1; margin-bottom: 8px;").arg(tm.textSecondary().name()));
+    descLabel->setObjectName("PanelSubtitle");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
@@ -331,18 +342,6 @@ void DownloaderPanel::setupUI() {
     m_urlInput = new QPlainTextEdit();
     m_urlInput->setPlaceholderText("Paste URLs here (one per line, or paste text containing URLs)\n\nSupported sources:\n- BunnyCDN (iframe.mediadelivery.net/embed/...)\n- Google Drive (drive.google.com/file/d/...)\n- Google Docs/Sheets/Slides\n- Dropbox (dropbox.com/...)\n- Direct HTTP links (.mp4, .pdf, etc.)");
     m_urlInput->setMaximumHeight(120);
-    m_urlInput->setStyleSheet(QString(R"(
-        QPlainTextEdit {
-            background-color: %1;
-            border: 1px solid %2;
-            border-radius: 4px;
-            color: %3;
-            padding: 8px;
-        }
-    )")
-        .arg(tm.surfacePrimary().name())
-        .arg(tm.borderSubtle().name())
-        .arg(tm.textPrimary().name()));
     inputLayout->addWidget(m_urlInput);
 
     QHBoxLayout* inputActionsLayout = new QHBoxLayout();
@@ -384,34 +383,6 @@ void DownloaderPanel::setupUI() {
     m_downloadTable->setColumnWidth(3, 100);
     m_downloadTable->setColumnWidth(4, 80);
     m_downloadTable->setColumnWidth(5, 80);
-
-    m_downloadTable->setStyleSheet(QString(R"(
-        QTableWidget {
-            background-color: %1;
-            border: 1px solid %2;
-            border-radius: 4px;
-            gridline-color: %3;
-        }
-        QTableWidget::item {
-            padding: 4px;
-        }
-        QTableWidget::item:selected {
-            background-color: %4;
-        }
-        QHeaderView::section {
-            background-color: %5;
-            color: %6;
-            padding: 6px;
-            border: none;
-            border-bottom: 1px solid %2;
-        }
-    )")
-        .arg(tm.surfacePrimary().name())
-        .arg(tm.borderSubtle().name())
-        .arg(tm.borderSubtle().darker(120).name())
-        .arg(tm.brandDefault().name())
-        .arg(tm.surface2().name())
-        .arg(tm.textPrimary().name()));
 
     connect(m_downloadTable, &QTableWidget::itemSelectionChanged,
             this, &DownloaderPanel::onTableSelectionChanged);
@@ -533,7 +504,7 @@ void DownloaderPanel::setupUI() {
 
     // Status
     m_statusLabel = new QLabel("Ready");
-    m_statusLabel->setStyleSheet("color: #888;");
+    m_statusLabel->setProperty("type", "secondary");
     mainLayout->addWidget(m_statusLabel);
 
     // === Action Buttons ===
@@ -550,18 +521,14 @@ void DownloaderPanel::setupUI() {
     m_startBtn = new QPushButton("Start Downloads");
     m_startBtn->setIcon(QIcon(":/icons/download.svg"));
     m_startBtn->setEnabled(false);
-    m_startBtn->setStyleSheet(QString("QPushButton { background-color: %1; } QPushButton:hover { background-color: %2; }")
-        .arg(tm.supportSuccess().name())
-        .arg(tm.supportSuccess().darker(110).name()));
+    m_startBtn->setObjectName("PanelPrimaryButton");
     connect(m_startBtn, &QPushButton::clicked, this, &DownloaderPanel::onStartDownloads);
     actionsLayout->addWidget(m_startBtn);
 
     m_stopBtn = new QPushButton("Stop");
     m_stopBtn->setIcon(QIcon(":/icons/stop.svg"));
     m_stopBtn->setEnabled(false);
-    m_stopBtn->setStyleSheet(QString("QPushButton { background-color: %1; } QPushButton:hover { background-color: %2; }")
-        .arg(tm.supportError().name())
-        .arg(tm.supportError().darker(110).name()));
+    m_stopBtn->setObjectName("PanelDangerButton");
     connect(m_stopBtn, &QPushButton::clicked, this, &DownloaderPanel::onStopDownloads);
     actionsLayout->addWidget(m_stopBtn);
 
@@ -569,10 +536,13 @@ void DownloaderPanel::setupUI() {
 
     // Stats
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
+    m_statsLabel->setProperty("type", "secondary");
     mainLayout->addWidget(m_statsLabel);
 
     updateStats();
+
+    scrollArea->setWidget(contentWidget);
+    outerLayout->addWidget(scrollArea);
 }
 
 void DownloaderPanel::refresh() {
@@ -884,7 +854,7 @@ void DownloaderPanel::onWorkerProgress(int itemIndex, int totalItems, const QStr
     populateTable();
 
     int overallPercent = (itemIndex * 100 + percent) / totalItems;
-    m_progressBar->setValue(overallPercent);
+    AnimationHelper::animateProgress(m_progressBar, overallPercent);
     m_statusLabel->setText(QString("Downloading %1 (%2%)").arg(file).arg(percent));
 
     emit downloadProgress(itemIndex + 1, totalItems, file);
@@ -935,7 +905,7 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
     m_isRunning = false;
     updateButtonStates();
 
-    m_progressBar->setValue(100);
+    AnimationHelper::animateProgress(m_progressBar, 100);
     m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(successCount).arg(failCount));
 
     emit allDownloadsCompleted(successCount, failCount);

@@ -5,6 +5,7 @@
 #include "controllers/WatermarkerController.h"
 #include "dialogs/WatermarkSettingsDialog.h"
 #include "styles/ThemeManager.h"
+#include "utils/AnimationHelper.h"
 #include <QSettings>
 #include <QInputDialog>
 #include <QVBoxLayout>
@@ -181,6 +182,7 @@ WatermarkPanel::WatermarkPanel(QWidget* parent)
     : QWidget(parent)
     , m_registry(MemberRegistry::instance())
 {
+    setObjectName("WatermarkPanel");
     setupUI();
     loadMembers();
     updateButtonStates();
@@ -228,7 +230,7 @@ void WatermarkPanel::setController(WatermarkerController* controller) {
 
         connect(m_controller, &WatermarkerController::watermarkProgress,
                 this, [this](const QtWatermarkProgress& progress) {
-            m_progressBar->setValue(progress.currentIndex);
+            AnimationHelper::animateProgress(m_progressBar, progress.currentIndex);
             m_statusLabel->setText(QString("Processing: %1 (%2%)")
                 .arg(progress.currentFile)
                 .arg(static_cast<int>(progress.percentComplete)));
@@ -252,7 +254,7 @@ void WatermarkPanel::setController(WatermarkerController* controller) {
                 this, [this](const QList<QtWatermarkResult>& results) {
             m_isRunning = false;
             updateButtonStates();
-            m_progressBar->setVisible(false);
+            AnimationHelper::smoothHide(m_progressBar);
 
             int success = 0, failed = 0;
             for (const auto& r : results) {
@@ -275,20 +277,29 @@ void WatermarkPanel::setController(WatermarkerController* controller) {
 }
 
 void WatermarkPanel::setupUI() {
-    auto& tm = ThemeManager::instance();
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(16, 16, 16, 16);
+    QVBoxLayout* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    QScrollArea* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    QWidget* contentWidget = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
     mainLayout->setSpacing(16);
 
     // Title
     QLabel* titleLabel = new QLabel("Watermark Tool");
-    titleLabel->setStyleSheet(QString("font-size: 18px; font-weight: bold; color: %1;")
-        .arg(tm.textPrimary().name()));
+    titleLabel->setObjectName("PanelTitle");
     mainLayout->addWidget(titleLabel);
 
     // Description
     QLabel* descLabel = new QLabel("Add watermarks to videos (FFmpeg) and PDFs (Python). Select files, configure settings, and process.");
-    descLabel->setStyleSheet(QString("color: %1; margin-bottom: 8px;").arg(tm.textSecondary().name()));
+    descLabel->setObjectName("PanelSubtitle");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
@@ -314,34 +325,6 @@ void WatermarkPanel::setupUI() {
     m_fileTable->setColumnWidth(1, 60);
     m_fileTable->setColumnWidth(2, 80);
     m_fileTable->setColumnWidth(3, 100);
-
-    m_fileTable->setStyleSheet(QString(R"(
-        QTableWidget {
-            background-color: %1;
-            border: 1px solid %2;
-            border-radius: 4px;
-            gridline-color: %3;
-        }
-        QTableWidget::item {
-            padding: 4px;
-        }
-        QTableWidget::item:selected {
-            background-color: %4;
-        }
-        QHeaderView::section {
-            background-color: %5;
-            color: %6;
-            padding: 6px;
-            border: none;
-            border-bottom: 1px solid %2;
-        }
-    )")
-        .arg(tm.surfacePrimary().name())
-        .arg(tm.borderSubtle().name())
-        .arg(tm.borderSubtle().darker(120).name())
-        .arg(tm.brandDefault().name())
-        .arg(tm.surface2().name())
-        .arg(tm.textPrimary().name()));
 
     connect(m_fileTable, &QTableWidget::itemSelectionChanged,
             this, &WatermarkPanel::onTableSelectionChanged);
@@ -372,6 +355,7 @@ void WatermarkPanel::setupUI() {
     connect(m_removeBtn, &QPushButton::clicked, this, &WatermarkPanel::onRemoveSelected);
 
     m_clearBtn = new QPushButton("Clear All");
+    m_clearBtn->setObjectName("PanelDangerButton");
     connect(m_clearBtn, &QPushButton::clicked, this, &WatermarkPanel::onClearAll);
 
     fileActionsLayout->addWidget(m_addFilesBtn);
@@ -403,22 +387,20 @@ void WatermarkPanel::setupUI() {
     // Member multi-select (hidden by default, shown in Per-Member mode)
     m_memberWidget = new QWidget();
     QVBoxLayout* memberVLayout = new QVBoxLayout(m_memberWidget);
-    memberVLayout->setContentsMargins(0, 4, 0, 0);
-    memberVLayout->setSpacing(4);
+    memberVLayout->setContentsMargins(0, 8, 0, 4);
+    memberVLayout->setSpacing(8);
 
     // Toolbar: All / None / Add Group / Search / count
     QHBoxLayout* memberToolbar = new QHBoxLayout();
-    memberToolbar->setSpacing(6);
+    memberToolbar->setSpacing(10);
 
     m_selectAllMembersBtn = new QPushButton("All");
     m_selectAllMembersBtn->setToolTip("Select all members");
-    m_selectAllMembersBtn->setFixedWidth(40);
     connect(m_selectAllMembersBtn, &QPushButton::clicked,
             this, &WatermarkPanel::onSelectAllMembers);
 
     m_deselectAllMembersBtn = new QPushButton("None");
     m_deselectAllMembersBtn->setToolTip("Deselect all members");
-    m_deselectAllMembersBtn->setFixedWidth(50);
     connect(m_deselectAllMembersBtn, &QPushButton::clicked,
             this, &WatermarkPanel::onDeselectAllMembers);
 
@@ -430,14 +412,13 @@ void WatermarkPanel::setupUI() {
             this, &WatermarkPanel::onGroupQuickSelect);
 
     m_memberSearchEdit = new QLineEdit();
-    m_memberSearchEdit->setPlaceholderText("Filter...");
+    m_memberSearchEdit->setPlaceholderText("Search members...");
     m_memberSearchEdit->setClearButtonEnabled(true);
-    m_memberSearchEdit->setMaximumWidth(140);
     connect(m_memberSearchEdit, &QLineEdit::textChanged,
             this, &WatermarkPanel::onMemberSearchChanged);
 
     m_selectionSummaryLabel = new QLabel("0 selected");
-    m_selectionSummaryLabel->setStyleSheet("color: #888; font-size: 11px;");
+    m_selectionSummaryLabel->setProperty("type", "secondary");
 
     memberToolbar->addWidget(m_selectAllMembersBtn);
     memberToolbar->addWidget(m_deselectAllMembersBtn);
@@ -449,7 +430,8 @@ void WatermarkPanel::setupUI() {
 
     // Checkable member list
     m_memberListWidget = new QListWidget();
-    m_memberListWidget->setMaximumHeight(140);
+    m_memberListWidget->setMaximumHeight(160);
+    m_memberListWidget->setAlternatingRowColors(true);
     m_memberListWidget->setSelectionMode(QAbstractItemView::NoSelection);
     memberVLayout->addWidget(m_memberListWidget);
 
@@ -546,6 +528,7 @@ void WatermarkPanel::setupUI() {
     presetLayout->addWidget(m_savePresetBtn);
 
     m_deletePresetBtn = new QPushButton("Delete");
+    m_deletePresetBtn->setObjectName("PanelDangerButton");
     m_deletePresetBtn->setToolTip("Delete selected preset");
     m_deletePresetBtn->setEnabled(false);
     connect(m_deletePresetBtn, &QPushButton::clicked, this, &WatermarkPanel::onDeletePreset);
@@ -593,7 +576,7 @@ void WatermarkPanel::setupUI() {
 
     // Status
     m_statusLabel = new QLabel("Ready");
-    m_statusLabel->setStyleSheet("color: #888;");
+    m_statusLabel->setProperty("type", "secondary");
     mainLayout->addWidget(m_statusLabel);
 
     // === Action Buttons ===
@@ -611,9 +594,6 @@ void WatermarkPanel::setupUI() {
     m_startBtn->setObjectName("PanelPrimaryButton");
     m_startBtn->setIcon(QIcon(":/icons/play.svg"));
     m_startBtn->setEnabled(false);
-    m_startBtn->setStyleSheet(QString("QPushButton { background-color: %1; } QPushButton:hover { background-color: %2; }")
-        .arg(tm.supportSuccess().name())
-        .arg(tm.supportSuccess().darker(110).name()));
     connect(m_startBtn, &QPushButton::clicked, this, &WatermarkPanel::onStartWatermark);
     actionsLayout->addWidget(m_startBtn);
 
@@ -621,9 +601,6 @@ void WatermarkPanel::setupUI() {
     m_stopBtn->setObjectName("PanelDangerButton");
     m_stopBtn->setIcon(QIcon(":/icons/stop.svg"));
     m_stopBtn->setEnabled(false);
-    m_stopBtn->setStyleSheet(QString("QPushButton { background-color: %1; } QPushButton:hover { background-color: %2; }")
-        .arg(tm.supportError().name())
-        .arg(tm.supportError().darker(110).name()));
     connect(m_stopBtn, &QPushButton::clicked, this, &WatermarkPanel::onStopWatermark);
     actionsLayout->addWidget(m_stopBtn);
 
@@ -639,10 +616,13 @@ void WatermarkPanel::setupUI() {
 
     // Stats
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
+    m_statsLabel->setProperty("type", "secondary");
     mainLayout->addWidget(m_statsLabel);
 
     updateStats();
+
+    scrollArea->setWidget(contentWidget);
+    outerLayout->addWidget(scrollArea);
 }
 
 void WatermarkPanel::refresh() {
@@ -899,6 +879,8 @@ void WatermarkPanel::onBrowseOutput() {
 }
 
 void WatermarkPanel::onStartWatermark() {
+    if (m_isRunning) return;
+
     if (m_files.isEmpty()) {
         QMessageBox::warning(this, "No Files", "Please add files to watermark.");
         return;
@@ -1159,8 +1141,8 @@ void WatermarkPanel::onWorkerProgress(int fileIndex, int totalFiles, const QStri
     }
 
     int overallPercent = (fileIndex * 100 + percent) / totalFiles;
-    m_progressBar->setValue(overallPercent);
-    m_statusLabel->setText(QString("Processing %1 (%2%)").arg(currentFile).arg(percent));
+    AnimationHelper::animateProgress(m_progressBar, overallPercent);
+    m_statusLabel->setText(QString("Processing %1 (%2%)").arg(QFileInfo(currentFile).fileName()).arg(percent));
 
     emit watermarkProgress(fileIndex + 1, totalFiles, currentFile);
 }
@@ -1179,7 +1161,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     m_isRunning = false;
     updateButtonStates();
 
-    m_progressBar->setValue(100);
+    AnimationHelper::animateProgress(m_progressBar, 100);
     m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(successCount).arg(failCount));
 
     emit watermarkCompleted(successCount, failCount);

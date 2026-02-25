@@ -485,8 +485,12 @@ QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
     color: #797C80;
 }
 
-QLineEdit[error="true"], QTextEdit[error="true"] {
+QLineEdit[error="true"], QTextEdit[error="true"], QComboBox[error="true"] {
     border-color: #FD6F90;
+}
+
+QComboBox[error="true"] {
+    color: #FD6F90;
 }
 
 QLineEdit::placeholder {
@@ -958,6 +962,16 @@ QStatusBar::item {
     border: none;
 }
 
+#ConnectionIndicator {
+    background-color: #535455;
+    border-radius: 5px;
+}
+
+#UserLabel {
+    color: #E8E8E8;
+    font-weight: 500;
+}
+
 /* ============================================
    SPLITTER
    ============================================ */
@@ -1051,14 +1065,19 @@ QDialogButtonBox {
 }
 
 /* ============================================
-   PANELS (FolderMapper, MultiUploader, SmartSync, CloudCopier)
-   MEGAsync Card Style
+   PANELS — MEGAsync Card Style
+   All tool panels share these selectors.
    ============================================ */
 
 #FolderMapperPanel QGroupBox,
 #MultiUploaderPanel QGroupBox,
 #SmartSyncPanel QGroupBox,
 #CloudCopierPanel QGroupBox,
+#WatermarkPanel QGroupBox,
+#DistributionPanel QGroupBox,
+#LogViewerPanel QGroupBox,
+#DownloaderPanel QGroupBox,
+#MemberRegistryPanel QGroupBox,
 .PanelCard {
     background-color: #222324;
     border: 1px solid #535455;
@@ -1072,6 +1091,11 @@ QDialogButtonBox {
 #MultiUploaderPanel QGroupBox::title,
 #SmartSyncPanel QGroupBox::title,
 #CloudCopierPanel QGroupBox::title,
+#WatermarkPanel QGroupBox::title,
+#DistributionPanel QGroupBox::title,
+#LogViewerPanel QGroupBox::title,
+#DownloaderPanel QGroupBox::title,
+#MemberRegistryPanel QGroupBox::title,
 .PanelCard::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
@@ -1149,7 +1173,12 @@ QDialogButtonBox {
 #FolderMapperPanel QTableWidget,
 #MultiUploaderPanel QTableWidget,
 #SmartSyncPanel QTableWidget,
-#CloudCopierPanel QTableWidget {
+#CloudCopierPanel QTableWidget,
+#WatermarkPanel QTableWidget,
+#DistributionPanel QTableWidget,
+#LogViewerPanel QTableWidget,
+#DownloaderPanel QTableWidget,
+#MemberRegistryPanel QTableWidget {
     background-color: #1A1B1B;
     border: 1px solid #535455;
     border-radius: 8px;
@@ -1159,7 +1188,12 @@ QDialogButtonBox {
 #FolderMapperPanel QTableWidget::item,
 #MultiUploaderPanel QTableWidget::item,
 #SmartSyncPanel QTableWidget::item,
-#CloudCopierPanel QTableWidget::item {
+#CloudCopierPanel QTableWidget::item,
+#WatermarkPanel QTableWidget::item,
+#DistributionPanel QTableWidget::item,
+#LogViewerPanel QTableWidget::item,
+#DownloaderPanel QTableWidget::item,
+#MemberRegistryPanel QTableWidget::item {
     padding: 10px 12px;
     border-bottom: 1px solid #252626;
 }
@@ -1167,7 +1201,12 @@ QDialogButtonBox {
 #FolderMapperPanel QHeaderView::section,
 #MultiUploaderPanel QHeaderView::section,
 #SmartSyncPanel QHeaderView::section,
-#CloudCopierPanel QHeaderView::section {
+#CloudCopierPanel QHeaderView::section,
+#WatermarkPanel QHeaderView::section,
+#DistributionPanel QHeaderView::section,
+#LogViewerPanel QHeaderView::section,
+#DownloaderPanel QHeaderView::section,
+#MemberRegistryPanel QHeaderView::section {
     background-color: #222324;
     border: none;
     border-bottom: 2px solid #535455;
@@ -1182,7 +1221,12 @@ QDialogButtonBox {
 #FolderMapperPanel QLineEdit,
 #MultiUploaderPanel QLineEdit,
 #SmartSyncPanel QLineEdit,
-#CloudCopierPanel QLineEdit {
+#CloudCopierPanel QLineEdit,
+#WatermarkPanel QLineEdit,
+#DistributionPanel QLineEdit,
+#LogViewerPanel QLineEdit,
+#DownloaderPanel QLineEdit,
+#MemberRegistryPanel QLineEdit {
     background-color: #2A2B2C;
     border: 1px solid #535455;
     border-radius: 8px;
@@ -1194,7 +1238,12 @@ QDialogButtonBox {
 #FolderMapperPanel QLineEdit:focus,
 #MultiUploaderPanel QLineEdit:focus,
 #SmartSyncPanel QLineEdit:focus,
-#CloudCopierPanel QLineEdit:focus {
+#CloudCopierPanel QLineEdit:focus,
+#WatermarkPanel QLineEdit:focus,
+#DistributionPanel QLineEdit:focus,
+#LogViewerPanel QLineEdit:focus,
+#DownloaderPanel QLineEdit:focus,
+#MemberRegistryPanel QLineEdit:focus {
     border: 1px solid #F4F4F5;
 }
 
@@ -1202,7 +1251,12 @@ QDialogButtonBox {
 #FolderMapperPanel QProgressBar,
 #MultiUploaderPanel QProgressBar,
 #SmartSyncPanel QProgressBar,
-#CloudCopierPanel QProgressBar {
+#CloudCopierPanel QProgressBar,
+#WatermarkPanel QProgressBar,
+#DistributionPanel QProgressBar,
+#LogViewerPanel QProgressBar,
+#DownloaderPanel QProgressBar,
+#MemberRegistryPanel QProgressBar {
     background-color: #3A3B3D;
     border: none;
     border-radius: 6px;
@@ -1213,16 +1267,31 @@ QDialogButtonBox {
 #FolderMapperPanel QProgressBar::chunk,
 #MultiUploaderPanel QProgressBar::chunk,
 #SmartSyncPanel QProgressBar::chunk,
-#CloudCopierPanel QProgressBar::chunk {
+#CloudCopierPanel QProgressBar::chunk,
+#WatermarkPanel QProgressBar::chunk,
+#DistributionPanel QProgressBar::chunk,
+#LogViewerPanel QProgressBar::chunk,
+#DownloaderPanel QProgressBar::chunk,
+#MemberRegistryPanel QProgressBar::chunk {
     background-color: #29DD74;
     border-radius: 6px;
+}
+
+/* Paused Progress Bar */
+QProgressBar[paused="true"]::chunk {
+    background-color: #797C80;
 }
 
 /* Panel Scroll Areas */
 #FolderMapperPanel QScrollArea,
 #MultiUploaderPanel QScrollArea,
 #SmartSyncPanel QScrollArea,
-#CloudCopierPanel QScrollArea {
+#CloudCopierPanel QScrollArea,
+#WatermarkPanel QScrollArea,
+#DistributionPanel QScrollArea,
+#LogViewerPanel QScrollArea,
+#DownloaderPanel QScrollArea,
+#MemberRegistryPanel QScrollArea {
     background-color: #151616;
     border: none;
 }
@@ -1230,8 +1299,111 @@ QDialogButtonBox {
 #FolderMapperPanel QScrollArea > QWidget > QWidget,
 #MultiUploaderPanel QScrollArea > QWidget > QWidget,
 #SmartSyncPanel QScrollArea > QWidget > QWidget,
-#CloudCopierPanel QScrollArea > QWidget > QWidget {
+#CloudCopierPanel QScrollArea > QWidget > QWidget,
+#WatermarkPanel QScrollArea > QWidget > QWidget,
+#DistributionPanel QScrollArea > QWidget > QWidget,
+#LogViewerPanel QScrollArea > QWidget > QWidget,
+#DownloaderPanel QScrollArea > QWidget > QWidget,
+#MemberRegistryPanel QScrollArea > QWidget > QWidget {
     background-color: #151616;
+}
+
+/* Panel Plain Text Edits */
+#DownloaderPanel QPlainTextEdit,
+#LogViewerPanel QPlainTextEdit {
+    background-color: #1A1B1B;
+    border: 1px solid #535455;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+}
+
+#DownloaderPanel QPlainTextEdit:focus,
+#LogViewerPanel QPlainTextEdit:focus {
+    border: 1px solid #F4F4F5;
+}
+
+
+/* ============================================
+   MODE INDICATORS & BANNERS (Dark Mode)
+   ============================================ */
+
+/* Mode indicator (default state) */
+#ModeIndicator {
+    background-color: #2A2B2C;
+    color: #F3F4F4;
+    padding: 6px 12px;
+    border: 1px solid #535455;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+/* Mode indicator — warning/move mode */
+#ModeIndicator[mode="warning"] {
+    background-color: #3D2E0A;
+    border-color: #F7A308;
+    color: #F7A308;
+}
+
+/* Mode indicator — active/upload mode */
+#ModeIndicator[mode="active"] {
+    background-color: #3D1010;
+    border-color: #F23433;
+    color: #F23433;
+}
+
+/* Warning banner (destructive mode alerts) */
+#WarningBanner {
+    background-color: #3D1020;
+    border: 1px solid #F23433;
+    color: #F23433;
+    padding: 8px 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* Watermark preview label in member edit dialog */
+#WatermarkPreviewLabel {
+    font-family: monospace;
+    color: #E8E8E8;
+    padding: 8px;
+    background: #1A1A1A;
+    border: 1px solid #3D3D3D;
+    border-radius: 4px;
+}
+
+/* Validation label states */
+QLabel[validation="success"] {
+    color: #09BF5B;
+    font-style: italic;
+}
+
+QLabel[validation="error"] {
+    color: #F23433;
+    font-style: italic;
+}
+
+/* Warning button type */
+QPushButton[type="warning"] {
+    background-color: #F7A308;
+    border: none;
+    color: #151616;
+    font-weight: 600;
+}
+
+QPushButton[type="warning"]:hover {
+    background-color: #E09300;
+}
+
+QPushButton[type="warning"]:pressed {
+    background-color: #B55407;
+}
+
+QPushButton[type="warning"]:disabled {
+    background-color: #3A3B3C;
+    color: #797C80;
 }
 
 /* ============================================

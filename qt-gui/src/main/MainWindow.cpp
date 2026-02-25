@@ -204,6 +204,24 @@ void MainWindow::setTransferController(TransferController* controller)
                 this, &MainWindow::onTransferCompleted);
         connect(m_transferController, &TransferController::transferFailed,
                 this, &MainWindow::onTransferFailed);
+
+        // Speed updates for status bar
+        connect(m_transferController, &TransferController::globalSpeedUpdate,
+                this, [this](qint64 uploadSpeed, qint64 downloadSpeed) {
+                    auto formatBytes = [](qint64 bytes) -> QString {
+                        const qint64 KB = 1024;
+                        const qint64 MB = KB * 1024;
+                        const qint64 GB = MB * 1024;
+                        if (bytes >= GB) return QString("%1 GB").arg(bytes / GB);
+                        else if (bytes >= MB) return QString("%1 MB").arg(bytes / MB);
+                        else if (bytes >= KB) return QString("%1 KB").arg(bytes / KB);
+                        else return QString("%1 B").arg(bytes);
+                    };
+                    if (m_uploadSpeedLabel)
+                        m_uploadSpeedLabel->setText(QString::fromUtf8("\xe2\x86\x91 %1/s").arg(formatBytes(uploadSpeed)));
+                    if (m_downloadSpeedLabel)
+                        m_downloadSpeedLabel->setText(QString::fromUtf8("\xe2\x86\x93 %1/s").arg(formatBytes(downloadSpeed)));
+                });
     }
 }
 
@@ -635,6 +653,7 @@ void MainWindow::setupUI()
     m_contentStack->addWidget(m_logViewerPanel);     // 8: LogViewer
     m_settingsPanel = new SettingsPanel(this);
     m_settingsPanel->loadSettings();
+    connect(m_settingsPanel, &SettingsPanel::settingsSaved, this, &MainWindow::applySettings);
     m_contentStack->addWidget(m_settingsPanel);       // 9: Settings
     m_contentStack->addWidget(m_transferQueue);       // 10: Transfers
     m_contentStack->addWidget(m_downloaderPanel);    // 11: Downloader
@@ -1071,15 +1090,12 @@ void MainWindow::createStatusBar()
     m_connectionIndicator = new QLabel(this);
     m_connectionIndicator->setObjectName("ConnectionIndicator");
     m_connectionIndicator->setFixedSize(10, 10);
-    m_connectionIndicator->setStyleSheet(
-        "QLabel { background-color: #E0E0E0; border-radius: 5px; }"
-    );
     m_statusBar->addWidget(m_connectionIndicator);
 
     // Connection label
     m_connectionLabel = new QLabel("Disconnected");
     m_connectionLabel->setObjectName("ConnectionLabel");
-    m_connectionLabel->setStyleSheet("QLabel { color: #666666; margin-right: 16px; }");
+    m_connectionLabel->setProperty("type", "secondary");
     m_statusBar->addWidget(m_connectionLabel);
 
     // Status label (stretch)
@@ -1098,20 +1114,19 @@ void MainWindow::createStatusBar()
     m_uploadSpeedLabel = new QLabel(this);
     m_uploadSpeedLabel->setObjectName("UploadSpeedLabel");
     m_uploadSpeedLabel->setText(QString::fromUtf8("↑ 0 B/s"));
-    m_uploadSpeedLabel->setStyleSheet("QLabel { color: #666666; margin-right: 8px; }");
+    m_uploadSpeedLabel->setProperty("type", "secondary");
     m_statusBar->addPermanentWidget(m_uploadSpeedLabel);
 
     // Download speed
     m_downloadSpeedLabel = new QLabel(this);
     m_downloadSpeedLabel->setObjectName("DownloadSpeedLabel");
     m_downloadSpeedLabel->setText(QString::fromUtf8("↓ 0 B/s"));
-    m_downloadSpeedLabel->setStyleSheet("QLabel { color: #666666; margin-right: 16px; }");
+    m_downloadSpeedLabel->setProperty("type", "secondary");
     m_statusBar->addPermanentWidget(m_downloadSpeedLabel);
 
     // User label
     m_userLabel = new QLabel("Not logged in");
     m_userLabel->setObjectName("UserLabel");
-    m_userLabel->setStyleSheet("QLabel { color: #333333; font-weight: 500; }");
     m_statusBar->addPermanentWidget(m_userLabel);
 }
 
@@ -1180,35 +1195,6 @@ void MainWindow::connectSignals()
                 this, &MainWindow::onSearchResultActivated);
 
         // Note: SearchResultsPanel handles keyboard via keyPressEvent when it has focus
-    }
-
-    // Transfer controller speed updates
-    if (m_transferController) {
-        connect(m_transferController, &TransferController::globalSpeedUpdate,
-                this, [this](qint64 uploadSpeed, qint64 downloadSpeed) {
-                    // Helper function to format bytes
-                    auto formatBytes = [](qint64 bytes) -> QString {
-                        const qint64 KB = 1024;
-                        const qint64 MB = KB * 1024;
-                        const qint64 GB = MB * 1024;
-                        if (bytes >= GB) {
-                            return QString("%1 GB").arg(bytes / GB);
-                        } else if (bytes >= MB) {
-                            return QString("%1 MB").arg(bytes / MB);
-                        } else if (bytes >= KB) {
-                            return QString("%1 KB").arg(bytes / KB);
-                        } else {
-                            return QString("%1 B").arg(bytes);
-                        }
-                    };
-
-                    if (m_uploadSpeedLabel) {
-                        m_uploadSpeedLabel->setText(QString::fromUtf8("↑ %1/s").arg(formatBytes(uploadSpeed)));
-                    }
-                    if (m_downloadSpeedLabel) {
-                        m_downloadSpeedLabel->setText(QString::fromUtf8("↓ %1/s").arg(formatBytes(downloadSpeed)));
-                    }
-                });
     }
 }
 

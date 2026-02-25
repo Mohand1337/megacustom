@@ -30,85 +30,91 @@ Building a custom Mega.nz SDK application with advanced features using the nativ
 
 ---
 
-## CURRENT STATUS (December 10, 2025 - Phase 2 Planning Complete)
+## CURRENT STATUS (February 24, 2026 - Phase 2 Implementation ~85%)
 
 | Metric | Value |
 |--------|-------|
 | **Phase 1 Completion** | 100% (17/17 modules + GUI + Multi-Account) |
-| **Lines of Code** | ~52,643 lines (37,265 GUI + 11,452 CLI) |
+| **Phase 2 Completion** | ~85% (Members, Watermarking, Distribution, Groups working) |
+| **Lines of Code** | ~60,000+ lines (Phase 2 added ~8,000+) |
 | **SDK Status** | FULLY INTEGRATED (libSDKlib.a) |
 | **CLI Status** | Fully functional with all features |
-| **GUI Status** | Multi-Account Support working, cross-account transfers functional |
-| **Phase 2 Status** | PLANNING COMPLETE - Ready for implementation |
+| **GUI Status** | Phase 2 features deployed and in testing |
+| **Latest Feature** | Member Groups + Distribution UX improvements (Feb 24, 2026) |
 
 ---
 
-## PHASE 2 ROADMAP: Watermarking + WordPress + Member Distribution
+## PHASE 2: Watermarking + WordPress + Member Distribution
 
 ### Overview
-Phase 2 adds member management, watermarking, and integrated distribution pipeline:
-1. **Member Management** - Database with MEGA folder bindings per member
-2. **Watermarking System** - Videos (FFmpeg) + PDFs (Python) with member personalization
-3. **WordPress Member Sync** - Fetch member data via WP REST API
-4. **Distribution Pipeline** - Select files → Pick members → Watermark → Upload to member folders
-5. **Logging System** - Activity log + Distribution history
+Phase 2 adds member management, watermarking, and integrated distribution pipeline.
 
-### Plan File Location
-Full implementation plan: `/home/mow/.claude/plans/spicy-conjuring-hamster.md`
+### Implementation Status
 
-### Phase 2 Statistics
-| Metric | Count |
-|--------|-------|
-| **New Files** | 29 files |
-| **New LOC** | ~7,600 lines |
-| **New Controllers** | 3 (Member, Watermark, Distribution) |
-| **New Widgets** | 4 (MemberManager, Watermark, Distribution, LogViewer, DistributionHistory) |
-| **New Dialogs** | 3 (WordPressConfig, WatermarkSettings, MemberFolderBrowser) |
-| **New Backend** | 5 modules (MemberDatabase, WordPressSync, Watermarker, DistributionPipeline, LogManager) |
+| Sub-Phase | Description | Status |
+|-----------|-------------|--------|
+| 2.1 | Member Management (MemberRegistry, MemberRegistryPanel) | DONE |
+| 2.2 | Watermarking Core (FFmpeg, WatermarkPanel, WatermarkerController) | DONE |
+| 2.3 | Distribution Pipeline (DistributionPanel, DistributionController) | DONE |
+| 2.4 | WordPress Integration (WordPressConfigDialog, sync) | DONE |
+| 2.5 | Logging System (LogManager, LogViewerPanel) | DONE |
+| 2.6 | Member Groups + UX Polish | DONE (Feb 24, 2026) |
 
-### Implementation Phases
-1. **Phase 2.1**: Member Management (foundation) - MemberDatabase, CLI commands, GUI panel
-2. **Phase 2.2**: Watermarking Core - FFmpeg wrapper, PDF Python script, standalone panel
-3. **Phase 2.3**: Distribution Pipeline - Integrated workflow: files → members → watermark → upload
-4. **Phase 2.4**: WordPress Integration - REST API sync for member data
-5. **Phase 2.5**: Logging System - Activity log + Distribution history panels
-6. **Phase 2.6**: Polish & Documentation
+### Key Phase 2 Files (Implemented)
 
-### Key New Files to Create
 ```
-# Backend
-include/integrations/MemberDatabase.h/cpp      # Member storage with MEGA folder bindings
-include/integrations/WordPressSync.h/cpp       # WP REST API client
-include/features/Watermarker.h/cpp             # FFmpeg + Python process wrapper
-include/features/DistributionPipeline.h/cpp    # Pipeline orchestrator
-include/core/LogManager.h/cpp                  # Persistent logging
+# Member Management
+qt-gui/src/utils/MemberRegistry.h/cpp          # JSON member storage, groups, paths, watermark config
+qt-gui/src/widgets/MemberRegistryPanel.h/cpp    # 3-tab UI: Members | Global Template | Groups
 
-# Qt Controllers
-qt-gui/src/controllers/MemberController.h/cpp
-qt-gui/src/controllers/WatermarkController.h/cpp
-qt-gui/src/controllers/DistributionController.h/cpp
+# Watermarking
+qt-gui/src/widgets/WatermarkPanel.h/cpp         # FFmpeg video watermarking, per-member, batch
+qt-gui/src/controllers/WatermarkerController.h/cpp # Async watermark orchestration
+src/features/Watermarker.h/cpp                  # FFmpeg process wrapper
 
-# Qt Widgets
-qt-gui/src/widgets/MemberManagerPanel.h/cpp
-qt-gui/src/widgets/WatermarkPanel.h/cpp
-qt-gui/src/widgets/DistributionPanel.h/cpp
-qt-gui/src/widgets/LogViewerPanel.h/cpp
-qt-gui/src/widgets/DistributionHistoryPanel.h/cpp
+# Distribution
+qt-gui/src/widgets/DistributionPanel.h/cpp      # Scan, match, copy/move to member destinations
+qt-gui/src/controllers/DistributionController.h/cpp # MegaApi upload, pause/resume/cancel
+qt-gui/src/utils/TemplateExpander.h/cpp         # {member}, {year}, {month} variable expansion
+qt-gui/src/utils/CloudCopier.h/cpp              # Server-side copy/move operations
+qt-gui/src/workers/FolderCopyWorker.h/cpp       # QThread async copy with pause/resume
 
-# Qt Dialogs
+# Distribution Pipeline (CLI-level)
+src/features/DistributionPipeline.h/cpp         # Pipeline orchestrator
+
+# WordPress
 qt-gui/src/dialogs/WordPressConfigDialog.h/cpp
-qt-gui/src/dialogs/WatermarkSettingsDialog.h/cpp
-qt-gui/src/dialogs/MemberFolderBrowserDialog.h/cpp
+qt-gui/src/dialogs/WordPressSyncPreviewDialog.h/cpp
 
-# Scripts
-scripts/pdf_watermark.py
+# Logging
+src/core/LogManager.h/cpp                       # Persistent file logging
+qt-gui/src/widgets/LogViewerPanel.h/cpp         # Searchable activity log
+
+# Other Dialogs
+qt-gui/src/dialogs/WatermarkSettingsDialog.h/cpp
+qt-gui/src/dialogs/RemoteFolderBrowserDialog.h/cpp
 ```
 
-### New Sidebar Tabs (Phase 2)
-- **Members** - Member management with WP sync
-- **Distribution** - Integrated pipeline (primary workflow)
-- **Watermark** - Standalone watermarking tool
-- **Logs** - Activity log + Distribution history
+### Sidebar Tabs (Phase 2 - All Implemented)
+- **Members** - Member management with groups, WP sync, folder binding
+- **Distribution** - Scan /latest-wm/, match to members, bulk copy/move
+- **Watermark** - FFmpeg video watermarking with per-member personalization
+- **Logs** - Activity log viewer
+
+### Member Groups (Latest Feature - Feb 24, 2026)
+- **MemberGroup struct** in MemberRegistry — named groups with member IDs
+- **Groups tab** in MemberRegistryPanel — full CRUD with QSplitter layout
+- **WatermarkPanel** — groups in member combo (`GROUP:` prefix convention)
+- **DistributionPanel** — group quick-select combo to check group members
+- **Context menu** — "Add to Group..." submenu on Members table
+- **Groups column** — 8th column in Members table (blue text)
+- **UX fixes** — stop confirmation, pause visual, template validation, move warning banner
+
+### Remaining Work
+- PDF watermarking (Python script integration)
+- Distribution history panel (who got what, when)
+- End-to-end pipeline testing
+- Remote folder browser improvements
 
 ---
 
@@ -217,59 +223,80 @@ export MEGA_APP_KEY="9gETCbhB"
 
 ```
 /home/mow/projects/Mega - SDK/mega-custom-app/
-├── megacustom                    # CLI executable (REAL)
+├── megacustom                    # CLI executable
 ├── claude.md                     # THIS FILE
+├── progress.md                   # Quick status tracker
 ├── qt-gui/                       # Qt6 GUI Application
-│   ├── build-qt/
-│   │   └── MegaCustomGUI         # GUI executable (11MB)
+│   ├── build-qt/                 # Linux build (MegaCustomGUI ~18MB)
+│   ├── build-win64/              # Windows build (Release/MegaCustomGUI.exe)
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── Application.cpp   # SDK init, controllers, scheduler
-│   │   │   └── MainWindow.cpp    # Tab-based UI
+│   │   │   └── MainWindow.cpp    # Tab-based UI with sidebar
 │   │   ├── widgets/
-│   │   │   ├── FileExplorer.cpp      # Dual-pane browser
-│   │   │   ├── TransferQueue.cpp     # Transfer panel
-│   │   │   ├── FolderMapperPanel.cpp # Mapping panel
-│   │   │   ├── MultiUploaderPanel.cpp # Upload panel
-│   │   │   └── SmartSyncPanel.cpp    # Sync panel
+│   │   │   ├── FileExplorer.cpp         # Dual-pane browser
+│   │   │   ├── TransferQueue.cpp        # Transfer panel
+│   │   │   ├── FolderMapperPanel.cpp    # Mapping panel
+│   │   │   ├── MultiUploaderPanel.cpp   # Upload panel
+│   │   │   ├── SmartSyncPanel.cpp       # Sync panel
+│   │   │   ├── CloudCopierPanel.cpp     # Cloud copy/move
+│   │   │   ├── MemberRegistryPanel.cpp  # [P2] Members + Groups tabs
+│   │   │   ├── WatermarkPanel.cpp       # [P2] FFmpeg watermarking
+│   │   │   ├── DistributionPanel.cpp    # [P2] Distribution to members
+│   │   │   ├── LogViewerPanel.cpp       # [P2] Activity log
+│   │   │   └── QuickPeekPanel.cpp       # Quick account peek
 │   │   ├── controllers/
 │   │   │   ├── FolderMapperController.cpp
 │   │   │   ├── MultiUploaderController.cpp
-│   │   │   └── SmartSyncController.cpp
-│   │   ├── scheduler/
-│   │   │   └── SyncScheduler.cpp     # Task automation
+│   │   │   ├── SmartSyncController.cpp
+│   │   │   ├── CloudCopierController.cpp
+│   │   │   ├── WatermarkerController.cpp  # [P2]
+│   │   │   └── DistributionController.cpp # [P2]
+│   │   ├── utils/
+│   │   │   ├── MemberRegistry.cpp       # [P2] Members + Groups data
+│   │   │   ├── TemplateExpander.cpp     # [P2] Path variable expansion
+│   │   │   └── CloudCopier.cpp          # [P2] Server-side copy/move
 │   │   ├── dialogs/
 │   │   │   ├── LoginDialog.cpp
-│   │   │   ├── SettingsDialog.cpp    # Sync + Advanced tabs
-│   │   │   ├── MappingEditDialog.cpp
-│   │   │   ├── DistributionRuleDialog.cpp
-│   │   │   ├── SyncProfileDialog.cpp # 3-tab dialog
-│   │   │   ├── AddDestinationDialog.cpp
-│   │   │   ├── ConflictResolutionDialog.cpp
-│   │   │   └── ScheduleSyncDialog.cpp
+│   │   │   ├── SettingsDialog.cpp
+│   │   │   ├── WordPressConfigDialog.cpp    # [P2]
+│   │   │   ├── WatermarkSettingsDialog.cpp  # [P2]
+│   │   │   ├── RemoteFolderBrowserDialog.cpp # [P2]
+│   │   │   └── ... (14+ dialogs total)
 │   │   ├── accounts/             # Multi-account support
-│   │   │   ├── AccountModels.h
 │   │   │   ├── AccountManager.h/cpp
-│   │   │   ├── CredentialStore.h/cpp
 │   │   │   ├── SessionPool.h/cpp
 │   │   │   ├── CrossAccountTransferManager.h/cpp
 │   │   │   └── TransferLogStore.h/cpp
-│   │   └── stubs/                # REAL backend implementations
+│   │   └── scheduler/
+│   │       └── SyncScheduler.cpp
 │   └── CMakeLists.txt
 ├── src/
 │   ├── main.cpp                  # CLI entry point
-│   └── core/
-│       ├── MegaManager.cpp       # SDK singleton
-│       ├── AuthenticationModule.cpp
-│       └── ConfigManager.cpp
+│   ├── core/
+│   │   ├── MegaManager.cpp
+│   │   ├── AuthenticationModule.cpp
+│   │   ├── ConfigManager.cpp
+│   │   └── LogManager.cpp        # [P2] Persistent logging
+│   └── features/
+│       ├── Watermarker.cpp       # [P2] FFmpeg wrapper
+│       └── DistributionPipeline.cpp # [P2] Pipeline orchestrator
 ├── include/                      # All headers
 ├── third_party/
 │   └── sdk/
 │       └── build_sdk/
 │           └── libSDKlib.a       # Built SDK library
+├── scripts/
+│   ├── win-rebuild.ps1           # Quick Windows rebuild
+│   ├── build-windows-local.ps1   # Full Windows setup
+│   └── build-gui.ps1             # GUI-only build
 └── docs/
-    ├── GUI_ROADMAP.md
-    └── GUI_ARCHITECTURE.md
+    ├── USER_GUIDE.md
+    ├── DEVELOPER_GUIDE.md
+    └── archive/
+        ├── CHANGELOG.md
+        ├── PROGRESS.md
+        └── TODO.md
 ```
 
 ---
@@ -522,45 +549,13 @@ if (pathCache.count(parentPathStr)) {
 
 ## TODO: REMAINING WORK
 
-### PHASE 2 IMPLEMENTATION (Current Focus)
-See full plan: `/home/mow/.claude/plans/spicy-conjuring-hamster.md`
-
-**Phase 2.1 - Member Management**
-1. Create `MemberDatabase` class (JSON storage + MEGA folder bindings)
-2. Create CLI `member` commands (add, list, remove, import, export)
-3. Create `MemberManagerPanel` GUI
-4. Create `MemberController`
-5. Create `MemberFolderBrowserDialog` (browse/create MEGA folders)
-
-**Phase 2.2 - Watermarking Core**
-6. Create `Watermarker` class (FFmpeg wrapper for videos)
-7. Bundle `pdf_watermark.py` script
-8. Create CLI `watermark` commands
-9. Create `WatermarkPanel` GUI (standalone tool)
-10. Create `WatermarkController`
-11. Create `WatermarkSettingsDialog`
-
-**Phase 2.3 - Distribution Pipeline**
-12. Create `DistributionController` (orchestrates pipeline)
-13. Create `DistributionPanel` GUI (integrated workflow)
-14. Implement parallel watermarking
-15. Implement temp file management + auto-cleanup
-16. Integrate with existing upload system
-
-**Phase 2.4 - WordPress Integration**
-17. Create `WordPressSync` class (REST client)
-18. Create `WordPressConfigDialog`
-19. Add CLI `wp` commands (config, sync, test)
-20. Integrate sync button in `MemberManagerPanel`
-
-**Phase 2.5 - Logging System**
-21. Create `LogManager` class (persistent file logging)
-22. Create `LogViewerPanel` GUI (searchable activity log)
-23. Create `DistributionHistoryPanel` (who got what, when)
-24. Integrate logging into all features
+### Phase 2 Remaining Items
+- **PDF Watermarking** - Integrate Python script (reportlab/PyPDF2)
+- **Distribution History Panel** - Track who got what, when (DistributionHistoryPanel)
+- **End-to-end pipeline test** - Full watermark → distribute → verify flow
+- **Remote folder browser** - Improve tree-view dialog for member folder binding
 
 ### Phase 1 Polish (Lower Priority)
-- **Remote Folder Browser Dialog** - Proper tree-view (partially needed for Phase 2)
 - **Input Validation** - Add validation for paths, mapping names
 - **Error Handling UI** - Better error messages
 - **Dark theme** - Complete implementation
@@ -657,8 +652,8 @@ void MainWindow::onCrossAccountTransferCompleted(const MegaCustom::CrossAccountT
 
 ---
 
-*Last Updated: December 8, 2025 - Session 18+: Multi-Account Support*
-*Status: Multi-Account Support working - Cross-account transfers functional*
-*All core features implemented: CLI, GUI, Multi-Account, Cross-Account Transfers*
+*Last Updated: February 24, 2026 - Phase 2: Member Groups + Distribution UX*
+*Status: Phase 2 ~85% complete — Members, Watermarking, Distribution, Groups all working*
+*Latest: Member Groups with full CRUD, WatermarkPanel/DistributionPanel group integration, 5 UX fixes*
 
 **THIS FILE CONTAINS EVERYTHING NEEDED TO CONTINUE THE PROJECT**

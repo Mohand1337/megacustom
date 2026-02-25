@@ -176,46 +176,54 @@ Cloned official MEGAsync repository and performed comprehensive comparison analy
 
 ---
 
-## Next Steps
+## Phase 2 Implementation (Dec 2025 - Feb 2026)
 
-1. **Test Multi-Account Features** - Verify cross-account copy/move with various file types
-2. **Add Account Management UI** - Implement add/remove account dialogs
-3. **Quick Peek Improvements** - Better folder browsing in peek panel
-4. **Windows Build** - Cross-platform testing
+### Completed
+| Feature | Key Files | Date |
+|---------|-----------|------|
+| Member Registry (JSON storage, paths, WP sync) | MemberRegistry.h/cpp, MemberRegistryPanel.h/cpp | Dec 2025 |
+| FFmpeg Video Watermarking | WatermarkPanel.h/cpp, WatermarkerController.h/cpp, Watermarker.h/cpp | Dec 2025 |
+| Distribution Pipeline | DistributionPanel.h/cpp, DistributionController.h/cpp | Jan 2026 |
+| Cloud Copier + FolderCopyWorker | CloudCopier.h/cpp, FolderCopyWorker.h/cpp | Jan 2026 |
+| Template Expander | TemplateExpander.h/cpp | Jan 2026 |
+| WordPress Integration | WordPressConfigDialog, WordPressSyncPreviewDialog | Jan 2026 |
+| LogManager + LogViewerPanel | LogManager.cpp, LogViewerPanel.h/cpp | Jan 2026 |
+| MegaApi Upload in DistributionController | DistributionController.h/cpp | Feb 2026 |
+| Member Groups | MemberRegistry (groups CRUD), MemberRegistryPanel (Groups tab) | Feb 24, 2026 |
+| Group selection in panels | WatermarkPanel, DistributionPanel | Feb 24, 2026 |
+| Distribution UX improvements | Stop confirm, pause visuals, template validation, move warning, button layout | Feb 24, 2026 |
+
+### Bug Fixes (Phase 2)
+| Bug | Fix | Date |
+|-----|-----|------|
+| Account switching freeze | Fixed blocking fetchNodes() call | Feb 2026 |
+| FFmpeg watermark crashes | Fixed argument ordering | Jan 2026 |
+| Distribution upload not working | Injected MegaApi upload function | Feb 2026 |
+| Group checkbox flicker | Added m_suppressGroupRefresh guard | Feb 24, 2026 |
 
 ---
 
 ## Timeline Summary
 
-- **Nov 29, Session 1-6**: CLI modules complete
-- **Nov 30, Session 7-8**: Qt6 GUI framework + backend integration
-- **Dec 3-4, Session 9-13**: GUI Enhancement, design compliance
-- **Dec 5-6, Session 14-17**: Code quality, MEGAsync comparison
-- **Dec 7-8, Session 18**: Multi-Account Support implementation
-- **Dec 10, Session 19**: Documentation update, final statistics
+- **Nov 29 - Dec 6, 2025**: Phase 1 (CLI + GUI + Multi-Account)
+- **Dec 10, 2025**: Phase 2 planning complete
+- **Dec 2025 - Jan 2026**: Phase 2 core (Members, Watermarking, Distribution)
+- **Feb 2026**: Phase 2 polish (MegaApi uploads, Groups, UX fixes)
+- **Feb 24, 2026**: Member Groups + Distribution UX shipped
 
 ---
 
-## Project Statistics (Final Count)
+## Project Statistics
 
 ### Code Base
-- **Total Lines of Code**: 52,643
-  - Qt GUI: 37,265 lines (28,528 .cpp + 8,737 .h)
-  - CLI: 11,452 lines (11 .cpp files)
-  - CLI headers: ~3,926 lines (estimated)
-
-### Source Files
-- **Total**: 134 source files
-  - Qt GUI: 123 files (61 .cpp, 62 .h)
-  - CLI: 11 .cpp files
-
-### GUI Components
-- **Controllers**: 7 (Auth, CloudCopier, File, FolderMapper, MultiUploader, SmartSync, Transfer)
-- **Dialogs**: 14 (About, AccountManager, AddDestination, BulkNameEditor, BulkPathEditor, ConflictResolution, CopyConflict, DistributionRule, Login, MappingEdit, RemoteFolderBrowser, ScheduleSync, Settings, SyncProfile)
-- **Widgets**: 23 (AccountSwitcher, AdvancedSearch, Banner, Breadcrumb, CircularProgressBar, CloudCopier, CrossAccountLog, Distribution, ElidedLabel, FileExplorer, FolderMapper, LoadingSpinner, MegaSidebar, MemberRegistry, MultiUploader, QuickPeek, SearchResults, SettingsPanel, SmartSync, StatusIndicator, SwitchButton, TopToolbar, TransferQueue)
+- **Total Lines of Code**: ~60,000+
+  - Qt GUI: ~45,000+ lines (Phase 2 added ~8,000+)
+  - CLI: 11,452 lines
+- **Controllers**: 10 (7 original + Watermarker, Distribution, CloudCopier)
+- **Dialogs**: 17+
+- **Widgets**: 27+
 
 ---
 
-*Last Updated: December 10, 2025*
-*Session: 19*
-*Status: All planned features complete - Production ready*
+*Last Updated: February 24, 2026*
+*Status: Phase 2 ~85% complete — Members, Watermarking, Distribution, Groups all working*

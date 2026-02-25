@@ -8,6 +8,7 @@
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QCheckBox>
+#include <QScrollArea>
 #include <QSplitter>
 #include <QTextEdit>
 #include <QMenu>
@@ -18,6 +19,7 @@ namespace MegaCustom {
 LogViewerPanel::LogViewerPanel(QWidget* parent)
     : QWidget(parent)
 {
+    setObjectName("LogViewerPanel");
     setupUI();
 
     // Setup auto-refresh timer
@@ -39,43 +41,34 @@ LogViewerPanel::LogViewerPanel(QWidget* parent)
 }
 
 void LogViewerPanel::setupUI() {
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(16, 16, 16, 16);
-    mainLayout->setSpacing(12);
+    QVBoxLayout* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    QScrollArea* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    QWidget* contentWidget = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
+    mainLayout->setSpacing(16);
 
     // Title
     QLabel* titleLabel = new QLabel("Activity Logs");
-    titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+    titleLabel->setObjectName("PanelTitle");
     mainLayout->addWidget(titleLabel);
 
     // Description
     QLabel* descLabel = new QLabel("View activity logs, errors, and distribution history for all operations.");
-    descLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
+    descLabel->setObjectName("PanelSubtitle");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
 
     // Tab widget
     m_tabWidget = new QTabWidget();
-    m_tabWidget->setStyleSheet(R"(
-        QTabWidget::pane {
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            background-color: #FFFFFF;
-        }
-        QTabBar::tab {
-            background-color: #EFEFF0;
-            color: #666;
-            padding: 8px 16px;
-            border: 1px solid #DCDDDD;
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-        }
-        QTabBar::tab:selected {
-            background-color: #FFFFFF;
-            color: #333;
-        }
-    )");
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &LogViewerPanel::onTabChanged);
 
     // =====================================================
@@ -189,31 +182,6 @@ void LogViewerPanel::setupUI() {
     m_activityTable->setColumnWidth(3, 120);
     m_activityTable->setColumnWidth(5, 150);
 
-    m_activityTable->setStyleSheet(R"(
-        #ActivityLogTable {
-            background-color: #FFFFFF;
-            alternate-background-color: #F7F7F7;
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            gridline-color: #E0E0E0;
-            color: #333;
-        }
-        #ActivityLogTable::item {
-            padding: 4px;
-        }
-        #ActivityLogTable::item:selected {
-            background-color: #FFE6E7;
-            color: #333;
-        }
-        #ActivityLogTable QHeaderView::section {
-            background-color: #F7F7F7;
-            color: #333;
-            padding: 6px;
-            border: none;
-            border-bottom: 1px solid #DCDDDD;
-        }
-    )");
-
     connect(m_activityTable, &QTableWidget::itemSelectionChanged,
             this, &LogViewerPanel::onActivityTableSelectionChanged);
     activityLayout->addWidget(m_activityTable, 1);
@@ -291,31 +259,6 @@ void LogViewerPanel::setupUI() {
     m_distributionTable->setColumnWidth(6, 80);
     m_distributionTable->setColumnWidth(7, 80);
 
-    m_distributionTable->setStyleSheet(R"(
-        #DistributionLogTable {
-            background-color: #FFFFFF;
-            alternate-background-color: #F7F7F7;
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            gridline-color: #E0E0E0;
-            color: #333;
-        }
-        #DistributionLogTable::item {
-            padding: 4px;
-        }
-        #DistributionLogTable::item:selected {
-            background-color: #FFE6E7;
-            color: #333;
-        }
-        #DistributionLogTable QHeaderView::section {
-            background-color: #F7F7F7;
-            color: #333;
-            padding: 6px;
-            border: none;
-            border-bottom: 1px solid #DCDDDD;
-        }
-    )");
-
     connect(m_distributionTable, &QTableWidget::itemSelectionChanged,
             this, &LogViewerPanel::onDistributionTableSelectionChanged);
     distLayout->addWidget(m_distributionTable, 1);
@@ -346,13 +289,14 @@ void LogViewerPanel::setupUI() {
     bottomLayout->addWidget(m_exportBtn);
 
     m_clearBtn = new QPushButton("Clear Logs");
+    m_clearBtn->setObjectName("PanelDangerButton");
     m_clearBtn->setIcon(QIcon(":/icons/trash-2.svg"));
     connect(m_clearBtn, &QPushButton::clicked, this, &LogViewerPanel::onClearClicked);
     bottomLayout->addWidget(m_clearBtn);
 
     // Loading indicator
     m_loadingLabel = new QLabel();
-    m_loadingLabel->setStyleSheet("color: #60a5fa; font-weight: bold;");
+    m_loadingLabel->setProperty("type", "secondary");
     m_loadingLabel->setVisible(false);
     bottomLayout->addWidget(m_loadingLabel);
 
@@ -360,19 +304,22 @@ void LogViewerPanel::setupUI() {
 
     // Last refreshed timestamp
     m_lastRefreshedLabel = new QLabel();
-    m_lastRefreshedLabel->setStyleSheet("color: #666; font-size: 11px;");
+    m_lastRefreshedLabel->setProperty("type", "secondary");
     bottomLayout->addWidget(m_lastRefreshedLabel);
 
     m_countLabel = new QLabel();
-    m_countLabel->setStyleSheet("color: #666;");
+    m_countLabel->setProperty("type", "secondary");
     bottomLayout->addWidget(m_countLabel);
 
     mainLayout->addLayout(bottomLayout);
 
     // Stats bar
     m_statsLabel = new QLabel();
-    m_statsLabel->setStyleSheet("color: #666; padding-top: 4px; border-top: 1px solid #E0E0E0;");
+    m_statsLabel->setProperty("type", "secondary");
     mainLayout->addWidget(m_statsLabel);
+
+    scrollArea->setWidget(contentWidget);
+    outerLayout->addWidget(scrollArea);
 }
 
 void LogViewerPanel::refresh() {

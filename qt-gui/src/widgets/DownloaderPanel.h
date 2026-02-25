@@ -15,6 +15,7 @@
 #include <QThread>
 #include <QProcess>
 #include <memory>
+#include <atomic>
 
 namespace MegaCustom {
 
@@ -89,7 +90,7 @@ private:
     bool m_skipExisting = true;
     bool m_downloadSubtitles = true;
     QString m_docsFormat;
-    bool m_cancelled = false;
+    std::atomic<bool> m_cancelled{false};
     int m_currentIndex = 0;
     QProcess* m_process = nullptr;
     QString m_lastCompletedPath;  // Path from JSON complete message

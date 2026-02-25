@@ -1,10 +1,47 @@
 # MegaCustom - TODO / Remaining Work
 
-*Created: December 3, 2025 - Updated: December 10, 2025 (Session 19)*
+*Created: December 3, 2025 - Updated: February 24, 2026*
 
 ---
 
-## Recently Completed (Session 18+ - December 7-8, 2025)
+## Recently Completed (February 24, 2026 - Member Groups + UX)
+
+### Member Groups System - COMPLETE
+| Task | Status |
+|------|--------|
+| MemberGroup struct + JSON serialization | DONE |
+| Group CRUD in MemberRegistry (add, update, remove, getGroupMemberIds, getGroupsForMember) | DONE |
+| Groups persistence in members.json (backward compatible) | DONE |
+| Groups tab in MemberRegistryPanel (full CRUD, search, bulk select/deselect) | DONE |
+| "Add to Group..." context menu on Members table | DONE |
+| "Groups" column in Members table | DONE |
+| Group selection in WatermarkPanel (GROUP: prefix convention) | DONE |
+| Group quick-select combo in DistributionPanel | DONE |
+
+### Distribution Panel UX Fixes - COMPLETE
+| Task | Status |
+|------|--------|
+| Stop confirmation dialog | DONE |
+| Pause visual feedback (progress bar dimming) | DONE |
+| Real-time template validation (red border) | DONE |
+| Move mode warning banner (red) | DONE |
+| Two-row button layout (selection + execution) | DONE |
+| Checkbox rebuild guard (m_suppressGroupRefresh) | DONE |
+
+---
+
+## Phase 2 Remaining TODO
+
+| Task | Priority |
+|------|----------|
+| PDF watermarking (Python script integration) | MEDIUM |
+| Distribution history panel (who got what, when) | MEDIUM |
+| End-to-end pipeline test (watermark → distribute → verify) | HIGH |
+| Remote folder browser improvements | LOW |
+
+---
+
+## Previously Completed (Session 18+ - December 7-8, 2025)
 
 ### Multi-Account Support - COMPLETE
 | Task | Status |

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-24
+
+### Added - Phase 2 Sessions: Watermarking, Distribution, Member Groups (Dec 2025 - Feb 2026)
+
+#### Member Groups System
+- **MemberGroup struct** (`MemberRegistry.h`) - Named groups of members for quick selection (e.g., "NHB2026")
+- **Full CRUD** in `MemberRegistry` - `addGroup`, `updateGroup`, `removeGroup`, `getGroupMemberIds`, `getGroupsForMember`
+- **JSON persistence** - Groups stored as top-level `"groups"` array in `members.json` (backward compatible)
+- **Groups tab** in MemberRegistryPanel - Full management UI:
+  - QSplitter layout: group list (left) + checkbox member assignment (right)
+  - Create, Rename, Duplicate, Delete groups
+  - Search filter for member assignment
+  - Bulk Select All / Deselect All (respects search filter)
+  - Live count updates without full UI rebuild (guard flag pattern)
+  - Context menu on group list (Rename, Duplicate, Delete)
+- **"Add to Group..." submenu** in Members table right-click context menu (checkmark toggle)
+- **"Groups" column** (8th column) in Members table showing group membership in blue text
+- **WatermarkPanel group selection** - Groups appear in member combo between "All Members" and individuals
+  - `[Group] NHB2026 (5)` format with separators
+  - `GROUP:` prefix convention for group data in QComboBox
+  - Resolves to active member IDs on watermark start
+- **DistributionPanel group combo** - Quick-select dropdown to check group members in table
+  - Deselects all, then checks group members, resets combo to prompt
+
+#### Distribution Panel UX Improvements
+- **Stop confirmation dialog** - QMessageBox::question before cancelling distribution
+- **Pause visual feedback** - Progress bar chunk dims to gray when paused, restores on resume
+- **Real-time template validation** - Red border on invalid destination template via `textChanged` signal
+- **Move mode warning banner** - Persistent red banner "WARNING: MOVE MODE" toggled by move checkbox
+- **Two-row button layout** - Selection controls (Select All, Deselect All, Group, Bulk Rename) on row 1, execution controls (Preview, Start, Pause, Stop) on row 2
+
+#### Phase 2 Core Systems (Implemented across Dec 2025 - Feb 2026)
+- **MemberRegistry** (`utils/MemberRegistry.h/cpp`) - JSON-based member storage with paths, watermark config, distribution folders, WordPress sync tracking
+- **MemberRegistryPanel** (`widgets/MemberRegistryPanel.h/cpp`) - Full member management UI with search, filters, import/export (JSON + CSV)
+- **WatermarkPanel** (`widgets/WatermarkPanel.h/cpp`) - FFmpeg video watermarking with per-member personalization, batch processing
+- **WatermarkerController** (`controllers/WatermarkerController.h/cpp`) - Async watermark orchestration with worker threads
+- **DistributionPanel** (`widgets/DistributionPanel.h/cpp`) - Scan /latest-wm/, match to members, bulk copy/move to destinations
+- **DistributionController** (`controllers/DistributionController.h/cpp`) - MegaApi-based cloud upload with progress tracking
+- **CloudCopier** - Server-side copy/move operations for distribution
+- **FolderCopyWorker** - QThread-based async folder copy with pause/resume/cancel
+- **TemplateExpander** (`utils/TemplateExpander.h/cpp`) - Variable expansion for destination paths ({member}, {year}, {month}, etc.)
+- **LogManager** (`core/LogManager.cpp`) - Persistent file logging
+- **LogViewerPanel** (`widgets/LogViewerPanel.h/cpp`) - Searchable activity log viewer
+- **WordPressConfigDialog** / **WatermarkSettingsDialog** - Configuration dialogs
+- **RemoteFolderBrowserDialog** - MEGA cloud folder browser for binding member folders
+
+### Fixed - Feb 2026
+- **Account switching freeze** - Fixed blocking `fetchNodes()` call during account switch
+- **FFmpeg watermark crashes** - Fixed argument ordering and process management
+- **Distribution pipeline upload** - Injected MegaApi-based upload function into DistributionPipeline
+- **Checkbox toggle rebuild bug** - Added `m_suppressGroupRefresh` guard to prevent full UI rebuild on every checkbox click in Groups tab
+
 ## [0.2.0] - 2025-12-08/10
 
 ### Added - Session 18: Multi-Account Support (December 7-8, 2025)
