@@ -72,6 +72,23 @@ static void applyMemberTemplates(Watermarker& watermarker, const WatermarkConfig
     WatermarkConfig localConfig = baseConfig;
     localConfig.primaryText = TemplateExpander::expand(primaryTpl, vars).toStdString();
     localConfig.secondaryText = TemplateExpander::expand(secondaryTpl, vars).toStdString();
+
+    // Expand metadata templates per-member
+    if (localConfig.embedMetadata) {
+        if (!localConfig.metadataTitle.empty())
+            localConfig.metadataTitle = TemplateExpander::expand(
+                QString::fromStdString(baseConfig.metadataTitle), vars).toStdString();
+        if (!localConfig.metadataAuthor.empty())
+            localConfig.metadataAuthor = TemplateExpander::expand(
+                QString::fromStdString(baseConfig.metadataAuthor), vars).toStdString();
+        if (!localConfig.metadataComment.empty())
+            localConfig.metadataComment = TemplateExpander::expand(
+                QString::fromStdString(baseConfig.metadataComment), vars).toStdString();
+        if (!localConfig.metadataKeywords.empty())
+            localConfig.metadataKeywords = TemplateExpander::expand(
+                QString::fromStdString(baseConfig.metadataKeywords), vars).toStdString();
+    }
+
     watermarker.setConfig(localConfig);
 }
 
@@ -97,12 +114,6 @@ void WatermarkWorker::process() {
         int idx = 0;
         QMap<QString, QStringList> memberFileMap;
 
-        watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
-            emit this->progress(progress.currentIndex, total,
-                               QString::fromStdString(progress.currentFile),
-                               static_cast<int>(progress.percentComplete));
-        });
-
         for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
             QString inputPath = m_files[i];
             std::string inputStd = inputPath.toStdString();
@@ -111,6 +122,14 @@ void WatermarkWorker::process() {
                 QString memberId = m_memberIds[j];
                 QString label = QString("%1 [%2]").arg(QFileInfo(inputPath).fileName()).arg(memberId);
                 emit progress(idx, total, label, 0);
+
+                // Set FFmpeg progress callback with captured idx for correct row update
+                int currentIdx = idx;
+                watermarker.setProgressCallback([this, total, currentIdx](const WatermarkProgress& progress) {
+                    emit this->progress(currentIdx, total,
+                                       QString::fromStdString(progress.currentFile),
+                                       static_cast<int>(progress.percentComplete));
+                });
 
                 // Expand templates with this member's data (Qt layer — single source of truth)
                 applyMemberTemplates(watermarker, baseConfig, memberId,
@@ -135,7 +154,7 @@ void WatermarkWorker::process() {
                     failCount++;
                 }
 
-                emit fileCompleted(i, result.success,
+                emit fileCompleted(idx, result.success,
                                   QString::fromStdString(result.outputFile),
                                   QString::fromStdString(result.error));
                 idx++;
@@ -150,15 +169,17 @@ void WatermarkWorker::process() {
     // Single-member or global mode
     int total = m_files.size();
 
-    watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
-        emit this->progress(progress.currentIndex, total,
-                           QString::fromStdString(progress.currentFile),
-                           static_cast<int>(progress.percentComplete));
-    });
-
     for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
         QString inputPath = m_files[i];
         emit progress(i, total, QFileInfo(inputPath).fileName(), 0);
+
+        // Set FFmpeg progress callback with captured index for correct row update
+        int currentI = i;
+        watermarker.setProgressCallback([this, total, currentI](const WatermarkProgress& progress) {
+            emit this->progress(currentI, total,
+                               QString::fromStdString(progress.currentFile),
+                               static_cast<int>(progress.percentComplete));
+        });
 
         WatermarkResult result;
         std::string inputStd = inputPath.toStdString();
@@ -333,22 +354,25 @@ void WatermarkPanel::setupUI() {
 
     // File table
     m_fileTable = new QTableWidget();
-    m_fileTable->setColumnCount(5);
-    m_fileTable->setHorizontalHeaderLabels({"File Name", "Type", "Size", "Status", "Output"});
+    m_fileTable->setColumnCount(6);
+    m_fileTable->setHorizontalHeaderLabels({"File Name", "Member", "Type", "Size", "Status", "Output"});
     m_fileTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_fileTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_fileTable->setAlternatingRowColors(true);
     m_fileTable->verticalHeader()->setVisible(false);
     m_fileTable->setContextMenuPolicy(Qt::CustomContextMenu);
 
-    m_fileTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_fileTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-    m_fileTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-    m_fileTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
-    m_fileTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
-    m_fileTable->setColumnWidth(1, 60);
-    m_fileTable->setColumnWidth(2, 80);
-    m_fileTable->setColumnWidth(3, 100);
+    auto* header = m_fileTable->horizontalHeader();
+    header->setSectionResizeMode(0, QHeaderView::Stretch);   // File Name
+    header->setSectionResizeMode(1, QHeaderView::Fixed);      // Member
+    m_fileTable->setColumnWidth(1, 130);
+    header->setSectionResizeMode(2, QHeaderView::Fixed);      // Type
+    m_fileTable->setColumnWidth(2, 60);
+    header->setSectionResizeMode(3, QHeaderView::Fixed);      // Size
+    m_fileTable->setColumnWidth(3, 80);
+    header->setSectionResizeMode(4, QHeaderView::Fixed);      // Status
+    m_fileTable->setColumnWidth(4, 100);
+    header->setSectionResizeMode(5, QHeaderView::Stretch);    // Output
 
     connect(m_fileTable, &QTableWidget::itemSelectionChanged,
             this, &WatermarkPanel::onTableSelectionChanged);
@@ -494,6 +518,49 @@ void WatermarkPanel::setupUI() {
     textGrid->addWidget(m_watermarkPreviewBtn, 1, 2);
 
     settingsLayout->addLayout(textGrid);
+
+    // Metadata embedding section
+    m_embedMetadataCheck = new QCheckBox("Embed member data in file metadata");
+    m_embedMetadataCheck->setToolTip("Write member information into PDF properties or video metadata fields");
+    settingsLayout->addWidget(m_embedMetadataCheck);
+
+    QGridLayout* metaGrid = new QGridLayout();
+    metaGrid->setSpacing(6);
+    metaGrid->setContentsMargins(20, 0, 0, 0);
+
+    auto addMetaField = [&](int row, const QString& label, QLineEdit*& edit,
+                            const QString& placeholder, const QString& defaultVal) {
+        QLabel* lbl = new QLabel(label);
+        metaGrid->addWidget(lbl, row, 0);
+        edit = new QLineEdit();
+        edit->setPlaceholderText(placeholder);
+        edit->setText(defaultVal);
+        edit->setToolTip("Supports template variables: {brand}, {member_name}, {member_id}, {member_email}, etc.");
+        edit->setEnabled(false);
+        metaGrid->addWidget(edit, row, 1);
+    };
+
+    addMetaField(0, "Title:", m_metaTitleEdit,
+        "e.g., {brand} - Watermarked for {member_name}",
+        "{brand} - {member_name}");
+    addMetaField(1, "Author:", m_metaAuthorEdit,
+        "e.g., {member_name} ({member_id})",
+        "{member_name} ({member_id})");
+    addMetaField(2, "Comment:", m_metaCommentEdit,
+        "e.g., ID: {member_id} | Email: {member_email}",
+        "ID: {member_id} | {member_email}");
+    addMetaField(3, "Keywords:", m_metaKeywordsEdit,
+        "e.g., {member_id}, {member_email}",
+        "{member_id}, {member_email}");
+
+    settingsLayout->addLayout(metaGrid);
+
+    connect(m_embedMetadataCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_metaTitleEdit->setEnabled(checked);
+        m_metaAuthorEdit->setEnabled(checked);
+        m_metaCommentEdit->setEnabled(checked);
+        m_metaKeywordsEdit->setEnabled(checked);
+    });
 
     // Video settings
     QHBoxLayout* videoSettingsLayout = new QHBoxLayout();
@@ -964,10 +1031,19 @@ void WatermarkPanel::onStartWatermark() {
         }
     }
 
-    // Collect file paths
+    // Collect unique file paths (deduplicate in case m_files was expanded from a prior run)
     QStringList filePaths;
+    QSet<QString> seenPaths;
+    QList<WatermarkFileInfo> baseFiles;
     for (const WatermarkFileInfo& info : m_files) {
-        filePaths.append(info.filePath);
+        if (!seenPaths.contains(info.filePath)) {
+            seenPaths.insert(info.filePath);
+            filePaths.append(info.filePath);
+            WatermarkFileInfo base = info;
+            base.memberName.clear();
+            base.memberId.clear();
+            baseFiles.append(base);
+        }
     }
 
     // Build config
@@ -991,12 +1067,41 @@ void WatermarkPanel::onStartWatermark() {
         }
     }
 
-    // Reset file statuses
-    for (int i = 0; i < m_files.size(); ++i) {
-        m_files[i].status = "pending";
-        m_files[i].outputPath.clear();
-        m_files[i].error.clear();
-        m_files[i].progressPercent = 0;
+    // Rebuild m_files for display: expand to one row per file×member in multi-member mode
+    if (!allMemberIds.isEmpty()) {
+        QList<WatermarkFileInfo> expanded;
+        expanded.reserve(baseFiles.size() * allMemberIds.size());
+        for (const WatermarkFileInfo& base : baseFiles) {
+            for (const QString& mid : allMemberIds) {
+                WatermarkFileInfo entry = base;
+                entry.memberId = mid;
+                MemberInfo mi = m_registry->getMember(mid);
+                entry.memberName = mi.displayName.isEmpty() ? mid : mi.displayName;
+                entry.status = "pending";
+                entry.outputPath.clear();
+                entry.error.clear();
+                entry.progressPercent = 0;
+                expanded.append(entry);
+            }
+        }
+        m_files = expanded;
+    } else {
+        // Global or single-member: one row per file
+        m_files = baseFiles;
+        if (!memberId.isEmpty()) {
+            MemberInfo mi = m_registry->getMember(memberId);
+            QString name = mi.displayName.isEmpty() ? memberId : mi.displayName;
+            for (auto& f : m_files) {
+                f.memberId = memberId;
+                f.memberName = name;
+            }
+        }
+        for (auto& f : m_files) {
+            f.status = "pending";
+            f.outputPath.clear();
+            f.error.clear();
+            f.progressPercent = 0;
+        }
     }
     populateTable();
 
@@ -1209,7 +1314,14 @@ void WatermarkPanel::onWorkerProgress(int fileIndex, int totalFiles, const QStri
 
     int overallPercent = (fileIndex * 100 + percent) / totalFiles;
     AnimationHelper::animateProgress(m_progressBar, overallPercent);
-    m_statusLabel->setText(QString("Processing %1 (%2%)").arg(QFileInfo(currentFile).fileName()).arg(percent));
+
+    QString fileName = QFileInfo(currentFile).fileName();
+    if (fileIndex >= 0 && fileIndex < m_files.size() && !m_files[fileIndex].memberName.isEmpty()) {
+        m_statusLabel->setText(QString("Processing %1 for %2 (%3%)")
+            .arg(fileName).arg(m_files[fileIndex].memberName).arg(percent));
+    } else {
+        m_statusLabel->setText(QString("Processing %1 (%2%)").arg(fileName).arg(percent));
+    }
 
     emit watermarkProgress(fileIndex + 1, totalFiles, currentFile);
 }
@@ -1250,12 +1362,20 @@ void WatermarkPanel::populateTable() {
     for (int row = 0; row < m_files.size(); ++row) {
         const WatermarkFileInfo& info = m_files[row];
 
-        // File name
+        // File name (col 0)
         QTableWidgetItem* nameItem = new QTableWidgetItem(info.fileName);
         nameItem->setToolTip(info.filePath);
         m_fileTable->setItem(row, 0, nameItem);
 
-        // Type
+        // Member (col 1)
+        QTableWidgetItem* memberItem = new QTableWidgetItem(info.memberName);
+        if (!info.memberId.isEmpty()) {
+            memberItem->setToolTip(info.memberId);
+            memberItem->setForeground(tm.supportInfo()); // Blue
+        }
+        m_fileTable->setItem(row, 1, memberItem);
+
+        // Type (col 2)
         QTableWidgetItem* typeItem = new QTableWidgetItem(info.fileType.toUpper());
         typeItem->setTextAlignment(Qt::AlignCenter);
         if (info.fileType == "video") {
@@ -1263,14 +1383,14 @@ void WatermarkPanel::populateTable() {
         } else {
             typeItem->setForeground(tm.supportError()); // Red for PDF
         }
-        m_fileTable->setItem(row, 1, typeItem);
+        m_fileTable->setItem(row, 2, typeItem);
 
-        // Size
+        // Size (col 3)
         QTableWidgetItem* sizeItem = new QTableWidgetItem(formatFileSize(info.fileSize));
         sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_fileTable->setItem(row, 2, sizeItem);
+        m_fileTable->setItem(row, 3, sizeItem);
 
-        // Status
+        // Status (col 4)
         QTableWidgetItem* statusItem = new QTableWidgetItem();
         if (info.status == "pending") {
             statusItem->setText("Pending");
@@ -1287,20 +1407,21 @@ void WatermarkPanel::populateTable() {
             statusItem->setToolTip(info.error);
         }
         statusItem->setTextAlignment(Qt::AlignCenter);
-        m_fileTable->setItem(row, 3, statusItem);
+        m_fileTable->setItem(row, 4, statusItem);
 
-        // Output
+        // Output (col 5)
         QTableWidgetItem* outputItem = new QTableWidgetItem(info.outputPath);
         if (info.status == "error" && !info.error.isEmpty()) {
             outputItem->setText(info.error);
             outputItem->setForeground(tm.supportError());
         }
-        m_fileTable->setItem(row, 4, outputItem);
+        m_fileTable->setItem(row, 5, outputItem);
 
         // Highlight entire row for errors with light red background
         if (info.status == "error") {
             QColor errorBg(255, 240, 240);  // Light red background
             nameItem->setBackground(errorBg);
+            memberItem->setBackground(errorBg);
             typeItem->setBackground(errorBg);
             sizeItem->setBackground(errorBg);
             statusItem->setBackground(errorBg);
@@ -1308,6 +1429,7 @@ void WatermarkPanel::populateTable() {
         } else if (info.status == "complete") {
             QColor successBg(240, 255, 240);  // Light green background
             nameItem->setBackground(successBg);
+            memberItem->setBackground(successBg);
             typeItem->setBackground(successBg);
             sizeItem->setBackground(successBg);
             statusItem->setBackground(successBg);
@@ -1317,32 +1439,36 @@ void WatermarkPanel::populateTable() {
 }
 
 void WatermarkPanel::updateStats() {
-    int videoCount = 0;
-    int pdfCount = 0;
-    int errorCount = 0;
-    int completeCount = 0;
+    int videoCount = 0, pdfCount = 0, errorCount = 0, completeCount = 0;
     qint64 totalSize = 0;
+    QSet<QString> uniquePaths;
 
     for (const WatermarkFileInfo& info : m_files) {
-        if (info.fileType == "video") {
-            videoCount++;
-        } else {
-            pdfCount++;
+        if (!uniquePaths.contains(info.filePath)) {
+            uniquePaths.insert(info.filePath);
+            if (info.fileType == "video") videoCount++;
+            else pdfCount++;
+            totalSize += info.fileSize;
         }
-        totalSize += info.fileSize;
-
-        if (info.status == "error") {
-            errorCount++;
-        } else if (info.status == "complete") {
-            completeCount++;
-        }
+        if (info.status == "error") errorCount++;
+        else if (info.status == "complete") completeCount++;
     }
 
-    QString statsText = QString("Files: %1 (%2 videos, %3 PDFs) | Total size: %4")
-        .arg(m_files.size())
-        .arg(videoCount)
-        .arg(pdfCount)
-        .arg(formatFileSize(totalSize));
+    int uniqueFileCount = uniquePaths.size();
+    int totalOps = m_files.size();
+
+    QString statsText;
+    if (totalOps > uniqueFileCount) {
+        // Expanded mode: show "5 files × 3 members (15 operations)"
+        int memberCount = totalOps / qMax(uniqueFileCount, 1);
+        statsText = QString("Files: %1 \u00d7 %2 members (%3 ops) | Size: %4")
+            .arg(uniqueFileCount).arg(memberCount).arg(totalOps)
+            .arg(formatFileSize(totalSize));
+    } else {
+        statsText = QString("Files: %1 (%2 videos, %3 PDFs) | Size: %4")
+            .arg(uniqueFileCount).arg(videoCount).arg(pdfCount)
+            .arg(formatFileSize(totalSize));
+    }
 
     if (completeCount > 0) {
         statsText += QString(" | <span style='color: green;'>%1 completed</span>").arg(completeCount);
@@ -1388,6 +1514,12 @@ void WatermarkPanel::updateButtonStates() {
     m_crfSpin->setEnabled(!m_isRunning);
     m_intervalSpin->setEnabled(!m_isRunning);
     m_durationSpin->setEnabled(!m_isRunning);
+    m_embedMetadataCheck->setEnabled(!m_isRunning);
+    bool metaEnabled = !m_isRunning && m_embedMetadataCheck->isChecked();
+    m_metaTitleEdit->setEnabled(metaEnabled);
+    m_metaAuthorEdit->setEnabled(metaEnabled);
+    m_metaCommentEdit->setEnabled(metaEnabled);
+    m_metaKeywordsEdit->setEnabled(metaEnabled);
 }
 
 WatermarkConfig WatermarkPanel::buildConfig() const {
@@ -1416,6 +1548,29 @@ WatermarkConfig WatermarkPanel::buildConfig() const {
     config.crf = m_crfSpin->value();
     config.intervalSeconds = m_intervalSpin->value();
     config.durationSeconds = m_durationSpin->value();
+
+    // Metadata embedding
+    config.embedMetadata = m_embedMetadataCheck->isChecked();
+    if (config.embedMetadata) {
+        config.metadataTitle = m_metaTitleEdit->text().toStdString();
+        config.metadataAuthor = m_metaAuthorEdit->text().toStdString();
+        config.metadataComment = m_metaCommentEdit->text().toStdString();
+        config.metadataKeywords = m_metaKeywordsEdit->text().toStdString();
+
+        // In global mode, expand metadata templates now
+        if (m_modeCombo->currentData().toString() == "global") {
+            auto vars = TemplateExpander::Variables::withCurrentDateTime();
+            vars.brand = QString::fromUtf8(MegaCustom::Constants::BRAND_NAME);
+            config.metadataTitle = TemplateExpander::expand(
+                m_metaTitleEdit->text(), vars).toStdString();
+            config.metadataAuthor = TemplateExpander::expand(
+                m_metaAuthorEdit->text(), vars).toStdString();
+            config.metadataComment = TemplateExpander::expand(
+                m_metaCommentEdit->text(), vars).toStdString();
+            config.metadataKeywords = TemplateExpander::expand(
+                m_metaKeywordsEdit->text(), vars).toStdString();
+        }
+    }
 
     return config;
 }
@@ -1524,6 +1679,13 @@ void WatermarkPanel::applyPreset(const QString& presetName) {
     m_intervalSpin->setValue(settings.value("interval", 600).toInt());
     m_durationSpin->setValue(settings.value("duration", 3).toInt());
 
+    // Metadata settings
+    m_embedMetadataCheck->setChecked(settings.value("embedMetadata", false).toBool());
+    m_metaTitleEdit->setText(settings.value("metadataTitle", "{brand} - {member_name}").toString());
+    m_metaAuthorEdit->setText(settings.value("metadataAuthor", "{member_name} ({member_id})").toString());
+    m_metaCommentEdit->setText(settings.value("metadataComment", "ID: {member_id} | {member_email}").toString());
+    m_metaKeywordsEdit->setText(settings.value("metadataKeywords", "{member_id}, {member_email}").toString());
+
     settings.endGroup();
 }
 
@@ -1544,6 +1706,13 @@ void WatermarkPanel::onSavePreset() {
     settings.setValue("crf", m_crfSpin->value());
     settings.setValue("interval", m_intervalSpin->value());
     settings.setValue("duration", m_durationSpin->value());
+
+    // Metadata settings
+    settings.setValue("embedMetadata", m_embedMetadataCheck->isChecked());
+    settings.setValue("metadataTitle", m_metaTitleEdit->text());
+    settings.setValue("metadataAuthor", m_metaAuthorEdit->text());
+    settings.setValue("metadataComment", m_metaCommentEdit->text());
+    settings.setValue("metadataKeywords", m_metaKeywordsEdit->text());
     settings.endGroup();
 
     // Reload and select the new preset

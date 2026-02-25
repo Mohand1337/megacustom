@@ -34,6 +34,8 @@ struct WatermarkFileInfo {
     QString fileName;
     qint64 fileSize;
     QString fileType;       // "video" or "pdf"
+    QString memberName;     // empty in global mode, member display name in per-member mode
+    QString memberId;       // empty in global mode, member ID in per-member mode
     QString status;         // "pending", "processing", "complete", "error"
     QString outputPath;
     QString error;
@@ -177,6 +179,13 @@ private:
     QSpinBox* m_intervalSpin;         // Watermark interval (seconds)
     QSpinBox* m_durationSpin;         // Watermark duration (seconds)
     QPushButton* m_settingsBtn;       // Open full settings dialog
+
+    // Metadata embedding
+    QCheckBox* m_embedMetadataCheck;
+    QLineEdit* m_metaTitleEdit;
+    QLineEdit* m_metaAuthorEdit;
+    QLineEdit* m_metaCommentEdit;
+    QLineEdit* m_metaKeywordsEdit;
 
     // Preset management
     QComboBox* m_presetNameCombo;     // Preset selection

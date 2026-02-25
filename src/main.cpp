@@ -2624,11 +2624,32 @@ int handleWatermark(const std::vector<std::string>& args) {
         std::cout << "Watermarking for member: " << memberId << " (" << memberResult.member->name << ")\n";
         std::cout << "Input: " << input << "\n";
 
+        // Set up per-member watermark text using template expansion
+        const auto& member = *memberResult.member;
+        auto config = watermarker.getConfig();
+        std::string tpl = config.primaryText.empty() ?
+            std::string("{brand} - {member_name} ({member_id})") : config.primaryText;
+        // Simple template expansion for CLI
+        auto expandTpl = [&](std::string t) -> std::string {
+            auto r = [](std::string& s, const std::string& f, const std::string& v) {
+                size_t p = 0; while ((p = s.find(f, p)) != std::string::npos) { s.replace(p, f.length(), v); p += v.length(); }
+            };
+            r(t, "{brand}", "Easygroupbuys.com"); r(t, "{member_id}", member.id);
+            r(t, "{member_name}", member.name); r(t, "{member}", member.name.empty() ? member.id : member.name);
+            r(t, "{member_email}", member.email); r(t, "{member_ip}", member.ipAddress);
+            r(t, "{member_mac}", member.macAddress); r(t, "{member_social}", member.socialHandle);
+            return t;
+        };
+        config.primaryText = expandTpl(tpl);
+        config.secondaryText = expandTpl(config.secondaryText);
+        watermarker.setConfig(config);
+
+        std::string outPath = watermarker.buildMemberOutputPath(input, outputDir, memberId);
         MegaCustom::WatermarkResult result;
         if (MegaCustom::Watermarker::isVideoFile(input)) {
-            result = watermarker.watermarkVideoForMember(input, memberId, outputDir);
+            result = watermarker.watermarkVideo(input, outPath);
         } else if (MegaCustom::Watermarker::isPdfFile(input)) {
-            result = watermarker.watermarkPdfForMember(input, memberId, outputDir);
+            result = watermarker.watermarkPdf(input, outPath);
         } else {
             std::cerr << "Error: Unsupported file type. Must be video or PDF.\n";
             return 1;
@@ -2675,15 +2696,37 @@ int handleWatermark(const std::vector<std::string>& args) {
         int failCount = 0;
         int total = static_cast<int>(membersResult.members.size());
 
+        auto baseConfig = watermarker.getConfig();
+        std::string tpl = baseConfig.primaryText.empty() ?
+            std::string("{brand} - {member_name} ({member_id})") : baseConfig.primaryText;
+
+        auto expandTpl = [](std::string t, const MegaCustom::Member& m) -> std::string {
+            auto r = [](std::string& s, const std::string& f, const std::string& v) {
+                size_t p = 0; while ((p = s.find(f, p)) != std::string::npos) { s.replace(p, f.length(), v); p += v.length(); }
+            };
+            r(t, "{brand}", "Easygroupbuys.com"); r(t, "{member_id}", m.id);
+            r(t, "{member_name}", m.name); r(t, "{member}", m.name.empty() ? m.id : m.name);
+            r(t, "{member_email}", m.email); r(t, "{member_ip}", m.ipAddress);
+            r(t, "{member_mac}", m.macAddress); r(t, "{member_social}", m.socialHandle);
+            return t;
+        };
+
         for (int i = 0; i < total; ++i) {
             const auto& member = membersResult.members[i];
             std::cout << "[" << (i + 1) << "/" << total << "] " << member.id << " (" << member.name << ")... ";
 
+            // Expand templates per member
+            auto config = baseConfig;
+            config.primaryText = expandTpl(tpl, member);
+            config.secondaryText = expandTpl(config.secondaryText, member);
+            watermarker.setConfig(config);
+
+            std::string outPath = watermarker.buildMemberOutputPath(input, outputDir, member.id);
             MegaCustom::WatermarkResult result;
             if (MegaCustom::Watermarker::isVideoFile(input)) {
-                result = watermarker.watermarkVideoForMember(input, member.id, outputDir);
+                result = watermarker.watermarkVideo(input, outPath);
             } else {
-                result = watermarker.watermarkPdfForMember(input, member.id, outputDir);
+                result = watermarker.watermarkPdf(input, outPath);
             }
 
             if (result.success) {

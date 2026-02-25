@@ -29,6 +29,11 @@ static WatermarkConfig toNativeConfig(const QtWatermarkConfig& qtConfig) {
     config.pdfAngle = qtConfig.pdfAngle;
     config.pdfCoverage = qtConfig.pdfCoverage;
     config.pdfPassword = qtConfig.pdfPassword.toStdString();
+    config.embedMetadata = qtConfig.embedMetadata;
+    config.metadataTitle = qtConfig.metadataTitle.toStdString();
+    config.metadataAuthor = qtConfig.metadataAuthor.toStdString();
+    config.metadataComment = qtConfig.metadataComment.toStdString();
+    config.metadataKeywords = qtConfig.metadataKeywords.toStdString();
     config.outputSuffix = qtConfig.outputSuffix.toStdString();
     config.overwrite = qtConfig.overwrite;
     return config;

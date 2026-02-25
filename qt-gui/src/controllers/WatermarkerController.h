@@ -35,6 +35,11 @@ struct QtWatermarkConfig {
     int pdfAngle = 45;
     double pdfCoverage = 0.5;
     QString pdfPassword;
+    bool embedMetadata = false;
+    QString metadataTitle;
+    QString metadataAuthor;
+    QString metadataComment;
+    QString metadataKeywords;
     QString outputSuffix = "_wm";
     bool overwrite = true;
 };

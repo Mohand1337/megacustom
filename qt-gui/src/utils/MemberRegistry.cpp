@@ -130,39 +130,6 @@ MemberInfo MemberInfo::fromJson(const QJsonObject& obj) {
     return info;
 }
 
-// Phase 2: Watermark text helpers - aligned with C++ MemberDatabase format
-QString MemberInfo::buildWatermarkText(const QString& brandText) const {
-    QString result;
-    if (!brandText.isEmpty()) {
-        result = brandText + " - ";
-    }
-
-    result += "Member #" + id;
-
-    if (!displayName.isEmpty() && watermarkFields.contains("name")) {
-        result += " (" + displayName + ")";
-    }
-
-    return result;
-}
-
-QString MemberInfo::buildSecondaryWatermarkText() const {
-    QStringList parts;
-
-    for (const QString& field : watermarkFields) {
-        if (field == "email" && !email.isEmpty()) parts << email;
-        else if (field == "ip" && !ipAddress.isEmpty()) parts << "IP: " + ipAddress;
-        else if (field == "mac" && !macAddress.isEmpty()) parts << "MAC: " + macAddress;
-        else if (field == "social" && !socialHandle.isEmpty()) parts << socialHandle;
-    }
-
-    if (parts.isEmpty()) {
-        return QStringLiteral("Full identity on file - Legal consequences apply");
-    }
-
-    return parts.join(" - ");
-}
-
 // PathType JSON serialization
 QJsonObject PathType::toJson() const {
     QJsonObject obj;

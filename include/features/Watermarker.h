@@ -42,6 +42,13 @@ struct WatermarkConfig {
     double pdfCoverage = 0.5;          // Fraction of pages to watermark (0.0-1.0)
     std::string pdfPassword;           // Optional PDF password
 
+    // Metadata embedding (all file types)
+    bool embedMetadata = false;              // Enable metadata embedding
+    std::string metadataTitle;               // PDF: /Title, Video: title
+    std::string metadataAuthor;              // PDF: /Author, Video: artist
+    std::string metadataComment;             // PDF: /Subject, Video: comment
+    std::string metadataKeywords;            // PDF: /Keywords, Video: description
+
     // Output
     std::string outputSuffix = "_wm";  // Suffix for output filename
     bool overwrite = true;             // Overwrite existing output files
@@ -143,26 +150,6 @@ public:
                                                      const std::string& outputPath = "");
 
     /**
-     * Watermark video with member-specific text
-     * Uses member's watermark fields to build text
-     * @param inputPath Path to input video
-     * @param memberId Member ID to get watermark info from
-     * @param outputDir Output directory (empty = same as input)
-     * @return Result with success status
-     */
-    WatermarkResult watermarkVideoForMember(const std::string& inputPath,
-                                            const std::string& memberId,
-                                            const std::string& outputDir = "",
-                                            const std::string& memberDbPath = "");
-
-    /**
-     * Async version of watermarkVideoForMember
-     */
-    std::future<WatermarkResult> watermarkVideoForMemberAsync(const std::string& inputPath,
-                                                               const std::string& memberId,
-                                                               const std::string& outputDir = "");
-
-    /**
      * Batch watermark multiple videos
      * @param inputPaths List of input video paths
      * @param outputDir Output directory
@@ -184,18 +171,6 @@ public:
      */
     WatermarkResult watermarkPdf(const std::string& inputPath,
                                  const std::string& outputPath = "");
-
-    /**
-     * Watermark PDF with member-specific text
-     * @param inputPath Path to input PDF
-     * @param memberId Member ID to get watermark info from
-     * @param outputDir Output directory (empty = same as input)
-     * @return Result with success status
-     */
-    WatermarkResult watermarkPdfForMember(const std::string& inputPath,
-                                          const std::string& memberId,
-                                          const std::string& outputDir = "",
-                                          const std::string& memberDbPath = "");
 
     /**
      * Batch watermark multiple PDFs

@@ -14,6 +14,7 @@ namespace MegaCustom {
 // Forward declarations
 class Watermarker;
 class MemberDatabase;
+struct Member;
 
 /**
  * Configuration for a distribution job
@@ -31,6 +32,11 @@ struct DistributionConfig {
     // Global watermark text (when mode is Global)
     std::string globalPrimaryText;
     std::string globalSecondaryText;
+
+    // Per-member watermark templates (when mode is PerMember)
+    // Uses template variables: {brand}, {member_id}, {member_name}, {member_email}, etc.
+    std::string primaryTemplate = "{brand} - {member_name} ({member_id})";
+    std::string secondaryTemplate = "{member_email}";
 
     // Temp file handling
     std::string tempDirectory;      // Where to store watermarked files temporarily
@@ -320,6 +326,12 @@ private:
                             const std::string& memberId,
                             std::string& outputPath,
                             std::string& error);
+
+    /**
+     * Expand template variables with member data
+     */
+    std::string expandMemberTemplate(const std::string& tpl,
+                                     const Member& member) const;
 
     /**
      * Upload a file to MEGA folder

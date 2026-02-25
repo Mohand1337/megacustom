@@ -1,7 +1,5 @@
 #include "features/Watermarker.h"
-#include "integrations/MemberDatabase.h"
 #include "core/LogManager.h"
-#include "core/AppConstants.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -502,6 +500,26 @@ std::vector<std::string> Watermarker::buildFFmpegCommand(const std::string& inpu
         cmd.push_back("copy");
     }
 
+    // Embed metadata if configured
+    if (m_config.embedMetadata) {
+        if (!m_config.metadataTitle.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("title=" + m_config.metadataTitle);
+        }
+        if (!m_config.metadataAuthor.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("artist=" + m_config.metadataAuthor);
+        }
+        if (!m_config.metadataComment.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("comment=" + m_config.metadataComment);
+        }
+        if (!m_config.metadataKeywords.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("description=" + m_config.metadataKeywords);
+        }
+    }
+
     cmd.push_back("-movflags");
     cmd.push_back("+faststart");
     cmd.push_back(output);
@@ -771,6 +789,26 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
         cmd.push_back(m_config.pdfPassword);
     }
 
+    // Embed metadata if configured
+    if (m_config.embedMetadata) {
+        if (!m_config.metadataTitle.empty()) {
+            cmd.push_back("--metadata-title");
+            cmd.push_back(m_config.metadataTitle);
+        }
+        if (!m_config.metadataAuthor.empty()) {
+            cmd.push_back("--metadata-author");
+            cmd.push_back(m_config.metadataAuthor);
+        }
+        if (!m_config.metadataComment.empty()) {
+            cmd.push_back("--metadata-subject");
+            cmd.push_back(m_config.metadataComment);
+        }
+        if (!m_config.metadataKeywords.empty()) {
+            cmd.push_back("--metadata-keywords");
+            cmd.push_back(m_config.metadataKeywords);
+        }
+    }
+
     std::string stdout_out, stderr_out;
     int exitCode = runProcess(cmd, stdout_out, stderr_out);
 
@@ -914,40 +952,6 @@ WatermarkResult Watermarker::watermarkVideo(const std::string& inputPath,
     return result;
 }
 
-WatermarkResult Watermarker::watermarkVideoForMember(const std::string& inputPath,
-                                                      const std::string& memberId,
-                                                      const std::string& outputDir,
-                                                      const std::string& memberDbPath) {
-    // Load member info (use provided path to match GUI's MemberRegistry location)
-    MemberDatabase db(memberDbPath);
-    auto memberResult = db.getMember(memberId);
-
-    if (!memberResult.success || !memberResult.member) {
-        WatermarkResult result;
-        result.inputFile = inputPath;
-        result.error = "Member not found: " + memberId;
-        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
-            "member_not_found", result.error);
-        return result;
-    }
-
-    const Member& member = *memberResult.member;
-
-    // Build watermark text from member info using local copy (thread-safe)
-    WatermarkConfig localConfig = m_config;
-    localConfig.primaryText = member.buildWatermarkText(MegaCustom::BRAND_NAME);
-    localConfig.secondaryText = member.buildSecondaryWatermarkText();
-
-    // Build output path: member ID is the differentiator, no _wm suffix needed
-    std::string outPath = buildMemberOutputPath(inputPath, outputDir, memberId);
-
-    WatermarkConfig saved = m_config;
-    m_config = localConfig;
-    auto result = watermarkVideo(inputPath, outPath);
-    m_config = saved;
-    return result;
-}
-
 // Async video watermarking - runs FFmpeg in background thread
 std::future<WatermarkResult> Watermarker::watermarkVideoAsync(
     const std::string& inputPath,
@@ -965,16 +969,6 @@ std::future<WatermarkResult> Watermarker::watermarkVideoAsync(
     });
 }
 
-std::future<WatermarkResult> Watermarker::watermarkVideoForMemberAsync(
-    const std::string& inputPath,
-    const std::string& memberId,
-    const std::string& outputDir) {
-
-    return std::async(std::launch::async, [this, inputPath, memberId, outputDir]() {
-        return this->watermarkVideoForMember(inputPath, memberId, outputDir);
-    });
-}
-
 WatermarkResult Watermarker::watermarkPdf(const std::string& inputPath,
                                            const std::string& outputPath) {
     std::string outPath = outputPath.empty() ?
@@ -984,40 +978,6 @@ WatermarkResult Watermarker::watermarkPdf(const std::string& inputPath,
     auto result = executePdfScript(inputPath, outPath);
     reportProgress(inputPath, 1, 1, 100.0, result.success ? "complete" : "error");
 
-    return result;
-}
-
-WatermarkResult Watermarker::watermarkPdfForMember(const std::string& inputPath,
-                                                    const std::string& memberId,
-                                                    const std::string& outputDir,
-                                                    const std::string& memberDbPath) {
-    // Load member info (use provided path to match GUI's MemberRegistry location)
-    MemberDatabase db(memberDbPath);
-    auto memberResult = db.getMember(memberId);
-
-    if (!memberResult.success || !memberResult.member) {
-        WatermarkResult result;
-        result.inputFile = inputPath;
-        result.error = "Member not found: " + memberId;
-        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
-            "member_not_found", result.error);
-        return result;
-    }
-
-    const Member& member = *memberResult.member;
-
-    // Build watermark text from member info using local copy (thread-safe)
-    WatermarkConfig localConfig = m_config;
-    localConfig.primaryText = member.buildWatermarkText(MegaCustom::BRAND_NAME);
-    localConfig.secondaryText = member.buildSecondaryWatermarkText();
-
-    // Build output path: member ID is the differentiator, no _wm suffix needed
-    std::string outPath = buildMemberOutputPath(inputPath, outputDir, memberId);
-
-    WatermarkConfig saved = m_config;
-    m_config = localConfig;
-    auto result = watermarkPdf(inputPath, outPath);
-    m_config = saved;
     return result;
 }
 

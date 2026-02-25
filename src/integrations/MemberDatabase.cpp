@@ -46,50 +46,6 @@ namespace MegaCustom {
 
 // ==================== Member Methods ====================
 
-std::string Member::buildWatermarkText(const std::string& brandText) const {
-    std::string result;
-
-    if (!brandText.empty()) {
-        result = brandText + " - ";
-    }
-
-    result += "Member #" + id;
-
-    if (!name.empty() &&
-        std::find(watermarkFields.begin(), watermarkFields.end(), "name") != watermarkFields.end()) {
-        result += " (" + name + ")";
-    }
-
-    return result;
-}
-
-std::string Member::buildSecondaryWatermarkText() const {
-    std::vector<std::string> parts;
-
-    for (const auto& field : watermarkFields) {
-        if (field == "email" && !email.empty()) {
-            parts.push_back(email);
-        } else if (field == "ip" && !ipAddress.empty()) {
-            parts.push_back("IP: " + ipAddress);
-        } else if (field == "mac" && !macAddress.empty()) {
-            parts.push_back("MAC: " + macAddress);
-        } else if (field == "social" && !socialHandle.empty()) {
-            parts.push_back(socialHandle);
-        }
-    }
-
-    if (parts.empty()) {
-        return "Full identity on file - Legal consequences apply";
-    }
-
-    std::string result;
-    for (size_t i = 0; i < parts.size(); ++i) {
-        if (i > 0) result += " - ";
-        result += parts[i];
-    }
-    return result;
-}
-
 std::string Member::getDisplayString() const {
     std::string result = id;
     if (!name.empty()) {

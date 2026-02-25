@@ -43,19 +43,6 @@ struct Member {
     int64_t updatedAt = 0;        // Unix timestamp when last updated
 
     /**
-     * Build watermark text based on selected fields
-     * @param brandText Optional brand text to prepend
-     * @return Formatted watermark text
-     */
-    std::string buildWatermarkText(const std::string& brandText = "") const;
-
-    /**
-     * Build secondary watermark line (email, IP, etc.)
-     * @return Formatted secondary text
-     */
-    std::string buildSecondaryWatermarkText() const;
-
-    /**
      * Check if member has a valid MEGA folder binding
      */
     bool hasFolderBinding() const { return !megaFolderPath.empty(); }

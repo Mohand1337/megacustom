@@ -84,10 +84,6 @@ struct MemberInfo {
     qint64 createdAt = 0;
     qint64 updatedAt = 0;
 
-    // Helper: Build watermark text from selected fields
-    QString buildWatermarkText(const QString& brandText = QString()) const;
-    QString buildSecondaryWatermarkText() const;
-
     // Helper: Check if member has distribution folder set
     bool hasDistributionFolder() const { return !distributionFolder.isEmpty(); }
 

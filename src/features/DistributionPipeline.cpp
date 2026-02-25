@@ -3,6 +3,7 @@
 #include "integrations/MemberDatabase.h"
 #include "core/LogManager.h"
 #include "core/PathValidator.h"
+#include "core/AppConstants.h"
 
 #include <iostream>
 #include <fstream>
@@ -342,13 +343,25 @@ bool DistributionPipeline::watermarkForMember(
             result = watermarker.watermarkFile(sourceFile, outputPath);
             break;
 
-        case DistributionConfig::WatermarkMode::PerMember:
-            // Use member-specific watermark
-            result = watermarker.watermarkVideoForMember(sourceFile, memberId, tempDir);
+        case DistributionConfig::WatermarkMode::PerMember: {
+            // Use template expansion for member-specific watermark
+            MemberDatabase db(m_memberDbPath);
+            auto memberResult = db.getMember(memberId);
+            if (memberResult.success && memberResult.member) {
+                const Member& member = *memberResult.member;
+                wmConfig.primaryText = expandMemberTemplate(m_config.primaryTemplate, member);
+                wmConfig.secondaryText = expandMemberTemplate(m_config.secondaryTemplate, member);
+            } else {
+                wmConfig.primaryText = memberId;
+            }
+            watermarker.setConfig(wmConfig);
+            std::string outPath = watermarker.buildMemberOutputPath(sourceFile, tempDir, memberId);
+            result = watermarker.watermarkFile(sourceFile, outPath);
             if (result.success) {
                 outputPath = result.outputFile;
             }
             break;
+        }
     }
 
     if (!result.success) {
@@ -841,6 +854,53 @@ int DistributionPipeline::cleanupTempFiles(const DistributionResult& result) {
     }
 
     return deleted;
+}
+
+// ==================== Template Expansion ====================
+
+static void replaceAllOccurrences(std::string& str, const std::string& from, const std::string& to) {
+    size_t pos = 0;
+    while ((pos = str.find(from, pos)) != std::string::npos) {
+        str.replace(pos, from.length(), to);
+        pos += to.length();
+    }
+}
+
+std::string DistributionPipeline::expandMemberTemplate(
+    const std::string& tpl, const Member& member) const {
+    if (tpl.empty()) return tpl;
+    std::string result = tpl;
+    replaceAllOccurrences(result, "{member_id}", member.id);
+    replaceAllOccurrences(result, "{member_name}", member.name);
+    replaceAllOccurrences(result, "{member}", member.name.empty() ? member.id : member.name);
+    replaceAllOccurrences(result, "{member_email}", member.email);
+    replaceAllOccurrences(result, "{member_ip}", member.ipAddress);
+    replaceAllOccurrences(result, "{member_mac}", member.macAddress);
+    replaceAllOccurrences(result, "{member_social}", member.socialHandle);
+    replaceAllOccurrences(result, "{brand}", MegaCustom::BRAND_NAME);
+
+    // Date/time variables
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &time);
+#else
+    localtime_r(&time, &tm_buf);
+#endif
+    char dateBuf[32], yearBuf[8], monthBuf[16], monthNumBuf[4], tsBuf[32];
+    strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", &tm_buf);
+    strftime(yearBuf, sizeof(yearBuf), "%Y", &tm_buf);
+    strftime(monthBuf, sizeof(monthBuf), "%B", &tm_buf);
+    strftime(monthNumBuf, sizeof(monthNumBuf), "%m", &tm_buf);
+    strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%d %H:%M:%S", &tm_buf);
+    replaceAllOccurrences(result, "{date}", dateBuf);
+    replaceAllOccurrences(result, "{year}", yearBuf);
+    replaceAllOccurrences(result, "{month}", monthBuf);
+    replaceAllOccurrences(result, "{month_num}", monthNumBuf);
+    replaceAllOccurrences(result, "{timestamp}", tsBuf);
+
+    return result;
 }
 
 } // namespace MegaCustom

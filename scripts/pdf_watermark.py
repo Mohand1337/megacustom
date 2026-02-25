@@ -107,7 +107,9 @@ def create_watermark_pdf(text, secondary_text="", width=612, height=792,
 
 def watermark_pdf(input_path, output_path, text, secondary_text="",
                   opacity=0.3, angle=45, color="#d4a760",
-                  coverage=0.5, password=None):
+                  coverage=0.5, password=None,
+                  metadata_title="", metadata_author="",
+                  metadata_subject="", metadata_keywords=""):
     """
     Add watermarks to a PDF file.
 
@@ -172,6 +174,20 @@ def watermark_pdf(input_path, output_path, text, secondary_text="",
 
             writer.add_page(page)
 
+        # Embed metadata if any fields are provided
+        meta_fields = {}
+        if metadata_title:
+            meta_fields['/Title'] = metadata_title
+        if metadata_author:
+            meta_fields['/Author'] = metadata_author
+        if metadata_subject:
+            meta_fields['/Subject'] = metadata_subject
+        if metadata_keywords:
+            meta_fields['/Keywords'] = metadata_keywords
+        if meta_fields:
+            writer.add_metadata(meta_fields)
+            print(f"Embedded metadata: {', '.join(k for k in meta_fields)}")
+
         # Add password protection if specified
         if password:
             writer.encrypt(password)
@@ -219,6 +235,14 @@ Examples:
                         help='Fraction of pages to watermark 0.0-1.0 (default: 0.5)')
     parser.add_argument('--password', '-p', default=None,
                         help='Password to encrypt output PDF (optional)')
+    parser.add_argument('--metadata-title', default='',
+                        help='Set PDF /Title metadata field')
+    parser.add_argument('--metadata-author', default='',
+                        help='Set PDF /Author metadata field')
+    parser.add_argument('--metadata-subject', default='',
+                        help='Set PDF /Subject metadata field')
+    parser.add_argument('--metadata-keywords', default='',
+                        help='Set PDF /Keywords metadata field')
 
     args = parser.parse_args()
 
@@ -252,7 +276,11 @@ Examples:
         angle=args.angle,
         color=args.color,
         coverage=args.coverage,
-        password=args.password
+        password=args.password,
+        metadata_title=args.metadata_title,
+        metadata_author=args.metadata_author,
+        metadata_subject=args.metadata_subject,
+        metadata_keywords=args.metadata_keywords
     )
 
     sys.exit(0 if success else 1)
