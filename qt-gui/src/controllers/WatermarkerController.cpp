@@ -1,5 +1,7 @@
 #include "WatermarkerController.h"
 #include "features/Watermarker.h"
+#include "utils/TemplateExpander.h"
+#include "utils/MemberRegistry.h"
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
@@ -114,21 +116,27 @@ void WatermarkerWorker::process() {
         WatermarkResult result;
 
         if (!m_memberId.isEmpty()) {
-            // Member-specific watermarking
+            // Expand templates per-member using MemberRegistry (single source of truth)
+            MemberInfo memberInfo = MemberRegistry::instance()->getMember(m_memberId);
+            TemplateExpander::Variables vars = TemplateExpander::Variables::fromMember(memberInfo);
+
+            WatermarkConfig localConfig = toNativeConfig(m_config);
+            localConfig.primaryText = TemplateExpander::expand(
+                m_config.primaryText, vars).toStdString();
+            localConfig.secondaryText = TemplateExpander::expand(
+                m_config.secondaryText, vars).toStdString();
+            m_watermarker->setConfig(localConfig);
+
+            std::string outPath = m_watermarker->buildMemberOutputPath(
+                file.toStdString(), m_outputDir.toStdString(), m_memberId.toStdString());
+
             if (Watermarker::isVideoFile(file.toStdString())) {
-                result = m_watermarker->watermarkVideoForMember(
-                    file.toStdString(),
-                    m_memberId.toStdString(),
-                    m_outputDir.toStdString());
+                result = m_watermarker->watermarkVideo(file.toStdString(), outPath);
             } else if (Watermarker::isPdfFile(file.toStdString())) {
-                result = m_watermarker->watermarkPdfForMember(
-                    file.toStdString(),
-                    m_memberId.toStdString(),
-                    m_outputDir.toStdString());
+                result = m_watermarker->watermarkPdf(file.toStdString(), outPath);
             } else {
                 result = m_watermarker->watermarkFile(
-                    file.toStdString(),
-                    m_outputDir.toStdString());
+                    file.toStdString(), m_outputDir.toStdString());
             }
         } else {
             // Global watermarking (no member)

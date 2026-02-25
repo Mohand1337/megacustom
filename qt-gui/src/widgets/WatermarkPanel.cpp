@@ -1,6 +1,7 @@
 #include "WatermarkPanel.h"
 #include "utils/MemberRegistry.h"
 #include "utils/TemplateExpander.h"
+#include "utils/Constants.h"
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
 #include "dialogs/WatermarkSettingsDialog.h"
@@ -52,12 +53,26 @@ void WatermarkWorker::setMemberIds(const QStringList& memberIds) {
     m_memberIds = memberIds;
 }
 
-void WatermarkWorker::setMemberDbPath(const QString& path) {
-    m_memberDbPath = path;
+void WatermarkWorker::setRawTemplates(const QString& primary, const QString& secondary) {
+    m_rawPrimaryTemplate = primary;
+    m_rawSecondaryTemplate = secondary;
 }
 
 void WatermarkWorker::cancel() {
     m_cancelled = true;
+}
+
+// Helper: expand templates for a member and apply to watermarker config
+static void applyMemberTemplates(Watermarker& watermarker, const WatermarkConfig& baseConfig,
+                                  const QString& memberId, const QString& primaryTpl,
+                                  const QString& secondaryTpl) {
+    MemberInfo memberInfo = MemberRegistry::instance()->getMember(memberId);
+    TemplateExpander::Variables vars = TemplateExpander::Variables::fromMember(memberInfo);
+
+    WatermarkConfig localConfig = baseConfig;
+    localConfig.primaryText = TemplateExpander::expand(primaryTpl, vars).toStdString();
+    localConfig.secondaryText = TemplateExpander::expand(secondaryTpl, vars).toStdString();
+    watermarker.setConfig(localConfig);
 }
 
 void WatermarkWorker::process() {
@@ -68,15 +83,19 @@ void WatermarkWorker::process() {
     int failCount = 0;
 
     Watermarker watermarker;
+    WatermarkConfig baseConfig;
     if (m_config) {
-        watermarker.setConfig(*m_config);
+        baseConfig = *m_config;
+        watermarker.setConfig(baseConfig);
     }
+
+    std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
 
     // All-members mode: iterate files x members
     if (!m_memberIds.isEmpty()) {
         int total = m_files.size() * m_memberIds.size();
         int idx = 0;
-        QMap<QString, QStringList> memberFileMap;  // Track member -> output files
+        QMap<QString, QStringList> memberFileMap;
 
         watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
             emit this->progress(progress.currentIndex, total,
@@ -87,19 +106,23 @@ void WatermarkWorker::process() {
         for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
             QString inputPath = m_files[i];
             std::string inputStd = inputPath.toStdString();
-            std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
 
             for (int j = 0; j < m_memberIds.size() && !m_cancelled; ++j) {
                 QString memberId = m_memberIds[j];
                 QString label = QString("%1 [%2]").arg(QFileInfo(inputPath).fileName()).arg(memberId);
                 emit progress(idx, total, label, 0);
 
+                // Expand templates with this member's data (Qt layer — single source of truth)
+                applyMemberTemplates(watermarker, baseConfig, memberId,
+                                     m_rawPrimaryTemplate, m_rawSecondaryTemplate);
+
+                // Build member output path and watermark directly
+                std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, memberId.toStdString());
                 WatermarkResult result;
-                std::string dbPath = m_memberDbPath.toStdString();
                 if (Watermarker::isVideoFile(inputStd)) {
-                    result = watermarker.watermarkVideoForMember(inputStd, memberId.toStdString(), outputDir, dbPath);
+                    result = watermarker.watermarkVideo(inputStd, outPath);
                 } else if (Watermarker::isPdfFile(inputStd)) {
-                    result = watermarker.watermarkPdfForMember(inputStd, memberId.toStdString(), outputDir, dbPath);
+                    result = watermarker.watermarkPdf(inputStd, outPath);
                 } else {
                     result.success = false;
                     result.error = "Unsupported file type";
@@ -127,7 +150,6 @@ void WatermarkWorker::process() {
     // Single-member or global mode
     int total = m_files.size();
 
-    // Set progress callback
     watermarker.setProgressCallback([this, total](const WatermarkProgress& progress) {
         emit this->progress(progress.currentIndex, total,
                            QString::fromStdString(progress.currentFile),
@@ -140,21 +162,23 @@ void WatermarkWorker::process() {
 
         WatermarkResult result;
         std::string inputStd = inputPath.toStdString();
-        std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
 
         if (!m_memberId.isEmpty()) {
-            // Per-member watermarking
-            std::string dbPath = m_memberDbPath.toStdString();
+            // Single-member: expand templates with member data
+            applyMemberTemplates(watermarker, baseConfig, m_memberId,
+                                 m_rawPrimaryTemplate, m_rawSecondaryTemplate);
+
+            std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, m_memberId.toStdString());
             if (Watermarker::isVideoFile(inputStd)) {
-                result = watermarker.watermarkVideoForMember(inputStd, m_memberId.toStdString(), outputDir, dbPath);
+                result = watermarker.watermarkVideo(inputStd, outPath);
             } else if (Watermarker::isPdfFile(inputStd)) {
-                result = watermarker.watermarkPdfForMember(inputStd, m_memberId.toStdString(), outputDir, dbPath);
+                result = watermarker.watermarkPdf(inputStd, outPath);
             } else {
                 result.success = false;
                 result.error = "Unsupported file type";
             }
         } else {
-            // Global watermarking
+            // Global mode: text already expanded in config
             std::string outputPath = "";
             if (!outputDir.empty()) {
                 outputPath = watermarker.generateOutputPath(inputStd, outputDir);
@@ -445,15 +469,15 @@ void WatermarkPanel::setupUI() {
     QLabel* primaryLabel = new QLabel("Primary Text:");
     textGrid->addWidget(primaryLabel, 0, 0);
     m_primaryTextEdit = new QLineEdit();
-    m_primaryTextEdit->setPlaceholderText("e.g., {member_name} - {date} or custom text");
-    m_primaryTextEdit->setToolTip("Use template variables like {member_name}, {date}, {timestamp}. Click ? for help.");
+    m_primaryTextEdit->setPlaceholderText("e.g., {brand} - {member_name} ({member_id})");
+    m_primaryTextEdit->setToolTip("Template variables: {brand}, {member_name}, {member_id}, {member_email}, {member_ip}, {member_mac}, {member_social}, {date}, {timestamp}");
     textGrid->addWidget(m_primaryTextEdit, 0, 1);
 
     QLabel* secondaryLabel = new QLabel("Secondary Text:");
     textGrid->addWidget(secondaryLabel, 1, 0);
     m_secondaryTextEdit = new QLineEdit();
-    m_secondaryTextEdit->setPlaceholderText("e.g., {member_id} - {timestamp}");
-    m_secondaryTextEdit->setToolTip("Use template variables like {member_id}, {month}, {year}. Click ? for help.");
+    m_secondaryTextEdit->setPlaceholderText("e.g., {member_email} - IP: {member_ip}");
+    m_secondaryTextEdit->setToolTip("Template variables: {brand}, {member_name}, {member_id}, {member_email}, {member_ip}, {member_mac}, {member_social}, {date}, {timestamp}");
     textGrid->addWidget(m_secondaryTextEdit, 1, 1);
 
     // Help button for template variables
@@ -899,6 +923,45 @@ void WatermarkPanel::onStartWatermark() {
                 "Please select at least one member or group.");
             return;
         }
+        if (m_primaryTextEdit->text().isEmpty()) {
+            QMessageBox::warning(this, "Missing Text",
+                "Please enter primary watermark text.\n\n"
+                "Use template variables like {brand}, {member_name}, {member_id} "
+                "to personalize the watermark per member.");
+            return;
+        }
+
+        // Check for members missing fields that are used in the template
+        QString combined = m_primaryTextEdit->text() + " " + m_secondaryTextEdit->text();
+        QStringList missingWarnings;
+        for (const QString& memberId : selectedIds) {
+            MemberInfo member = m_registry->getMember(memberId);
+            QStringList emptyFields;
+            if (combined.contains("{member_email}") && member.email.isEmpty())
+                emptyFields << "email";
+            if (combined.contains("{member_ip}") && member.ipAddress.isEmpty())
+                emptyFields << "IP";
+            if (combined.contains("{member_mac}") && member.macAddress.isEmpty())
+                emptyFields << "MAC";
+            if (combined.contains("{member_social}") && member.socialHandle.isEmpty())
+                emptyFields << "social";
+            if (combined.contains("{member_name}") && member.displayName.isEmpty())
+                emptyFields << "name";
+            if (!emptyFields.isEmpty()) {
+                missingWarnings << QString("%1: missing %2")
+                    .arg(member.id.isEmpty() ? memberId : member.id)
+                    .arg(emptyFields.join(", "));
+            }
+        }
+        if (!missingWarnings.isEmpty()) {
+            QString msg = QString("The following members are missing fields used in your watermark template:\n\n%1\n\n"
+                "These fields will appear blank in their watermarks. Continue anyway?")
+                .arg(missingWarnings.join("\n"));
+            if (QMessageBox::warning(this, "Missing Member Fields", msg,
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+                return;
+            }
+        }
     }
 
     // Collect file paths
@@ -947,7 +1010,7 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setConfig(config);
     m_worker->setMemberId(memberId);
     m_worker->setMemberIds(allMemberIds);
-    m_worker->setMemberDbPath(m_registry->configPath());
+    m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
 
     connect(m_workerThread, &QThread::started, m_worker, &WatermarkWorker::process);
     connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);
@@ -1040,8 +1103,12 @@ void WatermarkPanel::onModeChanged(int index) {
     Q_UNUSED(index);
     bool isGlobal = m_modeCombo->currentData().toString() == "global";
     m_memberWidget->setVisible(!isGlobal);
-    m_primaryTextEdit->setEnabled(isGlobal);
-    m_secondaryTextEdit->setEnabled(isGlobal);
+
+    // Text fields are always editable — they accept template variables in both modes
+    // Pre-fill with a sensible default when switching to member mode with empty fields
+    if (!isGlobal && m_primaryTextEdit->text().isEmpty()) {
+        m_primaryTextEdit->setText("{brand} - {member_name} ({member_id})");
+    }
 }
 
 void WatermarkPanel::onMemberSelectionChanged() {
@@ -1315,8 +1382,8 @@ void WatermarkPanel::updateButtonStates() {
     m_deselectAllMembersBtn->setEnabled(!m_isRunning);
     m_groupQuickSelectCombo->setEnabled(!m_isRunning);
     m_memberSearchEdit->setEnabled(!m_isRunning);
-    m_primaryTextEdit->setEnabled(!m_isRunning && m_modeCombo->currentData().toString() == "global");
-    m_secondaryTextEdit->setEnabled(!m_isRunning && m_modeCombo->currentData().toString() == "global");
+    m_primaryTextEdit->setEnabled(!m_isRunning);
+    m_secondaryTextEdit->setEnabled(!m_isRunning);
     m_presetCombo->setEnabled(!m_isRunning);
     m_crfSpin->setEnabled(!m_isRunning);
     m_intervalSpin->setEnabled(!m_isRunning);
@@ -1326,34 +1393,25 @@ void WatermarkPanel::updateButtonStates() {
 WatermarkConfig WatermarkPanel::buildConfig() const {
     WatermarkConfig config;
 
-    // Get raw text from UI
     QString primaryText = m_primaryTextEdit->text();
     QString secondaryText = m_secondaryTextEdit->text();
 
-    // Expand template variables if present
-    if (TemplateExpander::hasVariables(primaryText) || TemplateExpander::hasVariables(secondaryText)) {
-        TemplateExpander::Variables vars;
-
-        // Check if per-member mode with a single selected member
-        QStringList selectedIds = getSelectedMemberIds();
-        if (m_modeCombo->currentData().toString() == "member" && selectedIds.size() == 1) {
-            MemberInfo member = m_registry->getMember(selectedIds.first());
-            if (!member.id.isEmpty()) {
-                vars = TemplateExpander::Variables::fromMember(member);
-            } else {
-                vars = TemplateExpander::Variables::withCurrentDateTime();
-            }
-        } else {
-            // Global mode or multi-member — worker expands per-member during processing
-            vars = TemplateExpander::Variables::withCurrentDateTime();
+    if (m_modeCombo->currentData().toString() == "global") {
+        // Global mode: expand templates now (no per-member expansion needed)
+        if (TemplateExpander::hasVariables(primaryText) || TemplateExpander::hasVariables(secondaryText)) {
+            auto vars = TemplateExpander::Variables::withCurrentDateTime();
+            vars.brand = QString::fromUtf8(MegaCustom::Constants::BRAND_NAME);
+            primaryText = TemplateExpander::expand(primaryText, vars);
+            secondaryText = TemplateExpander::expand(secondaryText, vars);
         }
-
-        primaryText = TemplateExpander::expand(primaryText, vars);
-        secondaryText = TemplateExpander::expand(secondaryText, vars);
+        config.primaryText = primaryText.toStdString();
+        config.secondaryText = secondaryText.toStdString();
+    } else {
+        // Member mode: store raw text — worker expands per-member with TemplateExpander
+        config.primaryText = primaryText.toStdString();
+        config.secondaryText = secondaryText.toStdString();
     }
 
-    config.primaryText = primaryText.toStdString();
-    config.secondaryText = secondaryText.toStdString();
     config.preset = m_presetCombo->currentText().toStdString();
     config.crf = m_crfSpin->value();
     config.intervalSeconds = m_intervalSpin->value();
@@ -1398,9 +1456,16 @@ void WatermarkPanel::onWatermarkHelpClicked() {
 <h3>Watermark Template Variables</h3>
 <p>Use these placeholders in your watermark text:</p>
 <table style="margin-left: 10px;">
+<tr><td><b>{brand}</b></td><td>Brand name (Easygroupbuys.com)</td></tr>
+<tr><td colspan="2"><b>— Member Variables —</b></td></tr>
 <tr><td><b>{member}</b></td><td>Member's distribution folder path</td></tr>
 <tr><td><b>{member_id}</b></td><td>Member's unique ID</td></tr>
 <tr><td><b>{member_name}</b></td><td>Member's display name</td></tr>
+<tr><td><b>{member_email}</b></td><td>Member's email address</td></tr>
+<tr><td><b>{member_ip}</b></td><td>Member's IP address</td></tr>
+<tr><td><b>{member_mac}</b></td><td>Member's MAC address</td></tr>
+<tr><td><b>{member_social}</b></td><td>Member's social media handle</td></tr>
+<tr><td colspan="2"><b>— Date/Time Variables —</b></td></tr>
 <tr><td><b>{month}</b></td><td>Current month name (e.g., December)</td></tr>
 <tr><td><b>{month_num}</b></td><td>Current month number (01-12)</td></tr>
 <tr><td><b>{year}</b></td><td>Current year (e.g., 2025)</td></tr>
@@ -1409,12 +1474,11 @@ void WatermarkPanel::onWatermarkHelpClicked() {
 </table>
 <br>
 <p><b>Examples:</b></p>
-<p><i>Primary:</i> <code>EasyGroupBuys - {member_name}</code></p>
-<p><i>Secondary:</i> <code>{member_id} - {date}</code></p>
+<p><i>Primary:</i> <code>{brand} - {member_name} ({member_id})</code></p>
+<p><i>Secondary:</i> <code>{member_email} - {date}</code></p>
 <br>
-<p><b>Note:</b> Member variables ({member}, {member_id}, {member_name}) are only
-expanded in Per-Member mode with a selected member. In Global mode, only date/time
-variables are expanded.</p>
+<p><b>Note:</b> In Per-Member mode, all member variables are expanded per-member.
+{brand} and date/time variables work in both Global and Per-Member modes.</p>
 )";
 
     QMessageBox msgBox(this);

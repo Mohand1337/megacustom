@@ -1,4 +1,5 @@
 #include "TemplateExpander.h"
+#include "Constants.h"
 #include <QRegularExpression>
 #include <QLocale>
 
@@ -8,9 +9,14 @@ namespace MegaCustom {
 
 TemplateExpander::Variables TemplateExpander::Variables::fromMember(const MemberInfo& member) {
     Variables vars = withCurrentDateTime();
+    vars.brand = QString::fromUtf8(MegaCustom::Constants::BRAND_NAME);
     vars.member = member.distributionFolder;
     vars.memberId = member.id;
     vars.memberName = member.displayName;
+    vars.memberEmail = member.email;
+    vars.memberIp = member.ipAddress;
+    vars.memberMac = member.macAddress;
+    vars.memberSocial = member.socialHandle;
     return vars;
 }
 
@@ -32,10 +38,17 @@ TemplateExpander::Variables TemplateExpander::Variables::withCurrentDateTime() {
 QString TemplateExpander::expand(const QString& templatePath, const Variables& vars) {
     QString result = templatePath;
 
-    // Member variables
-    result.replace("{member}", vars.member);
-    result.replace("{member_id}", vars.memberId);
+    // Brand
+    result.replace("{brand}", vars.brand);
+
+    // Member variables (longest first to avoid partial matches)
+    result.replace("{member_social}", vars.memberSocial);
+    result.replace("{member_email}", vars.memberEmail);
     result.replace("{member_name}", vars.memberName);
+    result.replace("{member_mac}", vars.memberMac);
+    result.replace("{member_ip}", vars.memberIp);
+    result.replace("{member_id}", vars.memberId);
+    result.replace("{member}", vars.member);
 
     // Date/time variables
     result.replace("{month}", vars.month);
@@ -93,9 +106,14 @@ QList<TemplateExpander::ExpansionResult> TemplateExpander::expandForMembers(
 
 QStringList TemplateExpander::getAvailableVariables() {
     return {
+        "brand",
         "member",
         "member_id",
         "member_name",
+        "member_email",
+        "member_ip",
+        "member_mac",
+        "member_social",
         "month",
         "month_num",
         "year",
@@ -106,9 +124,14 @@ QStringList TemplateExpander::getAvailableVariables() {
 
 QMap<QString, QString> TemplateExpander::getVariableDescriptions() {
     QMap<QString, QString> descriptions;
+    descriptions["brand"] = "Brand name (e.g., Easygroupbuys.com)";
     descriptions["member"] = "Member's distribution folder path";
     descriptions["member_id"] = "Member's unique ID";
     descriptions["member_name"] = "Member's display name";
+    descriptions["member_email"] = "Member's email address";
+    descriptions["member_ip"] = "Member's IP address";
+    descriptions["member_mac"] = "Member's MAC address";
+    descriptions["member_social"] = "Member's social media handle";
     descriptions["month"] = "Current month name (e.g., December)";
     descriptions["month_num"] = "Current month number (01-12)";
     descriptions["year"] = "Current year (e.g., 2025)";
@@ -127,7 +150,11 @@ bool TemplateExpander::hasVariables(const QString& templatePath) {
 bool TemplateExpander::hasMemberVariables(const QString& templatePath) {
     return templatePath.contains("{member}") ||
            templatePath.contains("{member_id}") ||
-           templatePath.contains("{member_name}");
+           templatePath.contains("{member_name}") ||
+           templatePath.contains("{member_email}") ||
+           templatePath.contains("{member_ip}") ||
+           templatePath.contains("{member_mac}") ||
+           templatePath.contains("{member_social}");
 }
 
 bool TemplateExpander::validateTemplate(const QString& templatePath, QString* error) {

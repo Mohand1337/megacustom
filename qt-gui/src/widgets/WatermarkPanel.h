@@ -53,7 +53,7 @@ public:
     void setConfig(const WatermarkConfig& config);
     void setMemberId(const QString& memberId);
     void setMemberIds(const QStringList& memberIds);
-    void setMemberDbPath(const QString& path);
+    void setRawTemplates(const QString& primary, const QString& secondary);
 
 public slots:
     void process();
@@ -72,7 +72,8 @@ private:
     QString m_outputDir;
     QString m_memberId;
     QStringList m_memberIds;
-    QString m_memberDbPath;
+    QString m_rawPrimaryTemplate;
+    QString m_rawSecondaryTemplate;
     std::shared_ptr<WatermarkConfig> m_config;
     std::atomic<bool> m_cancelled{false};
 };

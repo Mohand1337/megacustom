@@ -13,9 +13,14 @@ namespace MegaCustom {
  * TemplateExpander - Utility class for expanding path templates with variables
  *
  * Supported variables:
+ *   {brand}        - Brand name (e.g., "Easygroupbuys.com")
  *   {member}       - Member's distribution folder path
  *   {member_id}    - Member's ID
  *   {member_name}  - Member's display name
+ *   {member_email} - Member's email address
+ *   {member_ip}    - Member's IP address
+ *   {member_mac}   - Member's MAC address
+ *   {member_social}- Member's social handle
  *   {month}        - Current month name (e.g., "December")
  *   {month_num}    - Current month number (e.g., "12")
  *   {year}         - Current year (e.g., "2025")
@@ -33,9 +38,14 @@ public:
      * Variables for template expansion
      */
     struct Variables {
+        QString brand;           // Brand name
         QString member;          // Distribution folder path
         QString memberId;        // Member ID
         QString memberName;      // Display name
+        QString memberEmail;     // Email address
+        QString memberIp;        // IP address
+        QString memberMac;       // MAC address
+        QString memberSocial;    // Social handle
         QString month;           // Month name
         QString monthNum;        // Month number (01-12)
         QString year;            // Year
