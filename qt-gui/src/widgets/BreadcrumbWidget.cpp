@@ -65,6 +65,9 @@ void BreadcrumbWidget::clearSegments()
 
 void BreadcrumbWidget::rebuildBreadcrumb()
 {
+    // Suppress layout recalculations during rebuild — multiple insertWidget() calls
+    // cascade up through the QSplitter and cause X11/WSL to unmaximize the window
+    setUpdatesEnabled(false);
     clearSegments();
 
     // Always show root
@@ -109,6 +112,7 @@ void BreadcrumbWidget::rebuildBreadcrumb()
         lastBtn->setObjectName("BreadcrumbCurrent");
         lastBtn->setEnabled(false);  // Can't click current location
     }
+    setUpdatesEnabled(true);
 }
 
 QPushButton* BreadcrumbWidget::createSegmentButton(const QString& text, const QString& fullPath)

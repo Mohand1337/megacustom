@@ -765,6 +765,9 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     }
     result.inputSizeBytes = st.st_size;
 
+    // Log resolved script path for debugging
+    fprintf(stderr, "PDF watermark script: %s\n", scriptPath.c_str());
+
     // Build command using resolved Python path
     std::string pythonPath = getPythonPath();
     std::vector<std::string> cmd = {

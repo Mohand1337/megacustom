@@ -2137,7 +2137,7 @@ void DistributionPanel::onImportDestinations() {
         WmFolderInfo info;
         info.folderName = "(imported)";
         info.memberId = memberId;
-        info.fullPath = "";
+        info.fullPath = m_wmPathEdit->text();
         info.matchType = memberId.isEmpty() ? "none" : "import";
         info.matched = !memberId.isEmpty();
         info.selected = true;
@@ -2239,6 +2239,7 @@ void DistributionPanel::onAddRow() {
     // Track in wmFolders
     WmFolderInfo info;
     info.folderName = "(manual)";
+    info.fullPath = m_wmPathEdit->text();
     info.matchType = "manual";
     info.selected = true;
     m_wmFolders.append(info);
@@ -2378,7 +2379,7 @@ void DistributionPanel::onPasteDestinations() {
         WmFolderInfo info;
         info.folderName = "(pasted)";
         info.memberId = memberId;
-        info.fullPath = "";
+        info.fullPath = m_wmPathEdit->text();
         info.matchType = memberId.isEmpty() ? "none" : "paste";
         info.matched = !memberId.isEmpty();
         info.selected = true;

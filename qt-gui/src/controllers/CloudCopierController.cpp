@@ -90,8 +90,12 @@ CloudCopierController::CloudCopierController(void* megaApi, QObject* parent)
                 emit taskStatusChanged(m_tasks[i].taskId, status);
             }
 
+            qDebug() << "CloudCopier: Source" << (sourceIdx + 1) << "/" << m_totalTasksStarted
+                     << "completed -" << successCopies << "OK," << failedCopies << "failed," << skippedCopies << "skipped";
+
             if (allDone) {
                 m_isCopying = false;
+                qDebug() << "CloudCopier: ALL DONE -" << totalSuccess << "OK," << totalFail << "failed," << totalSkip << "skipped";
                 emit copyCompleted(totalSuccess, totalFail, totalSkip);
             }
         }, Qt::QueuedConnection);

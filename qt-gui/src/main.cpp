@@ -154,6 +154,9 @@ static void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, 
 
     MegaCustom::LogManager::instance().log(level, MegaCustom::LogCategory::System,
                                             action, msg.toStdString(), details);
+
+    // Also echo to stderr so debug output appears in the terminal
+    fprintf(stderr, "%s\n", msg.toUtf8().constData());
 }
 
 /**

@@ -111,18 +111,18 @@ void WatermarkWorker::process() {
 
     std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
 
-    // All-members mode: iterate files x members
+    // All-members mode: iterate members x files (finish all files for one member before next)
     if (!m_memberIds.isEmpty()) {
         int total = m_files.size() * m_memberIds.size();
         int idx = 0;
         QMap<QString, QStringList> memberFileMap;
 
-        for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
-            QString inputPath = m_files[i];
-            std::string inputStd = inputPath.toStdString();
+        for (int j = 0; j < m_memberIds.size() && !m_cancelled; ++j) {
+            QString memberId = m_memberIds[j];
 
-            for (int j = 0; j < m_memberIds.size() && !m_cancelled; ++j) {
-                QString memberId = m_memberIds[j];
+            for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
+                QString inputPath = m_files[i];
+                std::string inputStd = inputPath.toStdString();
                 QString label = QString("%1 [%2]").arg(QFileInfo(inputPath).fileName()).arg(memberId);
                 emit progress(idx, total, label, 0);
 

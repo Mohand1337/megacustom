@@ -1378,11 +1378,11 @@ void MainWindow::onNavigationItemClicked(int item)
         m_contentStack->setCurrentIndex(stackIndex);
     }
 
-    // Show/hide toolbar container based on context - only show for Cloud Drive
-    // Toggle the container (not the child) to prevent layout recalculation artifacts
+    // Show/hide toolbar by toggling height instead of visibility — setVisible() inside
+    // a QSplitter triggers a geometry recalculation that causes X11/WSL to unmaximize the window
     if (m_toolbarContainer) {
         bool isCloudDrive = (item == static_cast<int>(MegaSidebar::NavigationItem::CloudDrive));
-        m_toolbarContainer->setVisible(isCloudDrive);
+        m_toolbarContainer->setFixedHeight(isCloudDrive ? DpiScaler::scale(48) : 0);
     }
 
     qDebug() << "Navigation item clicked:" << item;
@@ -1459,7 +1459,7 @@ void MainWindow::onSettings()
         m_contentStack->setCurrentIndex(static_cast<int>(MegaSidebar::NavigationItem::Settings));
     }
     if (m_toolbarContainer) {
-        m_toolbarContainer->setVisible(false);
+        m_toolbarContainer->setFixedHeight(0);
     }
 }
 
@@ -1473,7 +1473,7 @@ void MainWindow::onAdvancedSearch()
         m_contentStack->setCurrentWidget(m_advancedSearchPanel);
     }
     if (m_toolbarContainer) {
-        m_toolbarContainer->setVisible(false);
+        m_toolbarContainer->setFixedHeight(0);
     }
 }
 
@@ -1974,7 +1974,7 @@ void MainWindow::onShowTransferLog()
         m_crossAccountLogPanel->refresh();
     }
     if (m_toolbarContainer) {
-        m_toolbarContainer->setVisible(false);
+        m_toolbarContainer->setFixedHeight(0);
     }
 }
 
