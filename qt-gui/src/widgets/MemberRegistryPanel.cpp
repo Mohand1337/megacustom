@@ -1,6 +1,7 @@
 #include "MemberRegistryPanel.h"
 #include "utils/MemberRegistry.h"
 #include "controllers/FileController.h"
+#include "utils/CopyHelper.h"
 #include "dialogs/RemoteFolderBrowserDialog.h"
 #include "dialogs/WordPressConfigDialog.h"
 #include <QVBoxLayout>
@@ -9,6 +10,9 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <QFormLayout>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -23,6 +27,8 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QMenu>
+#include <QApplication>
+#include <QClipboard>
 
 namespace MegaCustom {
 
@@ -180,6 +186,21 @@ void MemberRegistryPanel::setupUI() {
         if (memberId.isEmpty()) return;
 
         QMenu menu(this);
+
+        // Copy actions
+        QTableWidgetItem* clickedItem = m_memberTable->itemAt(pos);
+        if (clickedItem) {
+            QAction* copyCellAction = menu.addAction("Copy Cell");
+            connect(copyCellAction, &QAction::triggered, this, [this, clickedItem]() {
+                QApplication::clipboard()->setText(clickedItem->text());
+            });
+            QAction* copyRowAction = menu.addAction("Copy Row");
+            connect(copyRowAction, &QAction::triggered, this, [this, clickedItem]() {
+                CopyHelper::copyRow(m_memberTable, clickedItem->row());
+            });
+            menu.addSeparator();
+        }
+
         menu.addAction("Edit", this, &MemberRegistryPanel::onEditMember);
         menu.addAction("Bind Folder...", this, &MemberRegistryPanel::onBindFolder);
         menu.addAction("Unbind Folder", this, &MemberRegistryPanel::onUnbindFolder);
@@ -302,65 +323,99 @@ void MemberRegistryPanel::setupUI() {
     QVBoxLayout* templateMainLayout = new QVBoxLayout(templateTab);
     templateMainLayout->setContentsMargins(8, 8, 8, 8);
 
-    QLabel* templateDescLabel = new QLabel("Configure default path types for new members. Enable/disable path types to customize which paths are available.");
+    QLabel* templateDescLabel = new QLabel("Configure default path types for new members. "
+        "Enable/disable path types, edit defaults, or add custom path types.");
     templateDescLabel->setObjectName("PanelSubtitle");
     templateDescLabel->setWordWrap(true);
     templateMainLayout->addWidget(templateDescLabel);
 
-    // Path types grid with checkboxes and edit fields
+    // Path types grid — will be rebuilt by rebuildPathTypesGrid()
     m_pathTypesWidget = new QWidget();
-    QGridLayout* pathTypesGrid = new QGridLayout(m_pathTypesWidget);
-    pathTypesGrid->setSpacing(8);
-
-    // Headers
-    QLabel* enabledHeader = new QLabel("Enabled");
-    enabledHeader->setObjectName("SectionHeader");
-    QLabel* typeHeader = new QLabel("Path Type");
-    typeHeader->setObjectName("SectionHeader");
-    QLabel* defaultHeader = new QLabel("Default Value");
-    defaultHeader->setObjectName("SectionHeader");
-
-    pathTypesGrid->addWidget(enabledHeader, 0, 0);
-    pathTypesGrid->addWidget(typeHeader, 0, 1);
-    pathTypesGrid->addWidget(defaultHeader, 0, 2);
-
-    // Create rows for each path type
-    MemberTemplate tmpl = m_registry->getTemplate();
-
-    int row = 1;
-    for (const PathType& pt : tmpl.pathTypes) {
-        QCheckBox* enableCheck = new QCheckBox();
-        enableCheck->setChecked(pt.enabled);
-        enableCheck->setProperty("pathKey", pt.key);
-        pathTypesGrid->addWidget(enableCheck, row, 0, Qt::AlignCenter);
-
-        QLabel* typeLabel = new QLabel(pt.label);
-        typeLabel->setToolTip(pt.description);
-        pathTypesGrid->addWidget(typeLabel, row, 1);
-
-        QLineEdit* valueEdit = new QLineEdit(pt.defaultValue);
-        valueEdit->setProperty("pathKey", pt.key);
-        valueEdit->setEnabled(pt.enabled);
-        pathTypesGrid->addWidget(valueEdit, row, 2);
-
-        // Connect checkbox to enable/disable field
-        connect(enableCheck, &QCheckBox::toggled, valueEdit, &QLineEdit::setEnabled);
-
-        m_pathTypeChecks[pt.key] = enableCheck;
-        m_pathTypeEdits[pt.key] = valueEdit;
-
-        row++;
-    }
-
-    pathTypesGrid->setColumnStretch(2, 1);
     templateMainLayout->addWidget(m_pathTypesWidget);
+    rebuildPathTypesGrid();
 
-    // Save Template button
+    // Add Path Type + Save Template buttons
     QHBoxLayout* templateBtnLayout = new QHBoxLayout();
+    QPushButton* addPathTypeBtn = new QPushButton("Add Path Type");
+    addPathTypeBtn->setIcon(QIcon(":/icons/plus.svg"));
+    addPathTypeBtn->setToolTip("Add a custom path type");
+    connect(addPathTypeBtn, &QPushButton::clicked, this, [this]() {
+        // Dialog to add custom path type
+        QDialog dialog(this);
+        dialog.setWindowTitle("Add Path Type");
+        dialog.setMinimumWidth(400);
+        QVBoxLayout* dlgLayout = new QVBoxLayout(&dialog);
+
+        QGridLayout* formLayout = new QGridLayout();
+        formLayout->addWidget(new QLabel("Key:"), 0, 0);
+        QLineEdit* keyEdit = new QLineEdit();
+        keyEdit->setPlaceholderText("e.g., customPath");
+        formLayout->addWidget(keyEdit, 0, 1);
+
+        formLayout->addWidget(new QLabel("Label:"), 1, 0);
+        QLineEdit* labelEdit = new QLineEdit();
+        labelEdit->setPlaceholderText("e.g., Custom Path");
+        formLayout->addWidget(labelEdit, 1, 1);
+
+        formLayout->addWidget(new QLabel("Default Value:"), 2, 0);
+        QLineEdit* valueEdit = new QLineEdit();
+        valueEdit->setPlaceholderText("e.g., /some/default/path");
+        formLayout->addWidget(valueEdit, 2, 1);
+
+        formLayout->addWidget(new QLabel("Description:"), 3, 0);
+        QLineEdit* descEdit = new QLineEdit();
+        descEdit->setPlaceholderText("Brief description of this path type");
+        formLayout->addWidget(descEdit, 3, 1);
+
+        dlgLayout->addLayout(formLayout);
+
+        QHBoxLayout* btnLayout = new QHBoxLayout();
+        btnLayout->addStretch();
+        QPushButton* okBtn = new QPushButton("Add");
+        QPushButton* cancelBtn = new QPushButton("Cancel");
+        btnLayout->addWidget(okBtn);
+        btnLayout->addWidget(cancelBtn);
+        dlgLayout->addLayout(btnLayout);
+
+        connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+        connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+
+        if (dialog.exec() == QDialog::Accepted) {
+            QString key = keyEdit->text().trimmed();
+            QString label = labelEdit->text().trimmed();
+            if (key.isEmpty() || label.isEmpty()) {
+                QMessageBox::warning(this, "Error", "Key and Label are required.");
+                return;
+            }
+
+            // Check for duplicate key
+            MemberTemplate tmpl = m_registry->getTemplate();
+            for (const PathType& pt : tmpl.pathTypes) {
+                if (pt.key == key) {
+                    QMessageBox::warning(this, "Error",
+                        QString("Path type with key '%1' already exists.").arg(key));
+                    return;
+                }
+            }
+
+            // Add the new path type
+            PathType newType;
+            newType.key = key;
+            newType.label = label;
+            newType.defaultValue = valueEdit->text().trimmed();
+            newType.description = descEdit->text().trimmed();
+            newType.enabled = true;
+            tmpl.pathTypes.append(newType);
+            m_registry->setTemplate(tmpl);
+            rebuildPathTypesGrid();
+        }
+    });
+
     QPushButton* saveTemplateBtn = new QPushButton("Save Template");
     saveTemplateBtn->setIcon(QIcon(":/icons/check.svg"));
     saveTemplateBtn->setToolTip("Save changes to the global template");
     connect(saveTemplateBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onSaveTemplate);
+    templateBtnLayout->addWidget(addPathTypeBtn);
     templateBtnLayout->addStretch();
     templateBtnLayout->addWidget(saveTemplateBtn);
     templateMainLayout->addLayout(templateBtnLayout);
@@ -494,6 +549,7 @@ void MemberRegistryPanel::setupUI() {
     // Stats
     m_statsLabel = new QLabel();
     m_statsLabel->setProperty("type", "secondary");
+    CopyHelper::makeSelectable(m_statsLabel);
     mainLayout->addWidget(m_statsLabel);
 
     scrollArea->setWidget(contentWidget);
@@ -520,17 +576,100 @@ void MemberRegistryPanel::refresh() {
 }
 
 void MemberRegistryPanel::refreshTemplate() {
-    // Update template UI from registry
-    MemberTemplate tmpl = m_registry->getTemplate();
-    for (const PathType& pt : tmpl.pathTypes) {
-        if (m_pathTypeChecks.contains(pt.key)) {
-            m_pathTypeChecks[pt.key]->setChecked(pt.enabled);
+    rebuildPathTypesGrid();
+}
+
+void MemberRegistryPanel::rebuildPathTypesGrid() {
+    // Clear existing layout
+    QLayout* oldLayout = m_pathTypesWidget->layout();
+    if (oldLayout) {
+        QLayoutItem* item;
+        while ((item = oldLayout->takeAt(0)) != nullptr) {
+            if (item->widget()) {
+                item->widget()->deleteLater();
+            }
+            delete item;
         }
-        if (m_pathTypeEdits.contains(pt.key)) {
-            m_pathTypeEdits[pt.key]->setText(pt.defaultValue);
-            m_pathTypeEdits[pt.key]->setEnabled(pt.enabled);
-        }
+        delete oldLayout;
     }
+    m_pathTypeChecks.clear();
+    m_pathTypeEdits.clear();
+
+    QGridLayout* pathTypesGrid = new QGridLayout(m_pathTypesWidget);
+    pathTypesGrid->setSpacing(8);
+
+    // Headers
+    QLabel* enabledHeader = new QLabel("Enabled");
+    enabledHeader->setObjectName("SectionHeader");
+    QLabel* typeHeader = new QLabel("Path Type");
+    typeHeader->setObjectName("SectionHeader");
+    QLabel* defaultHeader = new QLabel("Default Value");
+    defaultHeader->setObjectName("SectionHeader");
+    QLabel* actionHeader = new QLabel("");
+
+    pathTypesGrid->addWidget(enabledHeader, 0, 0);
+    pathTypesGrid->addWidget(typeHeader, 0, 1);
+    pathTypesGrid->addWidget(defaultHeader, 0, 2);
+    pathTypesGrid->addWidget(actionHeader, 0, 3);
+
+    // Predefined keys that cannot be deleted
+    static const QStringList predefinedKeys = {
+        "archiveRoot", "nhbCallsPath", "fastForwardPath", "theoryCallsPath", "hotSeatsPath"
+    };
+
+    MemberTemplate tmpl = m_registry->getTemplate();
+
+    int row = 1;
+    for (const PathType& pt : tmpl.pathTypes) {
+        QCheckBox* enableCheck = new QCheckBox();
+        enableCheck->setChecked(pt.enabled);
+        enableCheck->setProperty("pathKey", pt.key);
+        pathTypesGrid->addWidget(enableCheck, row, 0, Qt::AlignCenter);
+
+        QLabel* typeLabel = new QLabel(pt.label);
+        typeLabel->setToolTip(pt.description);
+        pathTypesGrid->addWidget(typeLabel, row, 1);
+
+        QLineEdit* valueEdit = new QLineEdit(pt.defaultValue);
+        valueEdit->setProperty("pathKey", pt.key);
+        valueEdit->setEnabled(pt.enabled);
+        pathTypesGrid->addWidget(valueEdit, row, 2);
+
+        connect(enableCheck, &QCheckBox::toggled, valueEdit, &QLineEdit::setEnabled);
+
+        m_pathTypeChecks[pt.key] = enableCheck;
+        m_pathTypeEdits[pt.key] = valueEdit;
+
+        // Delete button for custom (non-predefined) types only
+        if (!predefinedKeys.contains(pt.key)) {
+            QPushButton* deleteBtn = new QPushButton();
+            deleteBtn->setIcon(QIcon(":/icons/x.svg"));
+            deleteBtn->setFixedSize(24, 24);
+            deleteBtn->setToolTip(QString("Delete '%1' path type").arg(pt.label));
+            deleteBtn->setProperty("pathKey", pt.key);
+            connect(deleteBtn, &QPushButton::clicked, this, [this, key = pt.key, label = pt.label]() {
+                int ret = QMessageBox::question(this, "Delete Path Type",
+                    QString("Delete custom path type '%1'?").arg(label),
+                    QMessageBox::Yes | QMessageBox::No);
+                if (ret == QMessageBox::Yes) {
+                    MemberTemplate tmpl = m_registry->getTemplate();
+                    for (int i = 0; i < tmpl.pathTypes.size(); ++i) {
+                        if (tmpl.pathTypes[i].key == key) {
+                            tmpl.pathTypes.removeAt(i);
+                            break;
+                        }
+                    }
+                    m_registry->setTemplate(tmpl);
+                    rebuildPathTypesGrid();
+                }
+            });
+            pathTypesGrid->addWidget(deleteBtn, row, 3, Qt::AlignCenter);
+        }
+
+        row++;
+    }
+
+    pathTypesGrid->setColumnStretch(2, 1);
 }
 
 void MemberRegistryPanel::onSaveTemplate() {
@@ -1165,9 +1304,41 @@ void MemberRegistryPanel::onImportMembers() {
         "Import Members", QString(), "JSON Files (*.json)");
     if (filePath.isEmpty()) return;
 
-    if (m_registry->importFromFile(filePath)) {
+    // Count members in the import file
+    QFile file(filePath);
+    int importCount = 0;
+    if (file.open(QIODevice::ReadOnly)) {
+        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        file.close();
+        if (doc.isObject() && doc.object().contains("members")) {
+            importCount = doc.object()["members"].toArray().size();
+        }
+    }
+
+    int existingCount = m_registry->getAllMembers().size();
+
+    // Ask user: merge or replace?
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle("Import Members");
+    msgBox.setText(QString("File contains %1 members.\nYou currently have %2 members.")
+        .arg(importCount).arg(existingCount));
+    msgBox.setInformativeText("How would you like to import?");
+    QPushButton* mergeBtn = msgBox.addButton("Merge (add/update)", QMessageBox::AcceptRole);
+    QPushButton* replaceBtn = msgBox.addButton("Replace all", QMessageBox::DestructiveRole);
+    msgBox.addButton(QMessageBox::Cancel);
+    msgBox.setDefaultButton(mergeBtn);
+    msgBox.exec();
+
+    if (msgBox.clickedButton() == msgBox.button(QMessageBox::Cancel)) return;
+
+    bool mergeMode = (msgBox.clickedButton() == mergeBtn);
+
+    if (m_registry->importFromFile(filePath, mergeMode)) {
         refreshTemplate();
-        QMessageBox::information(this, "Import", "Members imported successfully");
+        QString mode = mergeMode ? "merged" : "replaced";
+        QMessageBox::information(this, "Import",
+            QString("Members %1 successfully. Now have %2 members.")
+                .arg(mode).arg(m_registry->getAllMembers().size()));
     } else {
         QMessageBox::warning(this, "Import Failed", "Failed to import members from file");
     }

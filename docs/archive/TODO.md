@@ -1,10 +1,42 @@
 # MegaCustom - TODO / Remaining Work
 
-*Created: December 3, 2025 - Updated: February 24, 2026*
+*Created: December 3, 2025 - Updated: February 25, 2026*
 
 ---
 
-## Recently Completed (February 24, 2026 - Member Groups + UX)
+## Recently Completed (February 25, 2026 - UI/UX Rebuild + Template Watermarks)
+
+### Full UI/UX Rebuild - COMPLETE
+| Task | Status |
+|------|--------|
+| QSS design system alignment (all 6 panels) | DONE |
+| AnimationHelper utility (fade/slide effects) | DONE |
+| Light & dark theme updates (new QSS rules) | DONE |
+| Remove all inline setStyleSheet calls | DONE |
+| Fix PanelDescription → PanelSubtitle (MemberRegistryPanel) | DONE |
+| Runtime theme switching (SettingsPanel → MainWindow) | DONE |
+| Thread safety (std::atomic<bool> for m_cancelled) | DONE |
+| Double-start guards (WatermarkPanel, DistributionPanel) | DONE |
+| Transfer speed connection fix (MainWindow) | DONE |
+| Status bar hardcoded colors → QSS rules | DONE |
+
+### Template-Based Watermark Text - COMPLETE
+| Task | Status |
+|------|--------|
+| Extend TemplateExpander to 13 variables | DONE |
+| Fix data mixing bug (bypass MemberDatabase) | DONE |
+| Rewrite WatermarkWorker::process() | DONE |
+| Enable text fields in member mode | DONE |
+| Pre-fill defaults on mode switch | DONE |
+| Pre-start validation (missing member fields) | DONE |
+| Update help dialog with all 13 variables | DONE |
+| Update WatermarkerController to use template expansion | DONE |
+| Remove dead setMemberDbPath code | DONE |
+| Save/load/delete watermark presets | DONE |
+
+---
+
+## Previously Completed (February 24, 2026 - Member Groups + UX)
 
 ### Member Groups System - COMPLETE
 | Task | Status |
@@ -262,10 +294,10 @@ These are actual TODO comments found in the codebase that need implementation:
 - [ ] Add tooltips to settings options
 
 ### 9. Dark Theme
-- [ ] Complete dark theme QSS
+- [x] Complete dark theme QSS (Feb 25, 2026 — full rebuild)
 - [ ] Test all dialogs in dark mode
-- [ ] Add theme toggle in settings
-- [ ] Remember theme preference
+- [x] Add theme toggle in settings (exists in SettingsPanel)
+- [x] Remember theme preference (QSettings-based)
 
 ---
 
@@ -390,5 +422,5 @@ MEGA_API_KEY="9gETCbhB" ./MegaCustomGUI
 
 ---
 
-*Last Updated: December 10, 2025 - Session 19*
-*Status: Core features 100% complete, polish & testing remain*
+*Last Updated: February 25, 2026*
+*Status: Phase 2 ~90% complete — UI/UX rebuilt, template watermarks, polish & testing remain*

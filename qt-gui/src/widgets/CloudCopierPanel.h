@@ -156,9 +156,6 @@ private slots:
     void onClearCompletedClicked();
     void onClearAllTasksClicked();
 
-    // Task table
-    void onTaskSelectionChanged();
-
     // Operation mode
     void onOperationModeChanged();
 

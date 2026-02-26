@@ -17,6 +17,14 @@ TemplateExpander::Variables TemplateExpander::Variables::fromMember(const Member
     vars.memberIp = member.ipAddress;
     vars.memberMac = member.macAddress;
     vars.memberSocial = member.socialHandle;
+
+    // Member path variables
+    vars.archiveRoot = member.paths.archiveRoot;
+    vars.nhbCalls = member.paths.nhbCallsPath;
+    vars.fastForward = member.paths.fastForwardPath;
+    vars.theoryCalls = member.paths.theoryCallsPath;
+    vars.hotSeats = member.paths.hotSeatsPath;
+
     return vars;
 }
 
@@ -50,6 +58,13 @@ QString TemplateExpander::expand(const QString& templatePath, const Variables& v
     result.replace("{member_id}", vars.memberId);
     result.replace("{member}", vars.member);
 
+    // Member path variables (longest first)
+    result.replace("{archive_root}", vars.archiveRoot);
+    result.replace("{nhb_calls}", vars.nhbCalls);
+    result.replace("{fast_forward}", vars.fastForward);
+    result.replace("{theory_calls}", vars.theoryCalls);
+    result.replace("{hot_seats}", vars.hotSeats);
+
     // Date/time variables
     result.replace("{month}", vars.month);
     result.replace("{month_num}", vars.monthNum);
@@ -73,8 +88,8 @@ TemplateExpander::ExpansionResult TemplateExpander::expandForMember(
     result.originalTemplate = templatePath;
     result.isValid = true;
 
-    // Check if member has a distribution folder
-    if (!member.hasDistributionFolder()) {
+    // Check if template uses {member} and member has no distribution folder
+    if (templatePath.contains("{member}") && !member.hasDistributionFolder()) {
         result.isValid = false;
         result.errorMessage = QString("Member '%1' has no distribution folder set")
             .arg(member.displayName);
@@ -114,6 +129,11 @@ QStringList TemplateExpander::getAvailableVariables() {
         "member_ip",
         "member_mac",
         "member_social",
+        "archive_root",
+        "nhb_calls",
+        "fast_forward",
+        "theory_calls",
+        "hot_seats",
         "month",
         "month_num",
         "year",
@@ -132,6 +152,11 @@ QMap<QString, QString> TemplateExpander::getVariableDescriptions() {
     descriptions["member_ip"] = "Member's IP address";
     descriptions["member_mac"] = "Member's MAC address";
     descriptions["member_social"] = "Member's social media handle";
+    descriptions["archive_root"] = "Member's archive root path";
+    descriptions["nhb_calls"] = "Member's NHB calls subpath";
+    descriptions["fast_forward"] = "Member's Fast Forward subpath";
+    descriptions["theory_calls"] = "Member's theory calls subpath";
+    descriptions["hot_seats"] = "Member's hot seats subpath";
     descriptions["month"] = "Current month name (e.g., December)";
     descriptions["month_num"] = "Current month number (01-12)";
     descriptions["year"] = "Current year (e.g., 2025)";
@@ -154,7 +179,12 @@ bool TemplateExpander::hasMemberVariables(const QString& templatePath) {
            templatePath.contains("{member_email}") ||
            templatePath.contains("{member_ip}") ||
            templatePath.contains("{member_mac}") ||
-           templatePath.contains("{member_social}");
+           templatePath.contains("{member_social}") ||
+           templatePath.contains("{archive_root}") ||
+           templatePath.contains("{nhb_calls}") ||
+           templatePath.contains("{fast_forward}") ||
+           templatePath.contains("{theory_calls}") ||
+           templatePath.contains("{hot_seats}");
 }
 
 bool TemplateExpander::validateTemplate(const QString& templatePath, QString* error) {

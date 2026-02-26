@@ -1,7 +1,7 @@
 # MegaCustom Progress Tracker
 
-**Last Updated**: February 24, 2026
-**Current Phase**: Phase 2 Implementation — Core features working, polish ongoing
+**Last Updated**: February 25, 2026
+**Current Phase**: Phase 2 Implementation — Core features working, UI/UX rebuilt
 
 ---
 
@@ -10,7 +10,7 @@
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | COMPLETE | Core app, multi-account, search |
-| Phase 2 | IN PROGRESS (~85%) | Watermarking, Distribution, Member Groups working |
+| Phase 2 | IN PROGRESS (~90%) | Watermarking, Distribution, Member Groups, UI/UX rebuilt |
 
 ---
 
@@ -44,6 +44,8 @@
 | 2.4 | WordPress Integration (WordPressConfigDialog, WordPressSyncPreviewDialog) | DONE |
 | 2.5 | Logging System (LogManager, LogViewerPanel) | DONE |
 | 2.6 | Member Groups + UX Polish | DONE (Feb 24, 2026) |
+| 2.7 | Full UI/UX Rebuild (QSS design system) | DONE (Feb 25, 2026) |
+| 2.8 | Template-Based Watermark Text (13 vars, data mixing fix) | DONE (Feb 25, 2026) |
 
 ### Phase 2 Key Components
 
@@ -62,6 +64,10 @@
 
 **Watermark Panel** (`widgets/WatermarkPanel.h/cpp`):
 - FFmpeg video watermarking with per-member personalization
+- Template-based watermark text: 13 variables ({brand}, {member_*}, dates)
+- Bypasses C++ core MemberDatabase — uses MemberRegistry directly (fixes data mixing bug)
+- Pre-start validation warns about missing member fields
+- Save/load/delete named presets (text, CRF, interval, duration, FFmpeg preset)
 - Batch processing with progress tracking
 - Member combo with groups: `[Group] NHB2026 (5)` entries with separators
 - GROUP: prefix resolution for watermarking group members
@@ -78,9 +84,17 @@
 - Pause/resume/cancel support
 
 **Supporting Utils**:
-- TemplateExpander: variable expansion ({member}, {year}, {month}, etc.)
+- TemplateExpander: 13-var expansion ({brand}, {member}, {member_id}, {member_name}, {member_email}, {member_ip}, {member_mac}, {member_social}, {month}, {month_num}, {year}, {date}, {timestamp})
+- AnimationHelper: QPropertyAnimation fade/slide effects
 - CloudCopier: server-side copy/move operations
 - FolderCopyWorker: QThread-based async copy with pause/resume
+
+**UI/UX System** (Feb 25, 2026):
+- QSS design system: all panels use objectName + property-based styling (no inline setStyleSheet)
+- Light & dark themes fully updated (mega_light.qss, mega_dark.qss)
+- Runtime theme switching via SettingsPanel::settingsSaved → MainWindow::applySettings
+- std::atomic<bool> for thread-safe cancellation flags
+- Double-start guards on WatermarkPanel and DistributionPanel
 
 ### Remaining Phase 2 Work
 - PDF watermarking (Python script integration)
@@ -97,17 +111,11 @@
 cd qt-gui/build-qt && cmake .. && make -j$(nproc)
 ```
 
-### Windows (deployment)
+### Windows (deployment — one-liner pull+build+deploy)
 ```powershell
-# Set cmake path
-$cmake = "C:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe"
-
-# Build
-& $cmake --build qt-gui\build-win64 --config Release
-
-# Copy to portable
-Copy-Item "qt-gui\build-win64\Release\MegaCustomGUI.exe" "C:\Users\Administrator\Desktop\MegaCustomGUI-Portable-Win64 (6)\" -Force
+cd C:\Users\Administrator\Desktop\megacustom; git pull origin master; $cmake = "C:\vcpkg\downloads\tools\cmake-3.31.10-windows\cmake-3.31.10-windows-x86_64\bin\cmake.exe"; & $cmake --build qt-gui\build-win64 --config Release; Copy-Item "qt-gui\build-win64\Release\MegaCustomGUI.exe" "C:\Users\Administrator\Desktop\MegaCustomGUI-Portable-Win64 (6)\MegaCustomGUI.exe" -Force
 ```
+**Note**: PowerShell uses `;` not `&&` for command chaining.
 
 ---
 
@@ -149,6 +157,7 @@ mega-custom-app/
 - **Dec 10, 2025**: Phase 2 planning complete
 - **Dec 2025 - Feb 2026**: Phase 2 implementation (Watermarking, Distribution, Members, Groups)
 - **Feb 24, 2026**: Member Groups + Distribution UX improvements shipped
+- **Feb 25, 2026**: Full UI/UX rebuild (QSS design system) + Template-based watermark text (data mixing fix)
 
 ---
 

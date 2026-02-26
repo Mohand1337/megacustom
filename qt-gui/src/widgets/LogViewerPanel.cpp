@@ -1,6 +1,7 @@
 #include "LogViewerPanel.h"
 #include "core/LogManager.h"
 #include "utils/MemberRegistry.h"
+#include "utils/CopyHelper.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -182,6 +183,8 @@ void LogViewerPanel::setupUI() {
     m_activityTable->setColumnWidth(3, 120);
     m_activityTable->setColumnWidth(5, 150);
 
+    CopyHelper::installTableCopyMenu(m_activityTable);
+
     connect(m_activityTable, &QTableWidget::itemSelectionChanged,
             this, &LogViewerPanel::onActivityTableSelectionChanged);
     activityLayout->addWidget(m_activityTable, 1);
@@ -259,6 +262,8 @@ void LogViewerPanel::setupUI() {
     m_distributionTable->setColumnWidth(6, 80);
     m_distributionTable->setColumnWidth(7, 80);
 
+    CopyHelper::installTableCopyMenu(m_distributionTable);
+
     connect(m_distributionTable, &QTableWidget::itemSelectionChanged,
             this, &LogViewerPanel::onDistributionTableSelectionChanged);
     distLayout->addWidget(m_distributionTable, 1);
@@ -309,6 +314,7 @@ void LogViewerPanel::setupUI() {
 
     m_countLabel = new QLabel();
     m_countLabel->setProperty("type", "secondary");
+    CopyHelper::makeSelectable(m_countLabel);
     bottomLayout->addWidget(m_countLabel);
 
     mainLayout->addLayout(bottomLayout);

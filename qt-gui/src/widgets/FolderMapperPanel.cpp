@@ -2,6 +2,7 @@
 #include "controllers/FileController.h"
 #include "dialogs/RemoteFolderBrowserDialog.h"
 #include "utils/PathUtils.h"
+#include "utils/CopyHelper.h"
 #include <QHeaderView>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -208,6 +209,7 @@ void FolderMapperPanel::setupMappingTable(QVBoxLayout* mainLayout)
     m_mappingTable->horizontalHeader()->setSectionResizeMode(COL_STATUS, QHeaderView::ResizeToContents);
     m_mappingTable->horizontalHeader()->setSectionResizeMode(COL_ENABLED, QHeaderView::ResizeToContents);
     m_mappingTable->verticalHeader()->setVisible(false);
+    CopyHelper::installTableCopyMenu(m_mappingTable);
 
     connect(m_mappingTable, &QTableWidget::itemSelectionChanged,
             this, &FolderMapperPanel::onMappingSelectionChanged);

@@ -5,6 +5,7 @@
 #include "dialogs/BulkPathEditorDialog.h"
 #include "utils/PathUtils.h"
 #include "utils/AnimationHelper.h"
+#include "utils/CopyHelper.h"
 #include <QScrollArea>
 #include <QFileDialog>
 #include <QInputDialog>
@@ -219,6 +220,7 @@ void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
     m_sourceList->setMaximumHeight(120);
     m_sourceList->setAlternatingRowColors(true);
     m_sourceList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    CopyHelper::installListCopyMenu(m_sourceList);
     connect(m_sourceList, &QListWidget::itemSelectionChanged,
             this, &CloudCopierPanel::onSourceSelectionChanged);
     sourceLayout->addWidget(m_sourceList);
@@ -226,6 +228,7 @@ void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
     // Source summary
     m_sourceSummaryLabel = new QLabel("0 items selected", this);
     m_sourceSummaryLabel->setProperty("type", "secondary");
+    CopyHelper::makeSelectable(m_sourceSummaryLabel);
     sourceLayout->addWidget(m_sourceSummaryLabel);
 
     // Source buttons
@@ -277,6 +280,7 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
     m_destinationList->setMaximumHeight(150);
     m_destinationList->setAlternatingRowColors(true);
     m_destinationList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    CopyHelper::installListCopyMenu(m_destinationList);
     connect(m_destinationList, &QListWidget::itemSelectionChanged,
             this, &CloudCopierPanel::onDestinationSelectionChanged);
     destLayout->addWidget(m_destinationList);
@@ -284,6 +288,7 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
     // Destination summary
     m_destSummaryLabel = new QLabel("0 destinations", this);
     m_destSummaryLabel->setProperty("type", "secondary");
+    CopyHelper::makeSelectable(m_destSummaryLabel);
     destLayout->addWidget(m_destSummaryLabel);
 
     // Destination buttons
@@ -545,9 +550,7 @@ void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
     m_taskTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_taskTable->verticalHeader()->setVisible(false);
     m_taskTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-
-    connect(m_taskTable, &QTableWidget::itemSelectionChanged,
-            this, &CloudCopierPanel::onTaskSelectionChanged);
+    CopyHelper::installTableCopyMenu(m_taskTable);
 
     taskLayout->addWidget(m_taskTable);
 
@@ -642,6 +645,7 @@ void CloudCopierPanel::setupControlButtons(QVBoxLayout* mainLayout) {
     m_pauseBtn = new QPushButton("Pause", this);
     m_pauseBtn->setToolTip("Pause copy operation");
     m_pauseBtn->setEnabled(false);
+    m_pauseBtn->setVisible(false);  // Hidden: MEGA SDK doesn't support mid-transfer pause
     connect(m_pauseBtn, &QPushButton::clicked, this, &CloudCopierPanel::onPauseCopyClicked);
     controlLayout->addWidget(m_pauseBtn);
 
@@ -1495,10 +1499,6 @@ void CloudCopierPanel::onClearAllTasksClicked() {
         // Update button states
         updateButtonStates();
     }
-}
-
-void CloudCopierPanel::onTaskSelectionChanged() {
-    // Could enable task-specific actions here
 }
 
 void CloudCopierPanel::onPreviewReady(const QVector<CopyPreviewItem>& previewItems) {

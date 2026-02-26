@@ -2,6 +2,7 @@
 #include "controllers/SmartSyncController.h"
 #include "dialogs/SyncProfileDialog.h"
 #include "dialogs/ScheduleSyncDialog.h"
+#include "utils/CopyHelper.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QHeaderView>
@@ -234,6 +235,7 @@ void SmartSyncPanel::setupProfileSection(QVBoxLayout* mainLayout)
     m_profileTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_profileTable->setMinimumHeight(100);
     m_profileTable->setMaximumHeight(180);
+    CopyHelper::installTableCopyMenu(m_profileTable);
 
     connect(m_profileTable, &QTableWidget::itemSelectionChanged,
             this, &SmartSyncPanel::onProfileSelectionChanged);
@@ -375,12 +377,14 @@ void SmartSyncPanel::setupDetailTabs(QVBoxLayout* mainLayout)
         m_previewTable->setItem(i, 3, new QTableWidgetItem(demoStatus[i]));
     }
     m_previewTable->resizeColumnsToContents();
+    CopyHelper::installTableCopyMenu(m_previewTable);
 
     // Conflicts tab
     m_conflictsTable = new QTableWidget(this);
     m_conflictsTable->setColumnCount(5);
     m_conflictsTable->setHorizontalHeaderLabels({"File", "Local Info", "Remote Info", "Resolution", "Action"});
     m_conflictsTable->horizontalHeader()->setStretchLastSection(true);
+    CopyHelper::installTableCopyMenu(m_conflictsTable);
     m_detailTabs->addTab(m_conflictsTable, "Conflicts");
 
     // Progress tab
@@ -399,6 +403,7 @@ void SmartSyncPanel::setupDetailTabs(QVBoxLayout* mainLayout)
     m_historyTable->setColumnCount(5);
     m_historyTable->setHorizontalHeaderLabels({"Date", "Profile", "Duration", "Files", "Status"});
     m_historyTable->horizontalHeader()->setStretchLastSection(true);
+    CopyHelper::installTableCopyMenu(m_historyTable);
     m_detailTabs->addTab(m_historyTable, "History");
 
     mainLayout->addWidget(m_detailTabs, 1);

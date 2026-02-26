@@ -28,13 +28,15 @@ class FolderCopyWorker;
 struct MemberInfo;
 
 /**
- * Info about a watermarked folder in /latest-wm/
+ * Info about a scanned folder with smart member matching
  */
 struct WmFolderInfo {
     QString folderName;      // e.g., "vanchow555_20251125_113923"
     QString memberId;        // e.g., "vanchow555"
     QString timestamp;       // e.g., "20251125_113923"
     QString fullPath;        // e.g., "/latest-wm/vanchow555_20251125_113923"
+    QString matchType;       // "pattern", "id", "email", "name", "fuzzy", "manual", "none"
+    int matchConfidence = 0; // 1-5
     bool matched = false;    // True if member exists in registry
     bool selected = false;   // True if selected for distribution
 };
@@ -90,6 +92,22 @@ private slots:
     // Template helper slots
     void onVariableHelpClicked();
     void onPreviewPathsClicked();
+    void onQuickTemplateChanged(int index);
+    void onGenerateDestinations();
+
+    // Saved template slots
+    void onSaveTemplate();
+    void onDeleteTemplate();
+    void onLoadTemplate(int index);
+
+    // Import/Export slots
+    void onImportDestinations();
+    void onExportDestinations();
+
+    // Manual destination slots
+    void onAddRow();
+    void onPasteDestinations();
+    void onClearAllRows();
 
 private:
     void setupUI();
@@ -97,16 +115,34 @@ private:
     QString getDestinationPath(const QString& memberId);
     void executeBulkRename(const QString& folderPath);
 
-    // UI Components
+    // UI Components - Configuration
     QLineEdit* m_wmPathEdit;
     QPushButton* m_scanBtn;
     QLineEdit* m_destTemplateEdit;
+    QComboBox* m_quickTemplateCombo;
     QComboBox* m_monthCombo;
     QPushButton* m_variableHelpBtn;
     QPushButton* m_previewPathsBtn;
+    QPushButton* m_generateDestsBtn;
 
+    // Saved templates
+    QComboBox* m_savedTemplateCombo = nullptr;
+    QPushButton* m_saveTemplateBtn = nullptr;
+    QPushButton* m_deleteTemplateBtn = nullptr;
+
+    // Import/Export
+    QPushButton* m_importDestsBtn = nullptr;
+    QPushButton* m_exportDestsBtn = nullptr;
+
+    // Manual destination management
+    QPushButton* m_addRowBtn = nullptr;
+    QPushButton* m_pasteDestsBtn = nullptr;
+    QPushButton* m_clearAllBtn = nullptr;
+
+    // Table
     QTableWidget* m_memberTable;
 
+    // Selection & action buttons
     QPushButton* m_selectAllBtn;
     QPushButton* m_deselectAllBtn;
     QComboBox* m_groupCombo;
@@ -117,12 +153,19 @@ private:
     QPushButton* m_bulkRenameBtn;
     QLabel* m_moveWarningBanner = nullptr;
 
+    // Upload mode banner
+    QWidget* m_uploadBanner = nullptr;
+    QLabel* m_uploadBannerLabel = nullptr;
+    QPushButton* m_uploadBannerCancelBtn = nullptr;
+
+    // Options
     QCheckBox* m_removeWatermarkSuffixCheck;
     QCheckBox* m_createDestFolderCheck;
-    QCheckBox* m_copyFolderItselfCheck;  // Copy folder itself vs contents only
-    QCheckBox* m_skipExistingCheck;      // Skip existing files instead of overwriting
-    QCheckBox* m_moveFilesCheck;         // Move files (delete source after transfer)
+    QCheckBox* m_copyContentsOnlyCheck;  // Copy contents only (standardized naming)
+    QCheckBox* m_skipExistingCheck;
+    QCheckBox* m_moveFilesCheck;
 
+    // Status
     QLabel* m_modeIndicator;
     QProgressBar* m_progressBar;
     QLabel* m_statusLabel;
@@ -147,6 +190,9 @@ private:
     int m_successCount = 0;
     int m_failCount = 0;
 
+    // Pending member file map (stored from prepareForUpload, started on user click)
+    QMap<QString, QStringList> m_pendingMemberFileMap;
+
     // Maps member IDs to table row indices (for controller-driven uploads)
     QMap<QString, int> m_memberRowMap;
 
@@ -156,6 +202,20 @@ private:
     // Helper methods
     void cleanupWorkerThread();
     void loadGroups();
+    void loadSavedTemplates();
+    void saveSavedTemplates();
+    QString savedTemplatesPath() const;
+
+    // Table column indices
+    enum TableColumns {
+        COL_CHECK = 0,
+        COL_SOURCE_FOLDER,
+        COL_MATCHED_MEMBER,
+        COL_MATCH_TYPE,
+        COL_DESTINATION,
+        COL_STATUS,
+        COL_COUNT
+    };
 };
 
 } // namespace MegaCustom

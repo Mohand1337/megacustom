@@ -21,6 +21,11 @@ namespace MegaCustom {
  *   {member_ip}    - Member's IP address
  *   {member_mac}   - Member's MAC address
  *   {member_social}- Member's social handle
+ *   {archive_root} - Member's archive root path
+ *   {nhb_calls}    - Member's NHB calls subpath
+ *   {fast_forward}  - Member's Fast Forward subpath
+ *   {theory_calls} - Member's theory calls subpath
+ *   {hot_seats}    - Member's hot seats subpath
  *   {month}        - Current month name (e.g., "December")
  *   {month_num}    - Current month number (e.g., "12")
  *   {year}         - Current year (e.g., "2025")
@@ -46,6 +51,14 @@ public:
         QString memberIp;        // IP address
         QString memberMac;       // MAC address
         QString memberSocial;    // Social handle
+
+        // Member path variables
+        QString archiveRoot;     // Member's archive root
+        QString nhbCalls;        // NHB calls subpath
+        QString fastForward;     // Fast Forward subpath
+        QString theoryCalls;     // Theory calls subpath
+        QString hotSeats;        // Hot seats subpath
+
         QString month;           // Month name
         QString monthNum;        // Month number (01-12)
         QString year;            // Year

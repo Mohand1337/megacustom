@@ -3,11 +3,13 @@
 #include "accounts/AccountManager.h"
 #include "utils/MemberRegistry.h"
 #include "utils/TemplateExpander.h"
+#include "utils/CloudPathValidator.h"
 #include <megaapi.h>
 #include <QDir>
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
+#include <QApplication>
 
 namespace MegaCustom {
 
@@ -453,6 +455,25 @@ void CloudCopierController::startCopy(bool copyContentsOnly, bool skipExisting, 
         return;
     }
 
+    // Pre-flight destination path validation
+    mega::MegaApi* validationApi = activeApi ? activeApi : static_cast<mega::MegaApi*>(m_megaApi);
+    auto validationResults = CloudPathValidator::validatePaths(validationApi, m_destinations);
+    if (!CloudPathValidator::allValid(validationResults)) {
+        auto action = CloudPathValidator::showValidationDialog(qobject_cast<QWidget*>(QApplication::activeWindow()), validationResults, "Cloud Copy");
+        if (action == CloudPathValidator::Cancel) {
+            return;
+        }
+        if (action == CloudPathValidator::ProceedValidOnly) {
+            m_destinations = CloudPathValidator::validPaths(validationResults);
+            if (m_destinations.isEmpty()) {
+                emit error("Start Copy", "No valid destinations remaining after validation");
+                return;
+            }
+            emit destinationsChanged(m_destinations);
+        }
+        // CreateAndProceed: let CloudCopier auto-create as before
+    }
+
     m_isCopying = true;
     m_isPaused = false;
     m_cancelRequested = false;
@@ -680,11 +701,6 @@ void CloudCopierController::createMissingDestinations() {
     }
 }
 
-void CloudCopierController::browseRemoteFolder() {
-    // This would trigger opening the remote folder browser dialog
-    // Implemented in the panel
-}
-
 void CloudCopierController::packageSourcesIntoFolders(const QString& destParentPath) {
     if (!m_cloudCopier || m_sources.isEmpty()) {
         emit error("packageSources", "No sources to package");
@@ -812,41 +828,30 @@ void CloudCopierController::validateDestinations() {
         return;
     }
 
-    // Use AccountManager's active API for proper multi-account support
     mega::MegaApi* megaApi = AccountManager::instance().activeApi();
     if (!megaApi) {
-        // Fallback to legacy MegaManager API if no active account
         megaApi = static_cast<mega::MegaApi*>(m_megaApi);
     }
-
     if (!megaApi) {
         emit error("Validate", "No active MEGA session");
         return;
     }
 
+    // Delegate to centralized CloudPathValidator
+    auto cloudResults = CloudPathValidator::validatePaths(megaApi, m_destinations);
+
+    // Convert to PathValidationResult for existing signal compatibility
     QVector<PathValidationResult> results;
-
-    for (const QString& path : m_destinations) {
-        PathValidationResult result;
-        result.path = path;
-
-        mega::MegaNode* node = megaApi->getNodeByPath(path.toUtf8().constData());
-        if (node) {
-            result.exists = true;
-            result.isFolder = node->isFolder();
-            if (!node->isFolder()) {
-                result.errorMessage = "Path exists but is not a folder";
-            }
-            delete node;
-        } else {
-            result.exists = false;
-            result.errorMessage = "Path not found";
-        }
-
-        results.append(result);
+    results.reserve(cloudResults.size());
+    for (const auto& cr : cloudResults) {
+        PathValidationResult r;
+        r.path = cr.path;
+        r.exists = cr.exists;
+        r.isFolder = cr.isFolder;
+        r.errorMessage = cr.errorMessage;
+        results.append(r);
     }
 
-    qDebug() << "CloudCopier: Validated" << results.size() << "destinations";
     emit destinationsValidated(results);
 }
 
@@ -1038,6 +1043,26 @@ void CloudCopierController::startMemberCopy(bool copyContentsOnly, bool skipExis
         m_destinations = originalDestinations;
         emit error("Start Copy", "No active MEGA session");
         return;
+    }
+
+    // Pre-flight destination path validation for member mode
+    mega::MegaApi* validationApi = activeApi ? activeApi : static_cast<mega::MegaApi*>(m_megaApi);
+    auto validationResults = CloudPathValidator::validatePaths(validationApi, m_destinations);
+    if (!CloudPathValidator::allValid(validationResults)) {
+        auto action = CloudPathValidator::showValidationDialog(qobject_cast<QWidget*>(QApplication::activeWindow()), validationResults, "Member Copy");
+        if (action == CloudPathValidator::Cancel) {
+            m_destinations = originalDestinations;
+            return;
+        }
+        if (action == CloudPathValidator::ProceedValidOnly) {
+            m_destinations = CloudPathValidator::validPaths(validationResults);
+            if (m_destinations.isEmpty()) {
+                m_destinations = originalDestinations;
+                emit error("Start Copy", "No valid member destinations remaining after validation");
+                return;
+            }
+        }
+        // CreateAndProceed: let CloudCopier auto-create as before
     }
 
     m_isCopying = true;

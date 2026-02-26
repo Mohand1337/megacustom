@@ -126,7 +126,6 @@ private slots:
     void onWatermarkHelpClicked();
     void onPreviewWatermarkClicked();
     void onSavePreset();
-    void onLoadPreset();
     void onDeletePreset();
     void onPresetChanged(int index);
 
@@ -207,6 +206,9 @@ private:
     QList<WatermarkFileInfo> m_files;
     MemberRegistry* m_registry;
     bool m_isRunning = false;
+
+    // Stored member file map from last multi-member watermark (for manual send to distribution)
+    QMap<QString, QStringList> m_lastMemberFileMap;
 
     // Worker thread
     QThread* m_workerThread = nullptr;

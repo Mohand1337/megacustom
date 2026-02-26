@@ -112,6 +112,8 @@ set(SOURCES
     src/utils/AnimationHelper.cpp
     src/utils/IconProvider.cpp
     src/utils/TemplateExpander.cpp
+    src/utils/CopyHelper.cpp
+    src/utils/CloudPathValidator.cpp
     src/dialogs/LoginDialog.cpp
     src/dialogs/AboutDialog.cpp
     src/dialogs/MappingEditDialog.cpp
@@ -195,6 +197,8 @@ set(HEADERS
     src/utils/AnimationHelper.h
     src/utils/IconProvider.h
     src/utils/TemplateExpander.h
+    src/utils/CopyHelper.h
+    src/utils/CloudPathValidator.h
     src/dialogs/LoginDialog.h
     src/dialogs/AboutDialog.h
     src/dialogs/MappingEditDialog.h

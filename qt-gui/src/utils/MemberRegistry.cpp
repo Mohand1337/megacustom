@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QTextStream>
+#include <QRegularExpression>
 
 namespace MegaCustom {
 
@@ -68,7 +69,6 @@ QJsonObject MemberInfo::toJson() const {
 
     // Phase 2: Distribution folder
     if (!distributionFolder.isEmpty()) obj["distributionFolder"] = distributionFolder;
-    if (!distributionFolderHandle.isEmpty()) obj["distributionFolderHandle"] = distributionFolderHandle;
 
     // Pipeline status
     QJsonObject statusObj = pipelineStatus.toJson();
@@ -116,7 +116,6 @@ MemberInfo MemberInfo::fromJson(const QJsonObject& obj) {
 
     // Phase 2: Distribution folder
     info.distributionFolder = obj["distributionFolder"].toString();
-    info.distributionFolderHandle = obj["distributionFolderHandle"].toString();
 
     // Pipeline status
     if (obj.contains("pipelineStatus")) {
@@ -483,7 +482,7 @@ bool MemberRegistry::exportToFile(const QString& filePath) {
     return true;
 }
 
-bool MemberRegistry::importFromFile(const QString& filePath) {
+bool MemberRegistry::importFromFile(const QString& filePath, bool mergeMode) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -502,15 +501,19 @@ bool MemberRegistry::importFromFile(const QString& filePath) {
         m_template = MemberTemplate::fromJson(root["template"].toObject());
     }
 
-    m_members.clear();
+    if (!mergeMode) {
+        m_members.clear();
+    }
     QJsonArray membersArray = root["members"].toArray();
     for (const QJsonValue& val : membersArray) {
         MemberInfo info = MemberInfo::fromJson(val.toObject());
-        m_members[info.id] = info;
+        m_members[info.id] = info;  // Upsert: add new or update existing
     }
 
     // Import groups
-    m_groups.clear();
+    if (!mergeMode) {
+        m_groups.clear();
+    }
     if (root.contains("groups")) {
         QJsonArray groupsArray = root["groups"].toArray();
         for (const QJsonValue& val : groupsArray) {
@@ -528,12 +531,10 @@ bool MemberRegistry::importFromFile(const QString& filePath) {
 
 // ==================== Phase 2: Distribution Folder Management ====================
 
-void MemberRegistry::setDistributionFolder(const QString& memberId, const QString& folderPath,
-                                            const QString& folderHandle) {
+void MemberRegistry::setDistributionFolder(const QString& memberId, const QString& folderPath) {
     if (!m_members.contains(memberId)) return;
 
     m_members[memberId].distributionFolder = folderPath;
-    m_members[memberId].distributionFolderHandle = folderHandle;
     m_members[memberId].updatedAt = QDateTime::currentSecsSinceEpoch();
     save();
     emit memberUpdated(memberId);
@@ -543,7 +544,6 @@ void MemberRegistry::clearDistributionFolder(const QString& memberId) {
     if (!m_members.contains(memberId)) return;
 
     m_members[memberId].distributionFolder.clear();
-    m_members[memberId].distributionFolderHandle.clear();
     m_members[memberId].updatedAt = QDateTime::currentSecsSinceEpoch();
     save();
     emit memberUpdated(memberId);
@@ -608,6 +608,120 @@ QList<MemberInfo> MemberRegistry::getUnsyncedMembers() const {
         }
     }
     return list;
+}
+
+// ==================== Smart Folder Matching ====================
+
+MemberRegistry::FolderMatch MemberRegistry::matchFolderToMember(const QString& folderName) const {
+    FolderMatch result;
+    result.folderName = folderName;
+    result.matchType = "none";
+    result.confidence = 0;
+
+    QString folderLower = folderName.toLower();
+
+    // Strip timestamp suffix if present (e.g., "memberId_20260225_143000" -> "memberId")
+    QString folderBase = folderName;
+    QRegularExpression tsRe("^(.+)_(\\d{8}_\\d{6})$");
+    QRegularExpressionMatch tsMatch = tsRe.match(folderName);
+    if (tsMatch.hasMatch()) {
+        folderBase = tsMatch.captured(1);
+    }
+    QString folderBaseLower = folderBase.toLower();
+
+    for (auto it = m_members.constBegin(); it != m_members.constEnd(); ++it) {
+        const MemberInfo& member = it.value();
+
+        // Strategy 1: wmFolderPattern glob match (highest confidence)
+        if (!member.wmFolderPattern.isEmpty()) {
+            // Convert simple glob to regex: * -> .*, ? -> .
+            QString pattern = member.wmFolderPattern;
+            pattern.replace(".", "\\.");
+            pattern.replace("*", ".*");
+            pattern.replace("?", ".");
+            QRegularExpression patternRe("^" + pattern + "$", QRegularExpression::CaseInsensitiveOption);
+            if (patternRe.match(folderName).hasMatch() || patternRe.match(folderBase).hasMatch()) {
+                result.matchedMemberId = member.id;
+                result.matchType = "pattern";
+                result.confidence = 5;
+                return result;
+            }
+        }
+
+        // Strategy 2: Exact member ID match (with or without timestamp)
+        if (folderBaseLower == member.id.toLower()) {
+            result.matchedMemberId = member.id;
+            result.matchType = "id";
+            result.confidence = 5;
+            return result;
+        }
+
+        // Strategy 3: Email prefix match
+        if (!member.email.isEmpty()) {
+            QString emailPrefix = member.email.section('@', 0, 0).toLower();
+            if (!emailPrefix.isEmpty() && folderBaseLower == emailPrefix) {
+                result.matchedMemberId = member.id;
+                result.matchType = "email";
+                result.confidence = 4;
+                return result;
+            }
+        }
+
+        // Strategy 4: Display name exact match
+        if (!member.displayName.isEmpty()) {
+            if (folderBaseLower == member.displayName.toLower()) {
+                result.matchedMemberId = member.id;
+                result.matchType = "name";
+                result.confidence = 4;
+                return result;
+            }
+        }
+    }
+
+    // Strategy 5: Fuzzy/partial matches (lower confidence, do a second pass)
+    for (auto it = m_members.constBegin(); it != m_members.constEnd(); ++it) {
+        const MemberInfo& member = it.value();
+        QString idLower = member.id.toLower();
+        QString nameLower = member.displayName.toLower();
+
+        // Email prefix as substring
+        if (!member.email.isEmpty()) {
+            QString emailPrefix = member.email.section('@', 0, 0).toLower();
+            if (!emailPrefix.isEmpty() && emailPrefix.length() >= 3 && folderBaseLower.contains(emailPrefix)) {
+                result.matchedMemberId = member.id;
+                result.matchType = "email";
+                result.confidence = 3;
+                return result;
+            }
+        }
+
+        // Folder contains member ID as substring (min 3 chars to avoid false positives)
+        if (idLower.length() >= 3 && folderBaseLower.contains(idLower)) {
+            result.matchedMemberId = member.id;
+            result.matchType = "fuzzy";
+            result.confidence = 2;
+            return result;
+        }
+
+        // Folder contains display name as substring
+        if (!nameLower.isEmpty() && nameLower.length() >= 3 && folderBaseLower.contains(nameLower)) {
+            result.matchedMemberId = member.id;
+            result.matchType = "name";
+            result.confidence = 2;
+            return result;
+        }
+    }
+
+    return result;
+}
+
+QList<MemberRegistry::FolderMatch> MemberRegistry::matchFoldersToMembers(const QStringList& folderNames) const {
+    QList<FolderMatch> results;
+    results.reserve(folderNames.size());
+    for (const QString& name : folderNames) {
+        results.append(matchFolderToMember(name));
+    }
+    return results;
 }
 
 // ==================== Pipeline Status ====================

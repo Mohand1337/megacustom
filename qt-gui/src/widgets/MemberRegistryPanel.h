@@ -82,6 +82,7 @@ private:
     void refreshGroups();
     QString getSelectedMemberId() const;
     void showMemberEditDialog(const MemberInfo& member, bool isNew);
+    void rebuildPathTypesGrid();
 
     // Global template path types
     QWidget* m_pathTypesWidget;

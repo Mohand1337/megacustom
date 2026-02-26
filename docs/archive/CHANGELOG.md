@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-02-25
+
+### Added - Full UI/UX Rebuild + Template-Based Watermarks
+
+#### UI/UX Design System Rebuild
+- **QSS design system** — All 6 panels (CloudCopier, Distribution, Downloader, LogViewer, MemberRegistry, Watermark) aligned to objectName + property-based styling
+- **AnimationHelper utility** (`utils/AnimationHelper.h/cpp`) — QPropertyAnimation-based fade/slide effects for panel transitions
+- **Light & dark themes** fully updated (`mega_light.qss`, `mega_dark.qss`) with new QSS rules:
+  - `#WatermarkPreviewLabel` — monospace, themed background
+  - `#ConnectionIndicator` — border-radius, themed bg color
+  - `#UserLabel` — font-weight 500, themed color
+- **Runtime theme switching** — Connected `SettingsPanel::settingsSaved` → `MainWindow::applySettings`
+- **Removed all inline `setStyleSheet()` calls** — Replaced with property-based styling (`setProperty("type", "secondary")`)
+- **Fixed `PanelDescription` → `PanelSubtitle`** in MemberRegistryPanel (3 instances had no QSS rule)
+
+#### Template-Based Watermark Text System
+- **13 template variables** for watermark text customization:
+  - `{brand}` — Brand name (Easygroupbuys.com)
+  - `{member}`, `{member_id}`, `{member_name}` — Core member fields
+  - `{member_email}`, `{member_ip}`, `{member_mac}`, `{member_social}` — Extended member fields (NEW)
+  - `{month}`, `{month_num}`, `{year}`, `{date}`, `{timestamp}` — Date/time fields
+- **User-controlled format** — Text fields enabled in both Global and Per-Member mode (previously disabled in member mode)
+- **Pre-fill defaults** — Switching to member mode auto-fills `{brand} - {member_name} ({member_id})`
+- **Pre-start validation** — Warns about missing member fields (email, IP, MAC, social) before watermarking
+- **Help dialog** — Updated with all 13 variables, categorized with section headers
+- **Preset system** — Save/load/delete named watermark presets (text, CRF, interval, duration, FFmpeg preset)
+
+### Fixed - Feb 25, 2026
+- **CRITICAL: Watermark data mixing** — Two different members' data mixed in one watermark. Root cause: `Watermarker::watermarkVideoForMember()` loaded member data from C++ core's `MemberDatabase` (separate from Qt's `MemberRegistry` singleton). Fix: Bypass `watermarkVideoForMember()`/`watermarkPdfForMember()` entirely — expand templates in Qt layer using `TemplateExpander` + `MemberRegistry` (single source of truth)
+- **WatermarkerController** also updated to use template expansion (was using old ForMember methods)
+- **Dead code removed** — `setMemberDbPath()` (set but never read after template system rewrite)
+- **Thread safety** — `std::atomic<bool>` for `m_cancelled` in DownloaderPanel and WatermarkPanel workers
+- **Double-start guards** — Added `if (m_isRunning) return` to `onStartWatermark()` and `onStartDistribution()`
+- **Transfer speed connection** — Moved from dead `connectSignals()` to `setTransferController()` in MainWindow
+- **Status bar hardcoded colors** — Removed inline styles, replaced with QSS rules
+
+### Changed - Feb 25, 2026
+- **TemplateExpander** — Extended from 8 to 13 variables, longest-first replacement to prevent partial matches
+- **WatermarkWorker::process()** — Complete rewrite: expands templates per-member, calls `watermarkVideo()`/`watermarkPdf()` directly
+- **buildConfig()** — Only expands templates for global mode; member mode keeps raw templates for per-member expansion by worker
+- **Windows build** — Verified one-liner pull+build+deploy PowerShell command (uses `;` not `&&`)
+
 ## [0.3.0] - 2026-02-24
 
 ### Added - Phase 2 Sessions: Watermarking, Distribution, Member Groups (Dec 2025 - Feb 2026)

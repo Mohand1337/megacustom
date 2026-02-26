@@ -680,16 +680,15 @@ void MainWindow::setupUI()
                 m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Distribution);
             });
 
-    // Connect Watermark -> Direct upload to member MEGA folders (all-members mode)
+    // Connect Watermark -> Prepare Distribution panel (user must click Start)
     connect(m_watermarkPanel, &WatermarkPanel::sendToDistributionMapped,
             this, [this](const QMap<QString, QStringList>& memberFileMap) {
-                if (m_distributionController && !memberFileMap.isEmpty()) {
-                    qDebug() << "MainWindow: Auto-uploading watermarked files to"
-                             << memberFileMap.size() << "member folders";
-                    // Prepare the panel's table with member rows, then start the upload
+                if (m_distributionPanel && !memberFileMap.isEmpty()) {
+                    qDebug() << "MainWindow: Preparing distribution for"
+                             << memberFileMap.size() << "member folders (user must start)";
+                    // Prepare the panel's table with member rows — do NOT auto-start upload
                     m_distributionPanel->prepareForUpload(memberFileMap);
-                    m_distributionController->uploadToMembers(memberFileMap);
-                    // Switch to Distribution panel to show progress
+                    // Switch to Distribution panel so user can review and start
                     m_contentStack->setCurrentWidget(m_distributionPanel);
                     m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Distribution);
                 }

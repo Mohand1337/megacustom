@@ -2,6 +2,7 @@
 #include "controllers/MultiUploaderController.h"
 #include "controllers/FileController.h"
 #include "dialogs/RemoteFolderBrowserDialog.h"
+#include "utils/CopyHelper.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -188,6 +189,7 @@ void MultiUploaderPanel::setupSourceSection(QVBoxLayout* mainLayout)
     m_sourceList = new QListWidget(this);
     m_sourceList->setMinimumHeight(80);
     m_sourceList->setMaximumHeight(150);
+    CopyHelper::installListCopyMenu(m_sourceList);
     sourceLayout->addWidget(m_sourceList);
 
     mainLayout->addWidget(sourceGroup);
@@ -201,6 +203,7 @@ void MultiUploaderPanel::setupDestinationSection(QVBoxLayout* mainLayout)
     m_destinationList = new QListWidget(this);
     m_destinationList->setMinimumHeight(60);
     m_destinationList->setMaximumHeight(120);
+    CopyHelper::installListCopyMenu(m_destinationList);
     destLayout->addWidget(m_destinationList, 1);
 
     auto* btnLayout = new QVBoxLayout();
@@ -254,6 +257,7 @@ void MultiUploaderPanel::setupRulesSection(QVBoxLayout* mainLayout)
     m_rulesTable->horizontalHeader()->setStretchLastSection(true);
     m_rulesTable->setMinimumHeight(80);
     m_rulesTable->setMaximumHeight(150);
+    CopyHelper::installTableCopyMenu(m_rulesTable);
     rulesLayout->addWidget(m_rulesTable);
 
     mainLayout->addWidget(rulesGroup);
@@ -296,6 +300,7 @@ void MultiUploaderPanel::setupTaskSection(QVBoxLayout* mainLayout)
     m_taskTable->setColumnCount(5);
     m_taskTable->setHorizontalHeaderLabels({"ID", "Status", "Progress", "Speed", "ETA"});
     m_taskTable->horizontalHeader()->setStretchLastSection(true);
+    CopyHelper::installTableCopyMenu(m_taskTable);
     taskLayout->addWidget(m_taskTable);
 
     mainLayout->addWidget(taskGroup);

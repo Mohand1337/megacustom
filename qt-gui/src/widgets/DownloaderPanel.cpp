@@ -2,6 +2,7 @@
 #include "styles/ThemeManager.h"
 #include "core/LogManager.h"
 #include "utils/AnimationHelper.h"
+#include "utils/CopyHelper.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -18,6 +19,8 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QCoreApplication>
+#include <QApplication>
+#include <QClipboard>
 
 namespace MegaCustom {
 
@@ -388,6 +391,19 @@ void DownloaderPanel::setupUI() {
             this, &DownloaderPanel::onTableSelectionChanged);
     connect(m_downloadTable, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
+
+        // Copy actions
+        QTableWidgetItem* clickedItem = m_downloadTable->itemAt(pos);
+        if (clickedItem) {
+            menu.addAction("Copy Cell", this, [this, clickedItem]() {
+                QApplication::clipboard()->setText(clickedItem->text());
+            });
+            menu.addAction("Copy Row", this, [this, clickedItem]() {
+                CopyHelper::copyRow(m_downloadTable, clickedItem->row());
+            });
+            menu.addSeparator();
+        }
+
         menu.addAction("Remove Selected", this, &DownloaderPanel::onRemoveSelected);
         menu.addAction("Clear Completed", this, &DownloaderPanel::onClearCompleted);
         menu.addAction("Clear All", this, &DownloaderPanel::onClearAll);

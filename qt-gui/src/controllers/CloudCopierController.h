@@ -224,8 +224,6 @@ public slots:
     // Utility
     void verifyDestinations();
     void createMissingDestinations();
-    void browseRemoteFolder();  // Request to open folder browser
-
     // Validation - check if paths exist in MEGA cloud
     void validateSources();
     void validateDestinations();

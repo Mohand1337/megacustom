@@ -30,17 +30,17 @@ Building a custom Mega.nz SDK application with advanced features using the nativ
 
 ---
 
-## CURRENT STATUS (February 24, 2026 - Phase 2 Implementation ~85%)
+## CURRENT STATUS (February 25, 2026 - Phase 2 Implementation ~90%)
 
 | Metric | Value |
 |--------|-------|
 | **Phase 1 Completion** | 100% (17/17 modules + GUI + Multi-Account) |
-| **Phase 2 Completion** | ~85% (Members, Watermarking, Distribution, Groups working) |
+| **Phase 2 Completion** | ~90% (Members, Watermarking, Distribution, Groups working) |
 | **Lines of Code** | ~60,000+ lines (Phase 2 added ~8,000+) |
 | **SDK Status** | FULLY INTEGRATED (libSDKlib.a) |
 | **CLI Status** | Fully functional with all features |
-| **GUI Status** | Phase 2 features deployed and in testing |
-| **Latest Feature** | Member Groups + Distribution UX improvements (Feb 24, 2026) |
+| **GUI Status** | Full UI/UX rebuild complete, QSS design system |
+| **Latest Feature** | Template-based watermark text + UI/UX rebuild (Feb 25, 2026) |
 
 ---
 
@@ -75,7 +75,8 @@ src/features/Watermarker.h/cpp                  # FFmpeg process wrapper
 # Distribution
 qt-gui/src/widgets/DistributionPanel.h/cpp      # Scan, match, copy/move to member destinations
 qt-gui/src/controllers/DistributionController.h/cpp # MegaApi upload, pause/resume/cancel
-qt-gui/src/utils/TemplateExpander.h/cpp         # {member}, {year}, {month} variable expansion
+qt-gui/src/utils/TemplateExpander.h/cpp         # 13-var template expansion ({brand}, {member_*}, dates)
+qt-gui/src/utils/AnimationHelper.h/cpp         # QPropertyAnimation fade/slide utility
 qt-gui/src/utils/CloudCopier.h/cpp              # Server-side copy/move operations
 qt-gui/src/workers/FolderCopyWorker.h/cpp       # QThread async copy with pause/resume
 
@@ -101,7 +102,7 @@ qt-gui/src/dialogs/RemoteFolderBrowserDialog.h/cpp
 - **Watermark** - FFmpeg video watermarking with per-member personalization
 - **Logs** - Activity log viewer
 
-### Member Groups (Latest Feature - Feb 24, 2026)
+### Member Groups (Feb 24, 2026)
 - **MemberGroup struct** in MemberRegistry — named groups with member IDs
 - **Groups tab** in MemberRegistryPanel — full CRUD with QSplitter layout
 - **WatermarkPanel** — groups in member combo (`GROUP:` prefix convention)
@@ -109,6 +110,25 @@ qt-gui/src/dialogs/RemoteFolderBrowserDialog.h/cpp
 - **Context menu** — "Add to Group..." submenu on Members table
 - **Groups column** — 8th column in Members table (blue text)
 - **UX fixes** — stop confirmation, pause visual, template validation, move warning banner
+
+### Full UI/UX Rebuild + Template Watermarks (Latest - Feb 25, 2026)
+
+#### UI/UX Rebuild
+- **QSS design system** — all panels aligned to objectName + property-based styling (no inline setStyleSheet)
+- **AnimationHelper** utility (`utils/AnimationHelper.h/cpp`) — QPropertyAnimation-based fade/slide effects
+- **Light & dark themes** fully updated (`mega_light.qss`, `mega_dark.qss`) with new rules for ConnectionIndicator, UserLabel, WatermarkPreviewLabel
+- **MainWindow fixes** — runtime theme switching (SettingsPanel::settingsSaved → applySettings), transfer speed connection moved to setTransferController()
+- **std::atomic<bool>** for m_cancelled in DownloaderPanel and WatermarkPanel (thread safety)
+- **Double-start guards** in WatermarkPanel and DistributionPanel
+
+#### Template-Based Watermark Text
+- **Bug fixed**: Data mixing between two members (root cause: C++ core's MemberDatabase loaded separately from Qt's MemberRegistry)
+- **Solution**: Bypass `watermarkVideoForMember()`/`watermarkPdfForMember()` entirely — expand templates in Qt layer using TemplateExpander + MemberRegistry
+- **13 template variables**: `{brand}`, `{member}`, `{member_id}`, `{member_name}`, `{member_email}`, `{member_ip}`, `{member_mac}`, `{member_social}`, `{month}`, `{month_num}`, `{year}`, `{date}`, `{timestamp}`
+- **User control**: Watermark text is now fully customizable (e.g., `{brand} - {member_name} ({member_id})`)
+- **Validation**: Pre-start check warns about missing member fields (email, IP, etc.)
+- **Preset system**: Save/load/delete named presets (text, CRF, interval, duration, FFmpeg preset)
+- **Both code paths fixed**: WatermarkPanel worker AND WatermarkerController worker use template expansion
 
 ### Remaining Work
 - PDF watermarking (Python script integration)
@@ -652,8 +672,8 @@ void MainWindow::onCrossAccountTransferCompleted(const MegaCustom::CrossAccountT
 
 ---
 
-*Last Updated: February 24, 2026 - Phase 2: Member Groups + Distribution UX*
-*Status: Phase 2 ~85% complete — Members, Watermarking, Distribution, Groups all working*
-*Latest: Member Groups with full CRUD, WatermarkPanel/DistributionPanel group integration, 5 UX fixes*
+*Last Updated: February 25, 2026 - Phase 2: Template Watermarks + UI/UX Rebuild*
+*Status: Phase 2 ~90% complete — Members, Watermarking, Distribution, Groups all working*
+*Latest: Template-based watermark text (13 vars), full UI/UX rebuild (QSS design system), audit fixes*
 
 **THIS FILE CONTAINS EVERYTHING NEEDED TO CONTINUE THE PROJECT**

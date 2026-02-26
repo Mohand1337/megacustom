@@ -1,6 +1,7 @@
 #include "WatermarkPanel.h"
 #include "utils/MemberRegistry.h"
 #include "utils/TemplateExpander.h"
+#include "utils/CopyHelper.h"
 #include "utils/Constants.h"
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
@@ -23,6 +24,8 @@
 #include <QSplitter>
 #include <QMenu>
 #include <QProcess>
+#include <QApplication>
+#include <QClipboard>
 
 namespace MegaCustom {
 
@@ -378,6 +381,19 @@ void WatermarkPanel::setupUI() {
             this, &WatermarkPanel::onTableSelectionChanged);
     connect(m_fileTable, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
+
+        // Copy actions
+        QTableWidgetItem* clickedItem = m_fileTable->itemAt(pos);
+        if (clickedItem) {
+            menu.addAction("Copy Cell", this, [this, clickedItem]() {
+                QApplication::clipboard()->setText(clickedItem->text());
+            });
+            menu.addAction("Copy Row", this, [this, clickedItem]() {
+                CopyHelper::copyRow(m_fileTable, clickedItem->row());
+            });
+            menu.addSeparator();
+        }
+
         menu.addAction("Remove Selected", this, &WatermarkPanel::onRemoveSelected);
         menu.addAction("Clear All", this, &WatermarkPanel::onClearAll);
         menu.exec(m_fileTable->viewport()->mapToGlobal(pos));
@@ -1124,7 +1140,11 @@ void WatermarkPanel::onStartWatermark() {
     connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
             [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
                 if (!memberFileMap.isEmpty()) {
-                    emit sendToDistributionMapped(memberFileMap);
+                    // Store the map for manual send — do NOT auto-emit
+                    m_lastMemberFileMap = memberFileMap;
+                    m_sendToDistBtn->setEnabled(true);
+                    m_statusLabel->setText(QString("Watermarked files for %1 members. Click 'Send to Distribution' to upload.")
+                        .arg(memberFileMap.size()));
                 }
             });
     connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);
@@ -1136,6 +1156,8 @@ void WatermarkPanel::onStartWatermark() {
     });
 
     m_isRunning = true;
+    m_lastMemberFileMap.clear();  // Clear previous session's data
+    m_sendToDistBtn->setEnabled(false);
     updateButtonStates();
     m_progressBar->setValue(0);
     m_statusLabel->setText("Starting...");
@@ -1588,8 +1610,18 @@ QString WatermarkPanel::formatFileSize(qint64 bytes) const {
 }
 
 void WatermarkPanel::onSendToDistribution() {
-    QStringList completedFiles;
+    // If we have a member file map from multi-member watermarking, send that
+    if (!m_lastMemberFileMap.isEmpty()) {
+        m_statusLabel->setText(QString("Sending files for %1 members to Distribution...")
+            .arg(m_lastMemberFileMap.size()));
+        emit sendToDistributionMapped(m_lastMemberFileMap);
+        m_lastMemberFileMap.clear();
+        m_sendToDistBtn->setEnabled(false);
+        return;
+    }
 
+    // Otherwise send flat file list (global/single-member mode)
+    QStringList completedFiles;
     for (const WatermarkFileInfo& info : m_files) {
         if (info.status == "complete" && !info.outputPath.isEmpty()) {
             completedFiles.append(info.outputPath);
@@ -1724,13 +1756,6 @@ void WatermarkPanel::onSavePreset() {
 
     QMessageBox::information(this, "Preset Saved",
         QString("Preset '%1' has been saved.").arg(presetName));
-}
-
-void WatermarkPanel::onLoadPreset() {
-    QString presetName = m_presetNameCombo->currentData().toString();
-    if (!presetName.isEmpty()) {
-        applyPreset(presetName);
-    }
 }
 
 void WatermarkPanel::onDeletePreset() {

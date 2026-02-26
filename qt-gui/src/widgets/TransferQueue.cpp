@@ -3,6 +3,7 @@
 #include "utils/Constants.h"
 #include "utils/DpiScaler.h"
 #include "styles/ThemeManager.h"
+#include "utils/CopyHelper.h"
 #include <QHeaderView>
 #include <QFileInfo>
 #include <QDebug>
@@ -93,6 +94,8 @@ void TransferQueue::setupUi() {
     m_transferTable->setColumnWidth(COL_SPEED, 100);
     m_transferTable->setColumnWidth(COL_ETA, 80);
     m_transferTable->setColumnWidth(COL_STATUS, 100);
+
+    CopyHelper::installTableCopyMenu(m_transferTable);
 
     mainLayout->addWidget(m_transferTable);
     setLayout(mainLayout);

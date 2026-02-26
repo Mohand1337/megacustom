@@ -75,7 +75,6 @@ struct MemberInfo {
 
     // === Phase 2: Distribution Folder (direct binding) ===
     QString distributionFolder;      // Direct MEGA folder for distributions (alternative to paths)
-    QString distributionFolderHandle; // MEGA node handle for fast access
 
     // === Pipeline Status Tracking ===
     MemberStatusInfo pipelineStatus;
@@ -195,11 +194,10 @@ public:
 
     // Import/Export
     bool exportToFile(const QString& filePath);
-    bool importFromFile(const QString& filePath);
+    bool importFromFile(const QString& filePath, bool mergeMode = true);
 
     // === Phase 2: Distribution folder management ===
-    void setDistributionFolder(const QString& memberId, const QString& folderPath,
-                               const QString& folderHandle = QString());
+    void setDistributionFolder(const QString& memberId, const QString& folderPath);
     void clearDistributionFolder(const QString& memberId);
     QList<MemberInfo> getMembersWithDistributionFolders() const;
 
@@ -223,6 +221,18 @@ public:
                                     bool withEmail = false,
                                     bool withIp = false,
                                     bool missingWmInfo = false) const;
+
+    // === Smart Folder Matching ===
+    struct FolderMatch {
+        QString folderName;
+        QString fullPath;
+        QString matchedMemberId;
+        QString matchType;  // "pattern", "id", "email", "name", "fuzzy", "manual", "none"
+        int confidence;     // 1-5 (5 = highest)
+    };
+
+    FolderMatch matchFolderToMember(const QString& folderName) const;
+    QList<FolderMatch> matchFoldersToMembers(const QStringList& folderNames) const;
 
     // === Pipeline Status ===
     void recordWatermark(const QString& memberId, int fileCount);
