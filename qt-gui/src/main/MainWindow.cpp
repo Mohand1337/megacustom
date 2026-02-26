@@ -1378,10 +1378,11 @@ void MainWindow::onNavigationItemClicked(int item)
         m_contentStack->setCurrentIndex(stackIndex);
     }
 
-    // Show/hide TopToolbar based on context - only show for Cloud Drive
-    if (m_topToolbar) {
+    // Show/hide toolbar container based on context - only show for Cloud Drive
+    // Toggle the container (not the child) to prevent layout recalculation artifacts
+    if (m_toolbarContainer) {
         bool isCloudDrive = (item == static_cast<int>(MegaSidebar::NavigationItem::CloudDrive));
-        m_topToolbar->setVisible(isCloudDrive);
+        m_toolbarContainer->setVisible(isCloudDrive);
     }
 
     qDebug() << "Navigation item clicked:" << item;
@@ -1457,8 +1458,8 @@ void MainWindow::onSettings()
     if (m_contentStack) {
         m_contentStack->setCurrentIndex(static_cast<int>(MegaSidebar::NavigationItem::Settings));
     }
-    if (m_topToolbar) {
-        m_topToolbar->setVisible(false);
+    if (m_toolbarContainer) {
+        m_toolbarContainer->setVisible(false);
     }
 }
 
@@ -1471,8 +1472,8 @@ void MainWindow::onAdvancedSearch()
     if (m_contentStack && m_advancedSearchPanel) {
         m_contentStack->setCurrentWidget(m_advancedSearchPanel);
     }
-    if (m_topToolbar) {
-        m_topToolbar->setVisible(false);  // Hide toolbar for this panel
+    if (m_toolbarContainer) {
+        m_toolbarContainer->setVisible(false);
     }
 }
 
@@ -1972,8 +1973,8 @@ void MainWindow::onShowTransferLog()
         m_contentStack->setCurrentWidget(m_crossAccountLogPanel);
         m_crossAccountLogPanel->refresh();
     }
-    if (m_topToolbar) {
-        m_topToolbar->setVisible(false);  // Hide toolbar for this panel
+    if (m_toolbarContainer) {
+        m_toolbarContainer->setVisible(false);
     }
 }
 
