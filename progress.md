@@ -1,7 +1,7 @@
 # MegaCustom Progress Tracker
 
-**Last Updated**: February 25, 2026
-**Current Phase**: Phase 2 Implementation — Core features working, UI/UX rebuilt
+**Last Updated**: February 27, 2026
+**Current Phase**: Phase 2 Implementation — Smart Engine + comprehensive code review complete
 
 ---
 
@@ -10,17 +10,18 @@
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | COMPLETE | Core app, multi-account, search |
-| Phase 2 | IN PROGRESS (~90%) | Watermarking, Distribution, Member Groups, UI/UX rebuilt |
+| Phase 2 | IN PROGRESS (~95%) | Watermarking, Distribution, Member Groups, Smart Engine, code review done |
 
 ---
 
 ## Phase 1 Summary (COMPLETE)
 
 ### Statistics
-- **Total LOC**: ~60,000+ lines (growing with Phase 2)
+- **Total LOC**: ~62,000+ lines
 - **Controllers**: 10 (7 original + WatermarkerController, DistributionController, CloudCopierController)
 - **Dialogs**: 17+
-- **Widgets**: 27+
+- **Widgets**: 30+
+- **SQLite databases**: 2 (transfer_log.db, metrics.db)
 
 ### Completed Features
 - Multi-Account Support
@@ -46,6 +47,9 @@
 | 2.6 | Member Groups + UX Polish | DONE (Feb 24, 2026) |
 | 2.7 | Full UI/UX Rebuild (QSS design system) | DONE (Feb 25, 2026) |
 | 2.8 | Template-Based Watermark Text (13 vars, data mixing fix) | DONE (Feb 25, 2026) |
+| 2.9 | Bug Fixes (6 issues: [NO SOURCE], unmaximize, copier logs, PDF args, processing order) | DONE (Feb 26, 2026) |
+| 2.10 | Smart Engine (MetricsStore + auto-upload pipeline + pre-flight disk checks) | DONE (Feb 27, 2026) |
+| 2.11 | Comprehensive code review (161 connect() calls audited, dead code removed) | DONE (Feb 27, 2026) |
 
 ### Phase 2 Key Components
 
@@ -96,11 +100,34 @@
 - std::atomic<bool> for thread-safe cancellation flags
 - Double-start guards on WatermarkPanel and DistributionPanel
 
+**Smart Engine** (Feb 27, 2026):
+- MetricsStore (`utils/MetricsStore.h/cpp`) — SQLite-backed self-learning database
+  - Records every watermark/upload operation (sizes, durations, speeds, success/failure)
+  - EMA (Exponential Moving Average) for predictions: `estimate = 0.2*actual + 0.8*previous`
+  - Confidence levels: conservative (0 ops) → learning (1-5) → improving (5-20) → confident (20+)
+  - Thread-safe with QMutex (WatermarkWorker runs on QThread)
+- MegaUploadUtils.h — Shared upload helpers (SyncRequestListener, ensureFolderExists, megaApiUpload)
+- Auto-upload pipeline in WatermarkPanel:
+  - Per-member: watermark all files → upload to MEGA → delete local → next member
+  - Disk only needs space for ONE member batch (vs ALL without auto-upload)
+  - Pre-flight disk space check with learned size predictions
+  - Smart estimate display with live predictions (output size, duration, disk free)
+  - Real-time disk monitoring between members
+
+**Code Review** (Feb 27, 2026):
+- Audited all 161 connect() calls in MainWindow — no duplicate or broken connections
+- Fixed search index staleness on account switch (m_searchIndex->clear())
+- Removed 5 dead signals/slots (FileExplorer, TopToolbar, MainWindow)
+- Verified memory safety, thread safety, error handling across all 9 controllers
+- Architecture: 12 panels, 9 controllers, 17 dialogs, 30+ widgets — all properly wired
+
 ### Remaining Phase 2 Work
 - PDF watermarking (Python script integration)
 - Distribution history panel (who got what, when)
 - Full end-to-end pipeline testing
 - Remote folder browser improvements
+- Smart Engine Phase 2: Checkpoint/resume with crash recovery
+- Smart Engine Phase 3: Adaptive timeouts, circuit breaker, error pattern detection
 
 ---
 
@@ -158,6 +185,8 @@ mega-custom-app/
 - **Dec 2025 - Feb 2026**: Phase 2 implementation (Watermarking, Distribution, Members, Groups)
 - **Feb 24, 2026**: Member Groups + Distribution UX improvements shipped
 - **Feb 25, 2026**: Full UI/UX rebuild (QSS design system) + Template-based watermark text (data mixing fix)
+- **Feb 26, 2026**: 6 bug fixes from real-world testing (distribution, watermark order, UI glitches)
+- **Feb 27, 2026**: Smart Engine (MetricsStore + auto-upload) + comprehensive code review
 
 ---
 

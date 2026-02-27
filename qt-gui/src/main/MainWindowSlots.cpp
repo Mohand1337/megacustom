@@ -158,22 +158,6 @@ void MainWindow::onContextMenuRequested(const QPoint& pos) {
     contextMenu.exec(globalPos);
 }
 
-void MainWindow::onLocalFileSelected(const QString& file) {
-    qDebug() << "Local file selected:" << file;
-}
-
-void MainWindow::onRemoteFileSelected(const QString& file) {
-    qDebug() << "Remote file selected:" << file;
-}
-
-void MainWindow::onLocalPathChanged(const QString& path) {
-    qDebug() << "Local path changed to:" << path;
-}
-
-void MainWindow::onRemotePathChanged(const QString& path) {
-    qDebug() << "Remote path changed to:" << path;
-}
-
 // State management
 QByteArray MainWindow::saveState() const {
     return QByteArray(); // Return empty for now

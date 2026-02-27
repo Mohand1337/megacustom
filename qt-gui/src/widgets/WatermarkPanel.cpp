@@ -3,6 +3,8 @@
 #include "utils/TemplateExpander.h"
 #include "utils/CopyHelper.h"
 #include "utils/Constants.h"
+#include "utils/MetricsStore.h"
+#include "utils/MegaUploadUtils.h"
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
 #include "dialogs/WatermarkSettingsDialog.h"
@@ -10,6 +12,8 @@
 #include "utils/AnimationHelper.h"
 #include <QSettings>
 #include <QInputDialog>
+#include <QStorageInfo>
+#include <QElapsedTimer>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -63,6 +67,15 @@ void WatermarkWorker::setRawTemplates(const QString& primary, const QString& sec
 
 void WatermarkWorker::cancel() {
     m_cancelled = true;
+}
+
+void WatermarkWorker::setAutoUpload(bool enabled, void* megaApi) {
+    m_autoUpload = enabled;
+    m_megaApi = megaApi;
+}
+
+void WatermarkWorker::setMetricsStore(MetricsStore* store) {
+    m_metricsStore = store;
 }
 
 // Helper: expand templates for a member and apply to watermarker config
@@ -119,6 +132,7 @@ void WatermarkWorker::process() {
 
         for (int j = 0; j < m_memberIds.size() && !m_cancelled; ++j) {
             QString memberId = m_memberIds[j];
+            QStringList memberOutputFiles;  // Track this member's outputs for auto-upload
 
             for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
                 QString inputPath = m_files[i];
@@ -150,9 +164,21 @@ void WatermarkWorker::process() {
                     result.error = "Unsupported file type";
                 }
 
+                // Record metrics (Smart Engine learning)
+                if (m_metricsStore) {
+                    QString ext = QFileInfo(inputPath).suffix().toLower();
+                    m_metricsStore->recordWatermark(
+                        ext, memberId,
+                        result.inputSizeBytes, result.outputSizeBytes,
+                        result.processingTimeMs, result.success,
+                        QString::fromStdString(result.error));
+                }
+
                 if (result.success) {
                     successCount++;
-                    memberFileMap[memberId].append(QString::fromStdString(result.outputFile));
+                    QString outFile = QString::fromStdString(result.outputFile);
+                    memberFileMap[memberId].append(outFile);
+                    memberOutputFiles.append(outFile);
                 } else {
                     failCount++;
                 }
@@ -161,6 +187,75 @@ void WatermarkWorker::process() {
                                   QString::fromStdString(result.outputFile),
                                   QString::fromStdString(result.error));
                 idx++;
+            }
+
+            // === Auto-upload & cleanup after this member's batch ===
+            if (m_autoUpload && m_megaApi && !m_cancelled && !memberOutputFiles.isEmpty()) {
+                mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
+                MemberInfo memberInfo = MemberRegistry::instance()->getMember(memberId);
+
+                if (!memberInfo.distributionFolder.isEmpty()) {
+                    int uploadOk = 0, uploadFail = 0, deleted = 0;
+
+                    for (int f = 0; f < memberOutputFiles.size() && !m_cancelled; ++f) {
+                        emit memberBatchUploading(memberId, f + 1,
+                            memberOutputFiles.size(), QFileInfo(memberOutputFiles[f]).fileName());
+
+                        QElapsedTimer uploadTimer;
+                        uploadTimer.start();
+                        std::string error;
+                        qint64 fileSize = QFileInfo(memberOutputFiles[f]).size();
+
+                        bool ok = megaApiUpload(api, memberOutputFiles[f].toStdString(),
+                                                memberInfo.distributionFolder.toStdString(), error);
+
+                        qint64 uploadMs = uploadTimer.elapsed();
+                        qint64 speed = (uploadMs > 0) ? (fileSize * 1000 / uploadMs) : 0;
+
+                        // Record upload metrics (Smart Engine learning)
+                        if (m_metricsStore) {
+                            QString ext = QFileInfo(memberOutputFiles[f]).suffix().toLower();
+                            m_metricsStore->recordUpload(ext, memberId, fileSize, uploadMs,
+                                                          speed, ok, QString::fromStdString(error));
+                        }
+
+                        if (ok) {
+                            uploadOk++;
+                            if (QFile::remove(memberOutputFiles[f])) deleted++;
+                        } else {
+                            uploadFail++;
+                            qWarning() << "Auto-upload failed:" << memberId
+                                       << memberOutputFiles[f] << QString::fromStdString(error);
+                        }
+                    }
+
+                    // Remove empty member subdirectory
+                    if (deleted > 0 && deleted == memberOutputFiles.size()) {
+                        QDir().rmdir(QFileInfo(memberOutputFiles.first()).path());
+                    }
+
+                    emit memberBatchCleanedUp(memberId, uploadOk, uploadFail, deleted);
+
+                    // Real-time disk check before next member
+                    if (j + 1 < m_memberIds.size()) {
+                        QString checkPath = m_outputDir.isEmpty()
+                            ? QFileInfo(m_files.first()).path() : m_outputDir;
+                        QStorageInfo storage(checkPath);
+                        storage.refresh();
+                        qint64 available = storage.bytesAvailable();
+                        // Rough estimate: next member needs same space as input files
+                        qint64 totalInputSize = 0;
+                        for (const QString& f : m_files) {
+                            totalInputSize += QFileInfo(f).size();
+                        }
+                        qint64 needed = static_cast<qint64>(totalInputSize * 1.2);
+                        if (available < needed) {
+                            emit diskSpaceWarning(available, needed);
+                        }
+                    }
+                } else {
+                    qWarning() << "Auto-upload: No distribution folder for member" << memberId;
+                }
             }
         }
 
@@ -667,6 +762,24 @@ void WatermarkPanel::setupUI() {
     outputLayout->addWidget(m_sameAsInputCheck);
     settingsLayout->addLayout(outputLayout);
 
+    // Auto-upload & Smart Estimate
+    m_autoUploadCheck = new QCheckBox("Auto-upload to MEGA && cleanup after each member (saves disk space)");
+    m_autoUploadCheck->setObjectName("AutoUploadCheck");
+    m_autoUploadCheck->setToolTip(
+        "After watermarking all files for a member:\n"
+        "1. Upload to their MEGA distribution folder\n"
+        "2. Delete local copies\n"
+        "3. Move to next member\n\n"
+        "Requires distribution folders configured in Members panel.\n"
+        "The app learns from each run to make better space predictions.");
+    m_autoUploadCheck->setEnabled(false);  // Only enabled in per-member mode
+    settingsLayout->addWidget(m_autoUploadCheck);
+
+    m_smartEstimateLabel = new QLabel();
+    m_smartEstimateLabel->setObjectName("SmartEstimateLabel");
+    m_smartEstimateLabel->setWordWrap(true);
+    settingsLayout->addWidget(m_smartEstimateLabel);
+
     mainLayout->addWidget(settingsGroup);
 
     // === Progress Section ===
@@ -1121,6 +1234,58 @@ void WatermarkPanel::onStartWatermark() {
     }
     populateTable();
 
+    // === Smart Engine: Pre-flight disk space check ===
+    if (!allMemberIds.isEmpty() && m_metricsStore) {
+        qint64 totalInputSize = 0;
+        for (const auto& fi : baseFiles) totalInputSize += fi.fileSize;
+
+        QString primaryExt = QFileInfo(baseFiles.first().filePath).suffix().toLower();
+        qint64 estimatedPerMember = m_metricsStore->predictOutputSize(primaryExt, totalInputSize);
+
+        QString checkPath = outputDir.isEmpty()
+            ? QFileInfo(baseFiles.first().filePath).path() : outputDir;
+        QStorageInfo storage(checkPath);
+        qint64 available = storage.bytesAvailable();
+        qint64 totalEstimate = estimatedPerMember * allMemberIds.size();
+
+        double confidence = m_metricsStore->predictionConfidence(primaryExt);
+        QString confLabel = confidence > 0.7 ? "high" : confidence > 0.3 ? "medium" : "low";
+
+        if (m_autoUploadCheck->isChecked()) {
+            // Auto-upload mode: only need space for ONE member batch
+            if (available < estimatedPerMember) {
+                QMessageBox::warning(this, "Insufficient Disk Space",
+                    QString("Not enough space for even one member's batch.\n\n"
+                            "Available: %1\n"
+                            "Estimated per member: %2 (%3 confidence)\n\n"
+                            "Free up disk space before starting.")
+                        .arg(formatFileSize(available))
+                        .arg(formatFileSize(estimatedPerMember))
+                        .arg(confLabel));
+                return;
+            }
+        } else {
+            // Normal mode: warn if not enough for all members
+            if (available < totalEstimate) {
+                auto reply = QMessageBox::question(this, "Disk Space Warning",
+                    QString("Estimated output: %1 for %2 members\n"
+                            "Available: %3 (%4 confidence)\n\n"
+                            "Enable auto-upload mode to save disk space?")
+                        .arg(formatFileSize(totalEstimate))
+                        .arg(allMemberIds.size())
+                        .arg(formatFileSize(available))
+                        .arg(confLabel),
+                    QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+
+                if (reply == QMessageBox::Yes) {
+                    m_autoUploadCheck->setChecked(true);
+                } else if (reply == QMessageBox::Cancel) {
+                    return;
+                }
+            }
+        }
+    }
+
     // Create worker thread
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
@@ -1132,6 +1297,14 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setMemberId(memberId);
     m_worker->setMemberIds(allMemberIds);
     m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
+
+    // Smart Engine: pass auto-upload and metrics to worker
+    if (m_autoUploadCheck->isChecked() && m_megaApi) {
+        m_worker->setAutoUpload(true, m_megaApi);
+    }
+    if (m_metricsStore) {
+        m_worker->setMetricsStore(m_metricsStore);
+    }
 
     connect(m_workerThread, &QThread::started, m_worker, &WatermarkWorker::process);
     connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);
@@ -1147,6 +1320,25 @@ void WatermarkPanel::onStartWatermark() {
                         .arg(memberFileMap.size()));
                 }
             });
+
+    // Smart Engine: auto-upload progress signals
+    connect(m_worker, &WatermarkWorker::memberBatchUploading, this,
+        [this](const QString& memberId, int fileIdx, int totalFiles, const QString& fileName) {
+            m_statusLabel->setText(QString("Uploading %1 to %2 (%3/%4)...")
+                .arg(fileName).arg(memberId).arg(fileIdx).arg(totalFiles));
+        });
+    connect(m_worker, &WatermarkWorker::memberBatchCleanedUp, this,
+        [this](const QString& memberId, int uploaded, int failed, int deleted) {
+            qDebug() << "Smart pipeline:" << memberId
+                     << "— uploaded:" << uploaded << "failed:" << failed << "cleaned:" << deleted;
+        });
+    connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
+        [this](qint64 available, qint64 needed) {
+            qWarning() << "Low disk space! Available:" << available << "Needed:" << needed;
+            m_statusLabel->setText(QString("Warning: Low disk (%1 free)")
+                .arg(formatFileSize(available)));
+        });
+
     connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
@@ -1231,11 +1423,17 @@ void WatermarkPanel::onModeChanged(int index) {
     bool isGlobal = m_modeCombo->currentData().toString() == "global";
     m_memberWidget->setVisible(!isGlobal);
 
+    // Auto-upload only available in per-member mode
+    m_autoUploadCheck->setEnabled(!isGlobal);
+    if (isGlobal) m_autoUploadCheck->setChecked(false);
+
     // Text fields are always editable — they accept template variables in both modes
     // Pre-fill with a sensible default when switching to member mode with empty fields
     if (!isGlobal && m_primaryTextEdit->text().isEmpty()) {
         m_primaryTextEdit->setText("{brand} - {member_name} ({member_id})");
     }
+
+    updateSmartEstimate();
 }
 
 void WatermarkPanel::onMemberSelectionChanged() {
@@ -1243,6 +1441,7 @@ void WatermarkPanel::onMemberSelectionChanged() {
     m_selectionSummaryLabel->setText(
         QString("%1 selected").arg(selected.size()));
     updateButtonStates();
+    updateSmartEstimate();
 }
 
 void WatermarkPanel::onSelectAllMembers() {
@@ -1502,6 +1701,9 @@ void WatermarkPanel::updateStats() {
 
     m_statsLabel->setTextFormat(Qt::RichText);
     m_statsLabel->setText(statsText);
+
+    // Update smart estimate when file list changes
+    updateSmartEstimate();
 }
 
 void WatermarkPanel::updateButtonStates() {
@@ -1874,6 +2076,76 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
     msgBox.setIcon(QMessageBox::Information);
     msgBox.setMinimumWidth(500);
     msgBox.exec();
+}
+
+// ==================== Smart Engine ====================
+
+void WatermarkPanel::setMegaApi(mega::MegaApi* api) {
+    m_megaApi = api;
+}
+
+void WatermarkPanel::setMetricsStore(MetricsStore* store) {
+    m_metricsStore = store;
+}
+
+void WatermarkPanel::updateSmartEstimate() {
+    if (!m_smartEstimateLabel) return;
+
+    if (m_files.isEmpty() || !m_metricsStore) {
+        m_smartEstimateLabel->clear();
+        return;
+    }
+
+    bool isGlobal = m_modeCombo->currentData().toString() == "global";
+    QStringList memberIds = isGlobal ? QStringList() : getSelectedMemberIds();
+
+    qint64 totalInput = 0;
+    // Deduplicate files (m_files may be expanded with per-member entries)
+    QSet<QString> seenPaths;
+    for (const auto& fi : m_files) {
+        if (!seenPaths.contains(fi.filePath)) {
+            seenPaths.insert(fi.filePath);
+            totalInput += fi.fileSize;
+        }
+    }
+
+    if (totalInput == 0) {
+        m_smartEstimateLabel->clear();
+        return;
+    }
+
+    int memberCount = memberIds.isEmpty() ? 1 : memberIds.size();
+    QString ext = QFileInfo(m_files.first().filePath).suffix().toLower();
+
+    qint64 perMember = m_metricsStore->predictOutputSize(ext, totalInput);
+    qint64 totalOutput = perMember * memberCount;
+    qint64 wmDuration = m_metricsStore->predictWatermarkDuration(ext, totalInput) * memberCount;
+    qint64 uploadDuration = m_metricsStore->predictUploadDuration(totalOutput);
+
+    int ops = m_metricsStore->totalOperations();
+    QString learnLabel = ops < 5 ? "learning..." : ops < 20 ? "improving" : "confident";
+
+    // Format duration
+    auto fmtDur = [](qint64 ms) -> QString {
+        if (ms < 60000) return QString("%1s").arg(ms / 1000);
+        if (ms < 3600000) return QString("%1m %2s").arg(ms / 60000).arg((ms % 60000) / 1000);
+        return QString("%1h %2m").arg(ms / 3600000).arg((ms % 3600000) / 60000);
+    };
+
+    // Get disk space
+    QString outputPath = m_sameAsInputCheck->isChecked()
+        ? QFileInfo(m_files.first().filePath).path() : m_outputDirEdit->text();
+    QStorageInfo storage(outputPath);
+    qint64 available = storage.bytesAvailable();
+
+    m_smartEstimateLabel->setText(
+        QString("Est: %1 output | %2 watermark + %3 upload | Disk: %4 free | AI: %5 (%6 ops)")
+            .arg(formatFileSize(totalOutput))
+            .arg(fmtDur(wmDuration))
+            .arg(fmtDur(uploadDuration))
+            .arg(formatFileSize(available))
+            .arg(learnLabel)
+            .arg(ops));
 }
 
 } // namespace MegaCustom

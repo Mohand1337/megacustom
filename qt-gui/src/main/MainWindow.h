@@ -263,10 +263,6 @@ private slots:
     void onContextMenuRequested(const QPoint& pos);
 
     // File explorer signals
-    void onLocalFileSelected(const QString& path);
-    void onRemoteFileSelected(const QString& path);
-    void onLocalPathChanged(const QString& path);
-    void onRemotePathChanged(const QString& path);
     void onFilesDropped(const QStringList& files, const QString& target);
 
     // Transfer signals

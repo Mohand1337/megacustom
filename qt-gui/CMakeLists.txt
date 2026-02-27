@@ -114,6 +114,7 @@ set(SOURCES
     src/utils/TemplateExpander.cpp
     src/utils/CopyHelper.cpp
     src/utils/CloudPathValidator.cpp
+    src/utils/MetricsStore.cpp
     src/dialogs/LoginDialog.cpp
     src/dialogs/AboutDialog.cpp
     src/dialogs/MappingEditDialog.cpp
@@ -199,6 +200,8 @@ set(HEADERS
     src/utils/TemplateExpander.h
     src/utils/CopyHelper.h
     src/utils/CloudPathValidator.h
+    src/utils/MetricsStore.h
+    src/utils/MegaUploadUtils.h
     src/dialogs/LoginDialog.h
     src/dialogs/AboutDialog.h
     src/dialogs/MappingEditDialog.h

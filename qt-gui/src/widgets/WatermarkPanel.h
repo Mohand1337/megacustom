@@ -18,11 +18,14 @@
 #include <memory>
 #include <atomic>
 
+namespace mega { class MegaApi; }
+
 namespace MegaCustom {
 
 class Watermarker;
 class MemberRegistry;
 class WatermarkerController;
+class MetricsStore;
 struct WatermarkConfig;
 struct WatermarkResult;
 
@@ -56,6 +59,8 @@ public:
     void setMemberId(const QString& memberId);
     void setMemberIds(const QStringList& memberIds);
     void setRawTemplates(const QString& primary, const QString& secondary);
+    void setAutoUpload(bool enabled, void* megaApi);
+    void setMetricsStore(MetricsStore* store);
 
 public slots:
     void process();
@@ -68,6 +73,9 @@ signals:
     void finished(int successCount, int failCount);
     void finishedWithMapping(int successCount, int failCount,
                              const QMap<QString, QStringList>& memberFileMap);
+    void memberBatchUploading(const QString& memberId, int fileIdx, int totalFiles, const QString& fileName);
+    void memberBatchCleanedUp(const QString& memberId, int uploaded, int failed, int deleted);
+    void diskSpaceWarning(qint64 available, qint64 needed);
 
 private:
     QStringList m_files;
@@ -78,6 +86,9 @@ private:
     QString m_rawSecondaryTemplate;
     std::shared_ptr<WatermarkConfig> m_config;
     std::atomic<bool> m_cancelled{false};
+    bool m_autoUpload = false;
+    void* m_megaApi = nullptr;
+    MetricsStore* m_metricsStore = nullptr;
 };
 
 /**
@@ -92,6 +103,8 @@ public:
     ~WatermarkPanel();
 
     void setController(WatermarkerController* controller);
+    void setMegaApi(mega::MegaApi* api);
+    void setMetricsStore(MetricsStore* store);
 
 signals:
     void watermarkStarted();
@@ -145,6 +158,7 @@ private:
     QString formatFileSize(qint64 bytes) const;
     void loadPresets();
     void applyPreset(const QString& presetName);
+    void updateSmartEstimate();
 
     // UI Components - File Selection
     QTableWidget* m_fileTable;
@@ -216,6 +230,12 @@ private:
 
     // Controller (optional - for advanced functionality)
     WatermarkerController* m_controller = nullptr;
+
+    // Smart Engine: auto-upload & disk management
+    QCheckBox* m_autoUploadCheck = nullptr;
+    QLabel* m_smartEstimateLabel = nullptr;
+    mega::MegaApi* m_megaApi = nullptr;
+    MetricsStore* m_metricsStore = nullptr;
 };
 
 } // namespace MegaCustom

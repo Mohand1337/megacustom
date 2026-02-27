@@ -167,13 +167,6 @@ signals:
     void downloadRequested(const QString& remotePath);
 
     /**
-     * Emitted when context menu is requested
-     * @param path Path where menu was requested
-     * @param globalPos Global position for menu
-     */
-    void contextMenuRequested(const QString& path, const QPoint& globalPos);
-
-    /**
      * Emitted when a move operation is requested
      * @param source Source path to move
      * @param destination Destination directory

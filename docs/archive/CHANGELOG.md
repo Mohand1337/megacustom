@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-02-27
+
+### Added - Smart Engine + Comprehensive Code Review
+
+#### Smart Engine — Self-Learning Metrics + Auto-Upload Pipeline
+- **MetricsStore** (`utils/MetricsStore.h/cpp`) — SQLite-backed learning database (singleton)
+  - `job_metrics` table: records every watermark/upload operation with sizes, durations, speeds, disk free
+  - `ema_cache` table: learned EMA (Exponential Moving Average) estimates per file category
+  - EMA formula: `estimate[n] = 0.2 * actual[n] + 0.8 * estimate[n-1]` — adapts to changing conditions
+  - Predictions: `predictOutputSize()`, `predictWatermarkDuration()`, `predictUploadDuration()`
+  - Confidence tracking: conservative (0 ops, 50% margin) → learning (1-5) → improving (5-20) → confident (20+, minimal margin)
+  - Thread-safe with `QMutex` on all public methods
+  - DB at `~/.config/MegaCustom/metrics.db` (WAL mode for performance)
+- **MegaUploadUtils.h** (`utils/MegaUploadUtils.h`) — Shared upload helpers extracted from DistributionController
+  - `SyncRequestListener`, `SyncTransferListener` — blocking MEGA SDK listeners
+  - `ensureFolderExists()` — recursive MEGA folder creation
+  - `megaApiUpload()` — blocking upload with 10-minute timeout
+  - Used by both DistributionController and WatermarkPanel worker
+- **Auto-upload pipeline** in WatermarkPanel worker:
+  - Per-member: watermark all files → upload to MEGA distribution folder → delete local files → next member
+  - Disk only needs space for ONE member's batch (vs ALL members without auto-upload)
+  - Pre-flight disk space check using MetricsStore predictions before starting
+  - Smart estimate display: live label with predicted output size, duration, upload time, disk free, learning status
+  - Real-time disk monitoring (QStorageInfo) between member batches
+  - Metrics recording after every watermark and upload operation
+- **WatermarkPanel UI additions**:
+  - `m_autoUploadCheck` — "Auto-upload to MEGA & cleanup" checkbox (per-member mode only)
+  - `m_smartEstimateLabel` — Live prediction label updating on file/member/output changes
+  - `setMegaApi()`, `setMetricsStore()` — injection methods wired from MainWindow
+- **WatermarkWorker new signals**: `memberBatchUploading`, `memberBatchCleanedUp`, `diskSpaceWarning`
+- **CMakeLists.txt** — Added MetricsStore.cpp to sources, MegaUploadUtils.h to headers
+- **MainWindow.cpp** — Wired MegaApi and MetricsStore to WatermarkPanel
+
+#### Comprehensive Code Review
+- Audited all 161 `connect()` calls in MainWindow.cpp — no duplicate or broken connections found
+- Verified all 12 panels correctly wired to controllers
+- Verified pipeline flow: Downloader → Watermark → Distribution (dual connections: data + navigation — intentional)
+- Confirmed memory safety (RAII/smart pointers), thread safety (QMetaObject::invokeMethod), error handling across all 9 controllers
+
+### Fixed - Feb 27, 2026
+- **Search index staleness on account switch** — Added `m_searchIndex->clear()` in `onAccountSwitched()` to prevent stale search results from previous account's data
+- **DistributionController code duplication** — Replaced ~220 lines of local upload helpers with `#include "utils/MegaUploadUtils.h"`
+
+### Removed - Feb 27, 2026 (Dead Code)
+- `contextMenuRequested` signal from FileExplorer.h (declared but never emitted)
+- `searchKeyPressed` signal from TopToolbar.h (declared but never emitted)
+- `onLocalFileSelected`, `onRemoteFileSelected`, `onLocalPathChanged`, `onRemotePathChanged` stub slots from MainWindow (debug-only, never connected)
+
+## [0.3.2] - 2026-02-26
+
+### Fixed - Bug Fixes from Real-World Testing
+- **Distribution [NO SOURCE]** — Pasted rows in distribution table lacked source path; fixed to use `m_wmPathEdit` as source
+- **Window unmaximize on folder navigation** — `setUpdatesEnabled(false/true)` around layout changes prevents X11/WSL geometry events
+- **Cloud Copier completion logs** — Error log section now shows completion counts
+- **PDF watermark metadata arguments** — Fixed argument ordering for Watermarker metadata args
+- **Watermark processing order** — Changed to member-first loop (all files for member 1, then member 2) instead of file-first
+- **Breadcrumb layout cascade** — `setFixedHeight(0/48)` replaces `setVisible()` on QSplitter children to prevent geometry cascade
+
 ## [0.3.1] - 2026-02-25
 
 ### Added - Full UI/UX Rebuild + Template-Based Watermarks

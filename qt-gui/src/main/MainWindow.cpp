@@ -24,6 +24,7 @@
 #include "controllers/CloudCopierController.h"
 #include "controllers/DistributionController.h"
 #include "controllers/WatermarkerController.h"
+#include "utils/MetricsStore.h"
 #include "dialogs/LoginDialog.h"
 #include "widgets/SettingsPanel.h"
 #include "widgets/SearchResultsPanel.h"
@@ -362,6 +363,13 @@ void MainWindow::setCloudCopierController(CloudCopierController* controller)
     if (m_distributionPanel) {
         MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
         m_distributionPanel->setMegaApi(megaManager.getMegaApi());
+    }
+
+    // Smart Engine: pass MegaApi and MetricsStore to WatermarkPanel
+    if (m_watermarkPanel) {
+        MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
+        m_watermarkPanel->setMegaApi(megaManager.getMegaApi());
+        m_watermarkPanel->setMetricsStore(&MegaCustom::MetricsStore::instance());
     }
 }
 
@@ -1767,6 +1775,11 @@ void MainWindow::onAccountSwitched(const QString& accountId)
         if (m_userLabel) {
             m_userLabel->setText(account->email);
         }
+    }
+
+    // Clear stale search index from previous account
+    if (m_searchIndex) {
+        m_searchIndex->clear();
     }
 
     // Refresh file explorer with new account's data

@@ -1,274 +1,158 @@
 # MegaCustom - Advanced Mega.nz Cloud Storage Client
 
-A powerful, feature-rich desktop application built on top of the official Mega.nz SDK, providing both CLI and GUI interfaces with advanced file management capabilities including regex-based bulk renaming, multi-destination uploads, and intelligent folder synchronization.
+A powerful, feature-rich desktop application built on the official Mega.nz C++ SDK, providing both CLI and Qt6 GUI interfaces with multi-account support, watermarking, member distribution, intelligent sync, and self-learning metrics.
 
-## 🎉 Project Status: 85% Complete
+## Project Status: ~95% Complete
 
-### ✅ Completed
-- **CLI Application**: All 14 modules implemented and fully functional
-- **Qt6 GUI Framework**: Complete desktop interface built and compiled
-- **Backend Integration**: Bridge architecture connecting GUI to CLI modules
-- **Mega SDK**: Successfully integrated (118MB static library)
-- **Documentation**: Comprehensive docs for all components
-
-### 🚧 In Progress
-- **Testing**: Validating GUI with real Mega SDK integration
-
-### 📋 Coming Soon
-- Windows installer
-- macOS support
-- Web interface
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | COMPLETE | CLI + GUI + Multi-Account + Search |
+| Phase 2 | ~95% | Members, Watermarking, Distribution, Groups, Smart Engine |
 
 ## Quick Start
 
-### Run CLI Application (Fully Functional)
+### Run GUI
 ```bash
-cd /home/mow/projects/Mega\ -\ SDK/mega-custom-app/cli/build
-./megacustom help
-./megacustom login
-./megacustom ls /
+cd qt-gui/build-qt
+cmake .. && make -j$(nproc)
+export MEGA_APP_KEY="9gETCbhB"
+./MegaCustomGUI
 ```
 
-### Run GUI Application (Framework Complete)
+### Run CLI
 ```bash
-cd /home/mow/projects/Mega\ -\ SDK/mega-custom-app/qt-gui/build-qt
-./MegaCustomGUI
+make && ./megacustom help
+./megacustom auth login EMAIL PASSWORD
+./megacustom folder list /
 ```
 
 ## Features
 
-### Core Capabilities
-- **Secure Authentication**: 2FA support, session persistence, encrypted credential storage
-- **High-Performance Transfers**: Parallel uploads/downloads with chunking and resume
-- **Bandwidth Management**: Configurable limits and throttling
-- **Progress Tracking**: Real-time updates with ETA calculations
-- **Cross-Platform**: Linux, Windows (coming), macOS (planned)
+### Core
+- **Multi-Account Support** — Switch between MEGA accounts instantly (Ctrl+Tab), up to 5 cached sessions (LRU)
+- **Cross-Account Transfers** — Copy/move files between accounts via public links
+- **Everything-like Search** — Instant cloud search (<100ms) with regex, size, date, type filters
+- **Dual-Pane File Explorer** — Cloud file browsing with drag-drop, context menus, breadcrumb navigation
+- **System Tray** — Background operation with tray icon and menu
+- **Light & Dark Themes** — QSS-based design system with MEGA branding
 
-### Advanced Features
+### File Management
+- **Folder Mapper** — Map local folders to MEGA destinations, incremental upload
+- **Multi Uploader** — Upload to multiple destinations with smart routing rules
+- **Smart Sync** — Bidirectional sync with conflict resolution and scheduling
+- **Cloud Copier** — Cloud-to-cloud copy/move with template expansion and member mode
+- **Transfer Queue** — Progress tracking with real-time speed display
 
-#### 1. Regex-Based Bulk Renaming
-- PCRE2 regex pattern support for complex operations
-- Preview mode with conflict detection
-- Undo/redo functionality with full history
-- 7 case conversion styles
-- Sequential numbering and date/time insertion
-- Safe mode with automatic backups
+### Member Management & Distribution
+- **Member Registry** — JSON-based member database with groups, paths, watermark config
+- **Member Groups** — Named groups (e.g., "NHB2026") for quick selection across panels
+- **Distribution Panel** — Scan folders, match to members, bulk upload to member destinations
+- **WordPress Sync** — Import members from WordPress REST API
+- **Import/Export** — JSON and CSV support
 
-#### 2. Multi-Destination Bulk Upload
-- Upload to multiple folders simultaneously
-- Smart distribution rules by extension/size/date
-- Queue management with priority system
-- Duplicate detection before upload
-- Import/export task configurations
+### Watermarking
+- **Video Watermarking** — FFmpeg-based with configurable text, position, opacity, interval, duration
+- **Template Variables** — 13 variables: `{brand}`, `{member_name}`, `{member_id}`, `{member_email}`, `{member_ip}`, `{member_mac}`, `{member_social}`, `{member}`, `{month}`, `{month_num}`, `{year}`, `{date}`, `{timestamp}`
+- **Per-Member Personalization** — Each member gets unique watermark text
+- **Preset System** — Save/load/delete named watermark presets
+- **Auto-Upload Pipeline** — Watermark → Upload to MEGA → Delete local → Next member (saves disk space)
+- **Pipeline Integration** — Downloader → Watermark → Distribution (auto-send between panels)
 
-#### 3. Smart Folder Synchronization
-- Bidirectional sync with conflict resolution
-- Multiple resolution strategies (newer/older/larger/smaller wins)
-- Scheduled automatic sync
-- Dry-run analysis mode
-- Sync profiles management
+### Smart Engine (Self-Learning)
+- **MetricsStore** — SQLite database recording every operation (sizes, durations, speeds)
+- **EMA Learning** — Exponential Moving Average adapts predictions to changing conditions
+- **Pre-Flight Checks** — Estimates disk space needed before starting, warns if insufficient
+- **Smart Estimates** — Live display of predicted output size, duration, upload time
+- **Confidence Levels** — Conservative (new) → Learning → Improving → Confident (20+ operations)
 
-#### 4. Qt6 Desktop GUI
-- Modern, responsive interface
-- Dual-pane file explorer
-- Drag & drop support
-- Transfer queue visualization
-- System tray integration
-- Dark mode support (coming)
-
-## Project Structure
-
-```
-mega-custom-app/
-├── cli/                    # Command-line interface
-│   ├── build/
-│   │   └── megacustom     # CLI executable (3.5MB)
-│   └── src/
-│       └── modules/       # 14 functional modules
-│
-├── qt-gui/                # Qt6 Desktop GUI
-│   ├── build-qt/
-│   │   └── MegaCustomGUI  # GUI executable (920KB)
-│   └── src/
-│       ├── main/          # Application framework
-│       ├── widgets/       # UI components
-│       ├── dialogs/       # Dialog windows
-│       ├── controllers/   # Business logic
-│       └── bridge/        # Backend integration layer
-│
-├── third_party/
-│   └── sdk/              # Mega SDK
-│       └── build_sdk/
-│           └── libSDKlib.a # Static library (118MB)
-│
-└── docs/                  # Documentation
-    ├── GUI_ROADMAP.md
-    ├── GUI_ARCHITECTURE.md
-    └── GUI_REQUIREMENTS.md
-```
-
-## Building from Source
-
-### Prerequisites
-- C++17 compatible compiler (GCC 7+, Clang 5+, MSVC 2017+)
-- CMake 3.16+
-- Qt6.4+ (for GUI)
-- PCRE2 library (optional, for advanced regex)
-
-### Build CLI
-```bash
-cd cli
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-```
-
-### Build GUI
-```bash
-cd qt-gui
-mkdir build-qt && cd build-qt
-cmake ..
-make -j$(nproc)
-```
-
-## CLI Usage Examples
-
-### Authentication
-```bash
-./megacustom login user@example.com
-./megacustom logout
-./megacustom whoami
-```
-
-### File Operations
-```bash
-./megacustom upload file.txt /Cloud/Documents
-./megacustom download /Cloud/file.txt ./local/
-./megacustom ls /Cloud
-./megacustom rm /Cloud/old_file.txt
-```
-
-### Advanced Features
-```bash
-# Regex rename
-./megacustom regex-rename "/Cloud/Photos" "IMG_(\d+)" "Photo_$1" --preview
-
-# Multi-upload
-./megacustom multi-upload ./local_files --dest /Cloud/Folder1 /Cloud/Folder2
-
-# Smart sync
-./megacustom smart-sync ./local /Cloud/Backup --bidirectional --auto
-```
-
-## GUI Features
-
-### Main Interface
-- **Menu Bar**: File, Edit, View, Tools, Help menus
-- **Toolbar**: Quick access to common operations
-- **Dual-Pane Explorer**: Local and remote file browsing
-- **Status Bar**: Connection status and user info
-- **System Tray**: Background operation support
-
-### Dialogs
-- **Login Dialog**: Secure authentication with 2FA
-- **Settings Dialog**: Comprehensive preferences
-- **Transfer Queue**: Visual transfer management
-- **About Dialog**: Version and license info
+### Logging & History
+- **Activity Log** — Searchable activity viewer with level/category filtering
+- **Transfer Log** — SQLite-backed cross-account transfer history
+- **Distribution Tracking** — Per-member watermark and distribution counts
 
 ## Architecture
 
-### Design Patterns
-- **MVC Pattern**: Separation of UI from business logic
-- **Singleton**: Application and settings management
-- **Observer**: Event-driven architecture
-- **Bridge**: GUI-CLI integration layer
-- **Factory**: Module creation
+```
+Application
+├── MainWindow (161 signal/slot connections)
+│   ├── MegaSidebar → QStackedWidget (14 panels)
+│   ├── TopToolbar (breadcrumb, search, file actions)
+│   ├── FileExplorer (cloud drive browser)
+│   ├── 12 Feature Panels
+│   └── TransferQueue
+├── 9 Controllers (Auth, File, Transfer, FolderMapper, MultiUploader,
+│   SmartSync, CloudCopier, Distribution, Watermarker)
+├── Account System (AccountManager, SessionPool, CredentialStore)
+├── Search System (CloudSearchIndex, SearchQueryParser)
+├── Styling (ThemeManager, DesignTokens, StyleSheetGenerator)
+└── Singletons (MemberRegistry, MetricsStore, Settings, IconProvider)
+```
 
-### Technology Stack
-- **C++17**: Modern C++ features
-- **Qt6**: Cross-platform GUI framework
-- **Mega SDK**: Official cloud storage API
-- **CMake**: Build system
-- **PCRE2**: Advanced regex support
+### Key Patterns
+- **Dependency Injection** — Controllers injected into panels via setters
+- **Signal/Slot** — Loose coupling via Qt signals for inter-component communication
+- **Worker Threads** — QThread for heavy operations (watermarking, distribution, downloads)
+- **MVC Separation** — Controllers (logic), Panels (UI), Models (data)
+- **Template Expansion** — 13-variable system for watermark text and destination paths
+
+## Project Statistics
+
+| Metric | Value |
+|--------|-------|
+| Lines of Code | ~62,000+ |
+| Panels/Widgets | 30+ |
+| Controllers | 9 |
+| Dialogs | 17 |
+| SQLite Databases | 2 (transfer_log.db, metrics.db) |
+| Signal Connections | 161 (MainWindow) |
+
+## Building
+
+### Prerequisites
+- C++17 compiler (GCC 7+, Clang 5+, MSVC 2017+)
+- CMake 3.16+
+- Qt 6 (Widgets, Network, Concurrent, Sql, Svg)
+- OpenSSL, CURL, ZLIB, libsodium, SQLite3, ICU, crypto++, c-ares
+
+### Linux
+```bash
+cd qt-gui/build-qt && cmake .. && make -j$(nproc)
+```
+
+### Windows (VCPKG)
+```powershell
+$cmake = "path\to\cmake.exe"
+& $cmake --build qt-gui\build-win64 --config Release
+```
 
 ## Documentation
 
-- [GUI Roadmap](docs/GUI_ROADMAP.md) - Development timeline
-- [GUI Architecture](docs/GUI_ARCHITECTURE.md) - Technical design
-- [GUI Requirements](docs/GUI_REQUIREMENTS.md) - Feature specifications
-- [Progress Report](progress.md) - Detailed development history
-- [Next Steps](NEXT_STEPS.md) - Upcoming tasks
+| File | Description |
+|------|-------------|
+| `claude.md` | Full project context (AI agent reference) |
+| `progress.md` | Quick status tracker |
+| `docs/USER_GUIDE.md` | End-user documentation |
+| `docs/DEVELOPER_GUIDE.md` | Technical reference |
+| `docs/archive/CHANGELOG.md` | Detailed version history |
+| `docs/archive/TODO.md` | Remaining work |
 
-## Current Development Status
+## Keyboard Shortcuts
 
-### Completed Modules (100%)
-- ✅ ConfigManager - Configuration management
-- ✅ MegaManager - SDK initialization
-- ✅ AuthenticationModule - Login/logout/2FA
-- ✅ FileOperations - Upload/download
-- ✅ FolderManager - Folder operations
-- ✅ SyncManager - Sync operations
-- ✅ TransferManager - Transfer queue
-- ✅ AccountInfo - Account details
-- ✅ ShareManager - Sharing features
-- ✅ SearchModule - File search
-- ✅ EncryptionModule - Client-side encryption
-- ✅ LoggingModule - Detailed logging
-- ✅ RegexRenamer - Bulk renaming
-- ✅ MultiUploader - Multi-destination uploads
-- ✅ SmartSync - Intelligent sync
-
-### Project Metrics
-- **Total Code**: ~28,000 lines
-- **Total Files**: 420+
-- **Test Coverage**: 300+ test files
-- **Development Time**: 8 sessions
-- **Overall Progress**: 85% complete
-
-## Contributing
-
-This project is currently in active development. Contributions will be welcome once the initial release is complete.
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+Tab | Cycle to next account |
+| Ctrl+Shift+Tab | Cycle to previous account |
+| Ctrl+Shift+A | Open account switcher |
+| Ctrl+Shift+F | Advanced search |
+| Ctrl+F | Find in current view |
+| F5 | Refresh |
+| F2 | Rename |
 
 ## License
 
-This project uses the Mega SDK which has its own licensing terms. The custom application code is provided as-is for educational and personal use.
-
-## Recent Changes (November 30, 2024)
-
-### Files Removed During Backend Integration
-
-The following files were removed as they were temporary placeholders or duplicates that conflicted with the real implementations:
-
-1. **`/qt-gui/src/bridge/BackendStubs.h`** (Removed)
-   - **What it was**: Temporary stub header file containing mock implementations of CLI modules
-   - **Why removed**: Replaced with `BackendModules.h` which includes the real CLI module headers
-   - **Purpose it served**: Allowed GUI compilation before CLI integration was complete
-
-2. **`/qt-gui/src/MegaManager.cpp`** (Removed)
-   - **What it was**: Duplicate stub implementation of MegaManager for GUI
-   - **Why removed**: Conflicted with the real singleton MegaManager from CLI modules
-   - **Resolution**: Now using the actual CLI's MegaManager singleton via `MegaCustom::MegaManager::getInstance()`
-
-3. **`/qt-gui/src/MegaManager.h`** (Removed)
-   - **What it was**: Duplicate header file for the stub MegaManager
-   - **Why removed**: No longer needed as we use the real header from `/include/core/MegaManager.h`
-   - **Impact**: Eliminated "multiple definition" linking errors
-
-### Configuration Changes
-
-- **API Key**: Changed from hardcoded `"YOUR_MEGA_APP_KEY"` to environment variable `MEGA_APP_KEY`
-- **Authentication**: Replaced timer-based simulation with actual `AuthenticationModule` calls
-- **File Operations**: Connected to real `FileOperations` class instead of stubs
-
-## Acknowledgments
-
-- Mega.nz for providing the SDK
-- Qt Company for the Qt6 framework
-- PCRE2 project for regex support
+This project uses the Mega SDK which has its own licensing terms. The custom application code is provided as-is for personal use.
 
 ---
 
-*Last Updated: November 30, 2024*
-*Version: 1.0.0-beta*
-*Status: Backend Integration Complete - Ready for Testing*
-
+*Last Updated: February 27, 2026*
+*Version: 0.3.3*

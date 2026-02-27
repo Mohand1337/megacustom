@@ -56,8 +56,6 @@ signals:
     void searchRequested(const QString& text);
     void searchFocusGained();
     void searchFocusLost();
-    void searchKeyPressed(QKeyEvent* event);
-
     // Actions
     void uploadClicked();
     void downloadClicked();

@@ -1,10 +1,47 @@
 # MegaCustom - TODO / Remaining Work
 
-*Created: December 3, 2025 - Updated: February 25, 2026*
+*Created: December 3, 2025 - Updated: February 27, 2026*
 
 ---
 
-## Recently Completed (February 25, 2026 - UI/UX Rebuild + Template Watermarks)
+## Recently Completed (February 27, 2026 - Smart Engine + Code Review)
+
+### Smart Engine — Self-Learning Metrics + Auto-Upload Pipeline - COMPLETE
+| Task | Status |
+|------|--------|
+| MetricsStore (SQLite + EMA learning, predictions, confidence) | DONE |
+| MegaUploadUtils.h (shared upload helpers extracted from DistributionController) | DONE |
+| Auto-upload pipeline in WatermarkPanel (per-member watermark → upload → cleanup) | DONE |
+| Pre-flight disk space check with learned predictions | DONE |
+| Smart estimate display (live output size, duration, upload time, disk free) | DONE |
+| Real-time disk monitoring between member batches | DONE |
+| Wire MegaApi + MetricsStore from MainWindow | DONE |
+| CMakeLists.txt updated | DONE |
+
+### Comprehensive Code Review - COMPLETE
+| Task | Status |
+|------|--------|
+| Audit all 161 connect() calls in MainWindow | DONE (no broken connections) |
+| Fix search index staleness on account switch | DONE (m_searchIndex->clear()) |
+| Remove dead signals (contextMenuRequested, searchKeyPressed) | DONE |
+| Remove dead slots (onLocalFileSelected, onRemoteFileSelected, etc.) | DONE |
+| Verify memory safety across all controllers | DONE (RAII/smart pointers) |
+| Verify thread safety | DONE (QMetaObject::invokeMethod, QMutex, atomic) |
+| Verify pipeline flow (Downloader → Watermark → Distribution) | DONE |
+
+### Bug Fixes from Real-World Testing (Feb 26, 2026) - COMPLETE
+| Task | Status |
+|------|--------|
+| Fix Distribution [NO SOURCE] for pasted rows | DONE |
+| Fix window unmaximize on folder navigation | DONE |
+| Fix Cloud Copier completion logs | DONE |
+| Fix PDF watermark metadata args | DONE |
+| Fix watermark processing order (member-first) | DONE |
+| Fix breadcrumb layout cascade | DONE |
+
+---
+
+## Previously Completed (February 25, 2026 - UI/UX Rebuild + Template Watermarks)
 
 ### Full UI/UX Rebuild - COMPLETE
 | Task | Status |
@@ -70,6 +107,8 @@
 | Distribution history panel (who got what, when) | MEDIUM |
 | End-to-end pipeline test (watermark → distribute → verify) | HIGH |
 | Remote folder browser improvements | LOW |
+| Smart Engine Phase 2: Checkpoint/resume with crash recovery | LOW |
+| Smart Engine Phase 3: Adaptive timeouts, exponential backoff, circuit breaker | LOW |
 
 ---
 
