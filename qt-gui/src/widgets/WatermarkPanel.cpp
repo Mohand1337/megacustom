@@ -1282,20 +1282,37 @@ void WatermarkPanel::onStartWatermark() {
     }
 
     // Rebuild m_files for display: expand to one row per file×member in multi-member mode
+    // Order: member-first (matches worker processing order)
+    m_workerIdxToRow.clear();
     if (!allMemberIds.isEmpty()) {
         QList<WatermarkFileInfo> expanded;
-        expanded.reserve(baseFiles.size() * allMemberIds.size());
-        for (const WatermarkFileInfo& base : baseFiles) {
-            for (const QString& mid : allMemberIds) {
+        expanded.reserve(allMemberIds.size() * (baseFiles.size() + 1)); // +1 per member for header
+        int workerIdx = 0;
+        for (const QString& mid : allMemberIds) {
+            MemberInfo mi = m_registry->getMember(mid);
+            QString displayName = mi.displayName.isEmpty() ? mid : mi.displayName;
+
+            // Insert member header row
+            WatermarkFileInfo header;
+            header.isHeader = true;
+            header.memberId = mid;
+            header.memberName = displayName;
+            header.fileName = QString::fromUtf8("\u25b8 %1 \u2014 Pending (%2 files)")
+                .arg(displayName).arg(baseFiles.size());
+            header.status = "pending";
+            expanded.append(header);
+
+            for (const WatermarkFileInfo& base : baseFiles) {
                 WatermarkFileInfo entry = base;
                 entry.memberId = mid;
-                MemberInfo mi = m_registry->getMember(mid);
-                entry.memberName = mi.displayName.isEmpty() ? mid : mi.displayName;
+                entry.memberName = displayName;
                 entry.status = "pending";
                 entry.outputPath.clear();
                 entry.error.clear();
                 entry.progressPercent = 0;
+                m_workerIdxToRow[workerIdx] = expanded.size();
                 expanded.append(entry);
+                workerIdx++;
             }
         }
         m_files = expanded;
@@ -1451,16 +1468,26 @@ void WatermarkPanel::onStartWatermark() {
                 }
             });
 
-    // Smart Engine: auto-upload progress signals
+    // Smart Engine: auto-upload progress signals — update both status label and member header
     connect(m_worker, &WatermarkWorker::memberBatchUploading, this,
         [this](const QString& memberId, int fileIdx, int totalFiles, const QString& fileName) {
             m_statusLabel->setText(QString("Uploading %1 to %2 (%3/%4)...")
                 .arg(fileName).arg(memberId).arg(fileIdx).arg(totalFiles));
+            int hdr = findMemberHeaderRow(memberId);
+            if (hdr >= 0) {
+                m_files[hdr].status = "uploading";
+                updateMemberHeader(hdr);
+            }
         });
     connect(m_worker, &WatermarkWorker::memberBatchCleanedUp, this,
         [this](const QString& memberId, int uploaded, int failed, int deleted) {
             qDebug() << "Smart pipeline:" << memberId
                      << "— uploaded:" << uploaded << "failed:" << failed << "cleaned:" << deleted;
+            int hdr = findMemberHeaderRow(memberId);
+            if (hdr >= 0) {
+                m_files[hdr].status = "uploaded";
+                updateMemberHeader(hdr);
+            }
         });
     connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
         [this](qint64 available, qint64 needed) {
@@ -1472,6 +1499,12 @@ void WatermarkPanel::onStartWatermark() {
         [this](const QString& memberId, const QString& reason) {
             qWarning() << "Auto-upload skipped for" << memberId << ":" << reason;
             m_statusLabel->setText(QString("Skipped upload for %1: %2").arg(memberId).arg(reason));
+            int hdr = findMemberHeaderRow(memberId);
+            if (hdr >= 0) {
+                m_files[hdr].status = "error";
+                m_files[hdr].error = reason;
+                updateMemberHeader(hdr);
+            }
         });
 
     connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);
@@ -1662,19 +1695,30 @@ QStringList WatermarkPanel::getSelectedMemberIds() const {
 }
 
 void WatermarkPanel::onWorkerProgress(int fileIndex, int totalFiles, const QString& currentFile, int percent) {
-    if (fileIndex >= 0 && fileIndex < m_files.size()) {
-        m_files[fileIndex].status = "processing";
-        m_files[fileIndex].progressPercent = percent;
-        populateTable();
+    // Map worker index to actual table row (accounting for header rows)
+    int row = m_workerIdxToRow.contains(fileIndex) ? m_workerIdxToRow[fileIndex] : fileIndex;
+
+    if (row >= 0 && row < m_files.size() && !m_files[row].isHeader) {
+        m_files[row].status = "processing";
+        m_files[row].progressPercent = percent;
+        updateSingleRow(row);
+
+        // Update the member's header row
+        int headerRow = findMemberHeaderRow(m_files[row].memberId);
+        if (headerRow >= 0) updateMemberHeader(headerRow);
+
+        // Auto-scroll to current file
+        if (auto* item = m_fileTable->item(row, 0))
+            m_fileTable->scrollToItem(item, QAbstractItemView::PositionAtCenter);
     }
 
-    int overallPercent = (fileIndex * 100 + percent) / totalFiles;
+    int overallPercent = totalFiles > 0 ? (fileIndex * 100 + percent) / totalFiles : 0;
     AnimationHelper::animateProgress(m_progressBar, overallPercent);
 
     QString fileName = QFileInfo(currentFile).fileName();
-    if (fileIndex >= 0 && fileIndex < m_files.size() && !m_files[fileIndex].memberName.isEmpty()) {
+    if (row >= 0 && row < m_files.size() && !m_files[row].memberName.isEmpty()) {
         m_statusLabel->setText(QString("Processing %1 for %2 (%3%)")
-            .arg(fileName).arg(m_files[fileIndex].memberName).arg(percent));
+            .arg(fileName).arg(m_files[row].memberName).arg(percent));
     } else {
         m_statusLabel->setText(QString("Processing %1 (%2%)").arg(fileName).arg(percent));
     }
@@ -1683,12 +1727,19 @@ void WatermarkPanel::onWorkerProgress(int fileIndex, int totalFiles, const QStri
 }
 
 void WatermarkPanel::onWorkerFileCompleted(int fileIndex, bool success, const QString& outputPath, const QString& error) {
-    if (fileIndex >= 0 && fileIndex < m_files.size()) {
-        m_files[fileIndex].status = success ? "complete" : "error";
-        m_files[fileIndex].outputPath = outputPath;
-        m_files[fileIndex].error = error;
-        m_files[fileIndex].progressPercent = 100;
-        populateTable();
+    // Map worker index to actual table row
+    int row = m_workerIdxToRow.contains(fileIndex) ? m_workerIdxToRow[fileIndex] : fileIndex;
+
+    if (row >= 0 && row < m_files.size() && !m_files[row].isHeader) {
+        m_files[row].status = success ? "complete" : "error";
+        m_files[row].outputPath = outputPath;
+        m_files[row].error = error;
+        m_files[row].progressPercent = 100;
+        updateSingleRow(row);
+
+        // Update the member's header row
+        int headerRow = findMemberHeaderRow(m_files[row].memberId);
+        if (headerRow >= 0) updateMemberHeader(headerRow);
     }
 }
 
@@ -1712,88 +1763,180 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
 }
 
 void WatermarkPanel::populateTable() {
-    auto& tm = ThemeManager::instance();
     m_fileTable->setRowCount(m_files.size());
 
     for (int row = 0; row < m_files.size(); ++row) {
         const WatermarkFileInfo& info = m_files[row];
 
-        // File name (col 0)
-        QTableWidgetItem* nameItem = new QTableWidgetItem(info.fileName);
-        nameItem->setToolTip(info.filePath);
-        m_fileTable->setItem(row, 0, nameItem);
+        if (info.isHeader) {
+            // Member section header — spans all columns
+            auto& tm = ThemeManager::instance();
+            QTableWidgetItem* headerItem = new QTableWidgetItem(info.fileName);
+            QFont boldFont = headerItem->font();
+            boldFont.setBold(true);
+            boldFont.setPointSize(boldFont.pointSize() + 1);
+            headerItem->setFont(boldFont);
+            headerItem->setForeground(tm.textPrimary());
+            QColor headerBg = tm.surface2();
+            headerItem->setBackground(headerBg);
+            headerItem->setFlags(Qt::ItemIsEnabled); // Non-selectable
+            m_fileTable->setItem(row, 0, headerItem);
 
-        // Member (col 1)
-        QTableWidgetItem* memberItem = new QTableWidgetItem(info.memberName);
-        if (!info.memberId.isEmpty()) {
-            memberItem->setToolTip(info.memberId);
-            memberItem->setForeground(tm.supportInfo()); // Blue
-        }
-        m_fileTable->setItem(row, 1, memberItem);
-
-        // Type (col 2)
-        QTableWidgetItem* typeItem = new QTableWidgetItem(info.fileType.toUpper());
-        typeItem->setTextAlignment(Qt::AlignCenter);
-        if (info.fileType == "video") {
-            typeItem->setForeground(tm.supportInfo()); // Blue
+            // Fill remaining columns with empty styled cells
+            for (int col = 1; col < 6; ++col) {
+                QTableWidgetItem* filler = new QTableWidgetItem();
+                filler->setBackground(headerBg);
+                filler->setFlags(Qt::ItemIsEnabled);
+                m_fileTable->setItem(row, col, filler);
+            }
+            m_fileTable->setSpan(row, 0, 1, 6);
         } else {
-            typeItem->setForeground(tm.supportError()); // Red for PDF
-        }
-        m_fileTable->setItem(row, 2, typeItem);
-
-        // Size (col 3)
-        QTableWidgetItem* sizeItem = new QTableWidgetItem(formatFileSize(info.fileSize));
-        sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_fileTable->setItem(row, 3, sizeItem);
-
-        // Status (col 4)
-        QTableWidgetItem* statusItem = new QTableWidgetItem();
-        if (info.status == "pending") {
-            statusItem->setText("Pending");
-            statusItem->setForeground(tm.textSecondary());
-        } else if (info.status == "processing") {
-            statusItem->setText(QString("Processing %1%").arg(info.progressPercent));
-            statusItem->setForeground(tm.supportWarning()); // Yellow
-        } else if (info.status == "complete") {
-            statusItem->setText("Complete");
-            statusItem->setForeground(tm.supportSuccess()); // Green
-        } else if (info.status == "error") {
-            statusItem->setText("Error");
-            statusItem->setForeground(tm.supportError()); // Red
-            statusItem->setToolTip(info.error);
-        }
-        statusItem->setTextAlignment(Qt::AlignCenter);
-        m_fileTable->setItem(row, 4, statusItem);
-
-        // Output (col 5)
-        QTableWidgetItem* outputItem = new QTableWidgetItem(info.outputPath);
-        if (info.status == "error" && !info.error.isEmpty()) {
-            outputItem->setText(info.error);
-            outputItem->setForeground(tm.supportError());
-        }
-        m_fileTable->setItem(row, 5, outputItem);
-
-        // Highlight entire row for errors with light red background
-        if (info.status == "error") {
-            QColor errorBg = tm.supportError(); errorBg.setAlpha(30);
-            nameItem->setBackground(errorBg);
-            memberItem->setBackground(errorBg);
-            typeItem->setBackground(errorBg);
-            sizeItem->setBackground(errorBg);
-            statusItem->setBackground(errorBg);
-            outputItem->setBackground(errorBg);
-        } else if (info.status == "complete") {
-            QColor successBg = tm.supportSuccess(); successBg.setAlpha(30);
-            nameItem->setBackground(successBg);
-            memberItem->setBackground(successBg);
-            typeItem->setBackground(successBg);
-            sizeItem->setBackground(successBg);
-            statusItem->setBackground(successBg);
-            outputItem->setBackground(successBg);
+            updateSingleRow(row);
         }
     }
 
     updateEmptyState();
+}
+
+void WatermarkPanel::updateSingleRow(int row) {
+    if (row < 0 || row >= m_files.size()) return;
+    const WatermarkFileInfo& info = m_files[row];
+    if (info.isHeader) return; // Headers are rendered separately
+
+    auto& tm = ThemeManager::instance();
+
+    // File name (col 0)
+    QTableWidgetItem* nameItem = new QTableWidgetItem(info.fileName);
+    nameItem->setToolTip(info.filePath);
+    m_fileTable->setItem(row, 0, nameItem);
+
+    // Member (col 1)
+    QTableWidgetItem* memberItem = new QTableWidgetItem(info.memberName);
+    if (!info.memberId.isEmpty()) {
+        memberItem->setToolTip(info.memberId);
+        memberItem->setForeground(tm.supportInfo());
+    }
+    m_fileTable->setItem(row, 1, memberItem);
+
+    // Type (col 2)
+    QTableWidgetItem* typeItem = new QTableWidgetItem(info.fileType.toUpper());
+    typeItem->setTextAlignment(Qt::AlignCenter);
+    if (info.fileType == "video") {
+        typeItem->setForeground(tm.supportInfo());
+    } else if (info.fileType == "audio") {
+        typeItem->setForeground(tm.supportWarning());
+    } else {
+        typeItem->setForeground(tm.supportError());
+    }
+    m_fileTable->setItem(row, 2, typeItem);
+
+    // Size (col 3)
+    QTableWidgetItem* sizeItem = new QTableWidgetItem(formatFileSize(info.fileSize));
+    sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_fileTable->setItem(row, 3, sizeItem);
+
+    // Status (col 4)
+    QTableWidgetItem* statusItem = new QTableWidgetItem();
+    if (info.status == "pending") {
+        statusItem->setText("Pending");
+        statusItem->setForeground(tm.textSecondary());
+    } else if (info.status == "processing") {
+        statusItem->setText(QString("Processing %1%").arg(info.progressPercent));
+        statusItem->setForeground(tm.supportWarning());
+    } else if (info.status == "complete") {
+        statusItem->setText("Complete");
+        statusItem->setForeground(tm.supportSuccess());
+    } else if (info.status == "error") {
+        statusItem->setText("Error");
+        statusItem->setForeground(tm.supportError());
+        statusItem->setToolTip(info.error);
+    }
+    statusItem->setTextAlignment(Qt::AlignCenter);
+    m_fileTable->setItem(row, 4, statusItem);
+
+    // Output (col 5)
+    QTableWidgetItem* outputItem = new QTableWidgetItem(info.outputPath);
+    if (info.status == "error" && !info.error.isEmpty()) {
+        outputItem->setText(info.error);
+        outputItem->setForeground(tm.supportError());
+    }
+    m_fileTable->setItem(row, 5, outputItem);
+
+    // Row background highlight
+    if (info.status == "error") {
+        QColor errorBg = tm.supportError(); errorBg.setAlpha(30);
+        for (int c = 0; c < 6; ++c)
+            if (auto* item = m_fileTable->item(row, c)) item->setBackground(errorBg);
+    } else if (info.status == "complete") {
+        QColor successBg = tm.supportSuccess(); successBg.setAlpha(30);
+        for (int c = 0; c < 6; ++c)
+            if (auto* item = m_fileTable->item(row, c)) item->setBackground(successBg);
+    }
+}
+
+void WatermarkPanel::updateMemberHeader(int headerRow) {
+    if (headerRow < 0 || headerRow >= m_files.size()) return;
+    if (!m_files[headerRow].isHeader) return;
+
+    auto& tm = ThemeManager::instance();
+    const QString& memberId = m_files[headerRow].memberId;
+    const QString& memberName = m_files[headerRow].memberName;
+
+    // Scan files belonging to this member (rows after header until next header or end)
+    int totalFiles = 0, completeCount = 0, errorCount = 0, processingCount = 0;
+    for (int r = headerRow + 1; r < m_files.size() && !m_files[r].isHeader; ++r) {
+        totalFiles++;
+        if (m_files[r].status == "complete") completeCount++;
+        else if (m_files[r].status == "error") errorCount++;
+        else if (m_files[r].status == "processing") processingCount++;
+    }
+
+    // Build header text based on state
+    QString statusText;
+    QColor statusColor;
+    const QString& headerStatus = m_files[headerRow].status;
+
+    if (headerStatus == "uploading") {
+        statusText = QString::fromUtf8("\u25b8 %1 \u2014 Uploading...").arg(memberName);
+        statusColor = tm.supportInfo();
+    } else if (headerStatus == "uploaded") {
+        statusText = QString::fromUtf8("\u25b8 %1 \u2014 Uploaded").arg(memberName);
+        statusColor = tm.supportSuccess();
+    } else if (completeCount + errorCount == totalFiles && totalFiles > 0) {
+        // All files processed
+        if (errorCount == 0) {
+            statusText = QString::fromUtf8("\u2713 %1 \u2014 Done (%2 files)")
+                .arg(memberName).arg(completeCount);
+            statusColor = tm.supportSuccess();
+        } else {
+            statusText = QString::fromUtf8("\u25b8 %1 \u2014 Done (%2 ok, %3 failed)")
+                .arg(memberName).arg(completeCount).arg(errorCount);
+            statusColor = tm.supportError();
+        }
+    } else if (processingCount > 0) {
+        statusText = QString::fromUtf8("\u25b8 %1 \u2014 Processing (%2/%3)")
+            .arg(memberName).arg(completeCount + errorCount).arg(totalFiles);
+        statusColor = tm.supportWarning();
+    } else {
+        statusText = QString::fromUtf8("\u25b8 %1 \u2014 Pending (%2 files)")
+            .arg(memberName).arg(totalFiles);
+        statusColor = tm.textSecondary();
+    }
+
+    // Update the header cell
+    QTableWidgetItem* item = m_fileTable->item(headerRow, 0);
+    if (item) {
+        item->setText(statusText);
+        item->setForeground(statusColor);
+    }
+}
+
+int WatermarkPanel::findMemberHeaderRow(const QString& memberId) const {
+    for (int i = 0; i < m_files.size(); ++i) {
+        if (m_files[i].isHeader && m_files[i].memberId == memberId)
+            return i;
+    }
+    return -1;
 }
 
 void WatermarkPanel::updateEmptyState() {
@@ -1807,7 +1950,9 @@ void WatermarkPanel::updateStats() {
     qint64 totalSize = 0;
     QSet<QString> uniquePaths;
 
+    int headerCount = 0;
     for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) { headerCount++; continue; }
         if (!uniquePaths.contains(info.filePath)) {
             uniquePaths.insert(info.filePath);
             if (info.fileType == "video") videoCount++;
@@ -1819,7 +1964,7 @@ void WatermarkPanel::updateStats() {
     }
 
     int uniqueFileCount = uniquePaths.size();
-    int totalOps = m_files.size();
+    int totalOps = m_files.size() - headerCount;
 
     QString statsText;
     if (totalOps > uniqueFileCount) {

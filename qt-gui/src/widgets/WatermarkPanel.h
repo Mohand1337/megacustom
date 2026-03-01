@@ -38,13 +38,14 @@ struct WatermarkFileInfo {
     QString filePath;
     QString fileName;
     qint64 fileSize;
-    QString fileType;       // "video" or "pdf"
+    QString fileType;       // "video", "pdf", or "audio"
     QString memberName;     // empty in global mode, member display name in per-member mode
     QString memberId;       // empty in global mode, member ID in per-member mode
-    QString status;         // "pending", "processing", "complete", "error"
+    QString status;         // "pending", "processing", "complete", "error", "uploading", "uploaded"
     QString outputPath;
     QString error;
     int progressPercent = 0;
+    bool isHeader = false;  // true for member section header rows
 };
 
 /**
@@ -167,6 +168,9 @@ private:
     void loadPresets();
     void applyPreset(const QString& presetName);
     void updateSmartEstimate();
+    void updateSingleRow(int row);
+    void updateMemberHeader(int headerRow);
+    int findMemberHeaderRow(const QString& memberId) const;
 
     // Empty state
     EmptyStateWidget* m_emptyState = nullptr;
@@ -235,6 +239,9 @@ private:
 
     // Stored member file map from last multi-member watermark (for manual send to distribution)
     QMap<QString, QStringList> m_lastMemberFileMap;
+
+    // Worker index → m_files row mapping (accounts for header rows)
+    QMap<int, int> m_workerIdxToRow;
 
     // Worker thread
     QThread* m_workerThread = nullptr;
