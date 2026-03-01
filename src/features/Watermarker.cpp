@@ -373,6 +373,23 @@ bool Watermarker::isPdfFile(const std::string& path) {
     return lower.length() >= 4 && lower.substr(lower.length() - 4) == ".pdf";
 }
 
+bool Watermarker::isAudioFile(const std::string& path) {
+    std::vector<std::string> extensions = {
+        ".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".wma", ".opus"
+    };
+
+    std::string lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+    for (const auto& ext : extensions) {
+        if (lower.length() >= ext.length() &&
+            lower.substr(lower.length() - ext.length()) == ext) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int64_t Watermarker::getFileSize(const std::string& path) {
     struct stat st;
     if (stat(path.c_str(), &st) == 0) {
@@ -837,41 +854,61 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
 
 std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
                                                 const std::string& outputDir,
-                                                const std::string& memberId) const {
-    // Per-member watermarking outputs to a member subdirectory with the
-    // original filename — no suffix needed. Structure:
-    //   outputDir/memberId/original_filename.ext
+                                                const std::string& memberId,
+                                                const std::string& rootDir) const {
+    // Per-member watermarking outputs to a member subdirectory preserving
+    // the original folder structure. Structure:
+    //   outputDir/memberId/relative/path/original_filename.ext
     //
-    // This keeps filenames clean for the member receiving them and maps
-    // directly to their MEGA folder for distribution.
+    // When rootDir is provided (from "Add Folder"), the relative path between
+    // rootDir and inputPath's parent is preserved under the member directory.
 
-    size_t lastSlash = inputPath.find_last_of("/\\");
-    std::string filename = (lastSlash == std::string::npos) ?
-        inputPath : inputPath.substr(lastSlash + 1);
+    namespace fs = std::filesystem;
 
-    std::string sourceDir = (lastSlash == std::string::npos) ?
-        "" : inputPath.substr(0, lastSlash);
-    std::string baseDir = outputDir.empty() ? sourceDir : outputDir;
+    fs::path inputFs(inputPath);
+    fs::path filename = inputFs.filename();
 
-    if (!baseDir.empty() && baseDir.back() != '/' && baseDir.back() != '\\') {
-        baseDir += '/';
+    // Determine base output directory
+    fs::path basePath;
+    if (!outputDir.empty()) {
+        basePath = fs::path(outputDir);
+    } else if (!rootDir.empty()) {
+        basePath = fs::path(rootDir);
+    } else {
+        basePath = inputFs.parent_path();
     }
 
-    // Create member subdirectory
-    std::string memberDir = baseDir + memberId + "/";
-    std::filesystem::create_directories(memberDir);
+    // Compute relative subdirectory structure from rootDir
+    fs::path relativeSub;
+    if (!rootDir.empty()) {
+        fs::path inputParent = inputFs.parent_path();
+        fs::path rootFs(rootDir);
+        if (inputParent != rootFs) {
+            // Use lexically_relative for safe relative path computation
+            relativeSub = inputParent.lexically_relative(rootFs);
+            // If relative path starts with "..", it's outside rootDir — ignore
+            if (!relativeSub.empty() && relativeSub.string().substr(0, 2) == "..") {
+                relativeSub.clear();
+            }
+        }
+    }
+
+    // Build: basePath / memberId / relativeSub / filename
+    fs::path memberDir = basePath / memberId / relativeSub;
+    fs::create_directories(memberDir);
 
     // Check for existing file and add numbered suffix if needed
-    std::string candidate = memberDir + filename;
+    std::string candidate = (memberDir / filename).string();
     struct stat stCheck;
     if (stat(candidate.c_str(), &stCheck) == 0) {
-        size_t lastDot = filename.find_last_of('.');
+        std::string fnStr = filename.string();
+        size_t lastDot = fnStr.find_last_of('.');
         std::string baseName = (lastDot == std::string::npos) ?
-            filename : filename.substr(0, lastDot);
+            fnStr : fnStr.substr(0, lastDot);
         std::string ext = (lastDot == std::string::npos) ?
-            "" : filename.substr(lastDot);
+            "" : fnStr.substr(lastDot);
         for (int n = 1; n < 1000; ++n) {
-            candidate = memberDir + baseName + " (" + std::to_string(n) + ")" + ext;
+            candidate = (memberDir / (baseName + " (" + std::to_string(n) + ")" + ext)).string();
             if (stat(candidate.c_str(), &stCheck) != 0) {
                 break;
             }
@@ -882,10 +919,10 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
 
 std::string Watermarker::generateOutputPath(const std::string& inputPath,
                                              const std::string& outputDir) const {
-    // Extract filename (handle both / and \ separators for Windows)
-    size_t lastSlash = inputPath.find_last_of("/\\");
-    std::string filename = (lastSlash == std::string::npos) ?
-        inputPath : inputPath.substr(lastSlash + 1);
+    namespace fs = std::filesystem;
+
+    fs::path inputFs(inputPath);
+    std::string filename = inputFs.filename().string();
 
     // Find extension
     size_t lastDot = filename.find_last_of('.');
@@ -895,29 +932,23 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
         "" : filename.substr(lastDot);
 
     // Build output path
-    std::string sourceDir = (lastSlash == std::string::npos) ?
-        "" : inputPath.substr(0, lastSlash);
-    std::string outDir = outputDir.empty() ? sourceDir : outputDir;
-
-    if (!outDir.empty() && outDir.back() != '/' && outDir.back() != '\\') {
-        outDir += '/';
-    }
+    fs::path sourceDir = inputFs.parent_path();
+    fs::path outDir = outputDir.empty() ? sourceDir : fs::path(outputDir);
 
     // Only add suffix when output goes to the same directory as the source
     // (to avoid overwriting the original). When a different output directory
     // is specified, the original is safe and the suffix is unnecessary.
     std::string suffix;
-    if (outputDir.empty() || outDir == sourceDir + "/" || outDir == sourceDir + "\\") {
+    if (outputDir.empty() || outDir == sourceDir) {
         suffix = m_config.outputSuffix;
     }
 
     // Check if output file already exists; if so, append (1), (2), etc.
-    std::string candidate = outDir + baseName + suffix + ext;
+    std::string candidate = (outDir / (baseName + suffix + ext)).string();
     struct stat stCheck;
     if (stat(candidate.c_str(), &stCheck) == 0) {
         for (int n = 1; n < 1000; ++n) {
-            candidate = outDir + baseName + suffix
-                        + " (" + std::to_string(n) + ")" + ext;
+            candidate = (outDir / (baseName + suffix + " (" + std::to_string(n) + ")" + ext)).string();
             if (stat(candidate.c_str(), &stCheck) != 0) {
                 break;
             }
@@ -984,16 +1015,96 @@ WatermarkResult Watermarker::watermarkPdf(const std::string& inputPath,
     return result;
 }
 
+WatermarkResult Watermarker::watermarkAudio(const std::string& inputPath,
+                                              const std::string& outputPath) {
+    WatermarkResult result;
+    result.inputFile = inputPath;
+
+    if (!isFFmpegAvailable()) {
+        result.error = "FFmpeg not found. Required for audio metadata embedding.";
+        return result;
+    }
+
+    auto startTime = std::chrono::steady_clock::now();
+
+    std::string outPath = outputPath.empty() ? generateOutputPath(inputPath) : outputPath;
+    result.outputFile = outPath;
+    result.inputSizeBytes = getFileSize(inputPath);
+
+    LogManager::instance().logWatermark("audio_start", "Starting audio metadata: " + inputPath, inputPath);
+
+    // Build FFmpeg command for metadata-only embedding (no re-encoding)
+    std::string ffmpegPath = getFFmpegPath();
+    std::vector<std::string> cmd = {
+        ffmpegPath.empty() ? "ffmpeg" : ffmpegPath,
+        "-y", "-i", inputPath
+    };
+
+    // Add metadata flags
+    if (m_config.embedMetadata) {
+        if (!m_config.metadataTitle.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("title=" + m_config.metadataTitle);
+        }
+        if (!m_config.metadataAuthor.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("artist=" + m_config.metadataAuthor);
+        }
+        if (!m_config.metadataComment.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("comment=" + m_config.metadataComment);
+        }
+        if (!m_config.metadataKeywords.empty()) {
+            cmd.push_back("-metadata");
+            cmd.push_back("description=" + m_config.metadataKeywords);
+        }
+    }
+
+    // If no metadata, just copy the file
+    if (!m_config.embedMetadata &&
+        m_config.metadataTitle.empty() && m_config.metadataAuthor.empty() &&
+        m_config.metadataComment.empty() && m_config.metadataKeywords.empty()) {
+        // Still use FFmpeg to copy — ensures consistent output format
+    }
+
+    // Copy all streams without re-encoding
+    cmd.push_back("-codec");
+    cmd.push_back("copy");
+    cmd.push_back(outPath);
+
+    std::string ffmpegOutput, ffmpegErr;
+    int exitCode = runProcess(cmd, ffmpegOutput, ffmpegErr);
+
+    auto endTime = std::chrono::steady_clock::now();
+    result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        endTime - startTime).count();
+
+    if (exitCode == 0) {
+        result.success = true;
+        result.outputSizeBytes = getFileSize(outPath);
+        LogManager::instance().logWatermark("audio_complete",
+            "Audio metadata complete: " + outPath + " (" + std::to_string(result.processingTimeMs) + "ms)", inputPath);
+    } else {
+        result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "audio_metadata_failed", "Audio metadata failed: " + inputPath + " - " + result.error, inputPath);
+    }
+
+    return result;
+}
+
 WatermarkResult Watermarker::watermarkFile(const std::string& inputPath,
                                             const std::string& outputPath) {
     if (isVideoFile(inputPath)) {
         return watermarkVideo(inputPath, outputPath);
     } else if (isPdfFile(inputPath)) {
         return watermarkPdf(inputPath, outputPath);
+    } else if (isAudioFile(inputPath)) {
+        return watermarkAudio(inputPath, outputPath);
     } else {
         WatermarkResult result;
         result.inputFile = inputPath;
-        result.error = "Unsupported file type. Supported: video (mp4, mkv, etc.) and PDF";
+        result.error = "Unsupported file type. Supported: video, PDF, and audio (mp3, flac, etc.)";
         return result;
     }
 }
@@ -1075,6 +1186,7 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
 
     std::vector<std::string> videoFiles;
     std::vector<std::string> pdfFiles;
+    std::vector<std::string> audioFiles;
 
     // Scan directory for supported files using std::filesystem (cross-platform)
     namespace fs = std::filesystem;
@@ -1085,6 +1197,7 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
                     std::string p = entry.path().string();
                     if (isVideoFile(p)) videoFiles.push_back(p);
                     else if (isPdfFile(p)) pdfFiles.push_back(p);
+                    else if (isAudioFile(p)) audioFiles.push_back(p);
                 }
             }
         } else {
@@ -1093,6 +1206,7 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
                     std::string p = entry.path().string();
                     if (isVideoFile(p)) videoFiles.push_back(p);
                     else if (isPdfFile(p)) pdfFiles.push_back(p);
+                    else if (isAudioFile(p)) audioFiles.push_back(p);
                 }
             }
         }
@@ -1113,6 +1227,16 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
     if (!pdfFiles.empty() && !m_cancelled) {
         auto pdfResults = watermarkPdfBatch(pdfFiles, outputDir, 1);  // PDF usually sequential
         results.insert(results.end(), pdfResults.begin(), pdfResults.end());
+    }
+
+    // Process audio files (metadata embedding)
+    if (!audioFiles.empty() && !m_cancelled) {
+        for (size_t i = 0; i < audioFiles.size() && !m_cancelled; ++i) {
+            reportProgress(audioFiles[i], i + 1, audioFiles.size(),
+                          (double)i / audioFiles.size() * 100.0, "processing");
+            std::string outPath = generateOutputPath(audioFiles[i], outputDir);
+            results.push_back(watermarkAudio(audioFiles[i], outPath));
+        }
     }
 
     return results;

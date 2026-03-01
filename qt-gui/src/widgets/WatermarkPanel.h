@@ -63,6 +63,7 @@ public:
     void setRawTemplates(const QString& primary, const QString& secondary);
     void setAutoUpload(bool enabled, void* megaApi);
     void setCustomUploadPath(const QString& path);
+    void setRootDir(const QString& rootDir);
     void setMetricsStore(MetricsStore* store);
 
 public slots:
@@ -93,6 +94,7 @@ private:
     bool m_autoUpload = false;
     void* m_megaApi = nullptr;
     QString m_customUploadPath;
+    QString m_rootDir;
     MetricsStore* m_metricsStore = nullptr;
 };
 
@@ -229,6 +231,7 @@ private:
     QList<WatermarkFileInfo> m_files;
     MemberRegistry* m_registry;
     bool m_isRunning = false;
+    QString m_sourceRootDir;  // Root folder from "Add Folder" for subfolder structure
 
     // Stored member file map from last multi-member watermark (for manual send to distribution)
     QMap<QString, QStringList> m_lastMemberFileMap;

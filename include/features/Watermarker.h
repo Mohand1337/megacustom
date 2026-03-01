@@ -184,6 +184,16 @@ public:
         const std::string& outputDir,
         int parallel = 1);
 
+    // ==================== Audio Metadata Embedding ====================
+
+    /**
+     * Embed metadata into an audio file (MP3, FLAC, etc.) using FFmpeg
+     * No visual watermark — just metadata tags (title, artist, comment, keywords)
+     * Uses -codec copy so no re-encoding occurs
+     */
+    WatermarkResult watermarkAudio(const std::string& inputPath,
+                                   const std::string& outputPath = "");
+
     // ==================== Auto-Detection ====================
 
     /**
@@ -222,6 +232,11 @@ public:
     static bool isPdfFile(const std::string& path);
 
     /**
+     * Check if file is a supported audio format
+     */
+    static bool isAudioFile(const std::string& path);
+
+    /**
      * Generate output path from input path
      */
     std::string generateOutputPath(const std::string& inputPath,
@@ -229,12 +244,14 @@ public:
 
     /**
      * Generate output path for per-member watermarking.
-     * Creates a member subdirectory and uses the original filename.
-     * Output: outputDir/memberId/original_filename.ext
+     * Creates a member subdirectory preserving subfolder structure.
+     * Output: outputDir/memberId/relative/path/original_filename.ext
+     * @param rootDir The original folder selected by user (for preserving structure)
      */
     std::string buildMemberOutputPath(const std::string& inputPath,
                                       const std::string& outputDir,
-                                      const std::string& memberId) const;
+                                      const std::string& memberId,
+                                      const std::string& rootDir = "") const;
 
     /**
      * Cancel ongoing batch operation

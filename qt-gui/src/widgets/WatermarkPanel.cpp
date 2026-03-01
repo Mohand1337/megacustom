@@ -80,6 +80,10 @@ void WatermarkWorker::setCustomUploadPath(const QString& path) {
     m_customUploadPath = path;
 }
 
+void WatermarkWorker::setRootDir(const QString& rootDir) {
+    m_rootDir = rootDir;
+}
+
 void WatermarkWorker::setMetricsStore(MetricsStore* store) {
     m_metricsStore = store;
 }
@@ -159,12 +163,14 @@ void WatermarkWorker::process() {
                                      m_rawPrimaryTemplate, m_rawSecondaryTemplate);
 
                 // Build member output path and watermark directly
-                std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, memberId.toStdString());
+                std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
                 WatermarkResult result;
                 if (Watermarker::isVideoFile(inputStd)) {
                     result = watermarker.watermarkVideo(inputStd, outPath);
                 } else if (Watermarker::isPdfFile(inputStd)) {
                     result = watermarker.watermarkPdf(inputStd, outPath);
+                } else if (Watermarker::isAudioFile(inputStd)) {
+                    result = watermarker.watermarkAudio(inputStd, outPath);
                 } else {
                     result.success = false;
                     result.error = "Unsupported file type";
@@ -297,11 +303,13 @@ void WatermarkWorker::process() {
             applyMemberTemplates(watermarker, baseConfig, m_memberId,
                                  m_rawPrimaryTemplate, m_rawSecondaryTemplate);
 
-            std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, m_memberId.toStdString());
+            std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, m_memberId.toStdString(), m_rootDir.toStdString());
             if (Watermarker::isVideoFile(inputStd)) {
                 result = watermarker.watermarkVideo(inputStd, outPath);
             } else if (Watermarker::isPdfFile(inputStd)) {
                 result = watermarker.watermarkPdf(inputStd, outPath);
+            } else if (Watermarker::isAudioFile(inputStd)) {
+                result = watermarker.watermarkAudio(inputStd, outPath);
             } else {
                 result.success = false;
                 result.error = "Unsupported file type";
@@ -1051,7 +1059,7 @@ void WatermarkPanel::onAddFiles() {
     QStringList files = QFileDialog::getOpenFileNames(this,
         "Select Files to Watermark",
         QString(),
-        "Supported Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.pdf);;Videos (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm);;PDFs (*.pdf);;All Files (*)");
+        "Supported Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.pdf *.mp3 *.flac *.wav *.aac *.ogg *.m4a);;Videos (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm);;PDFs (*.pdf);;Audio (*.mp3 *.flac *.wav *.aac *.ogg *.m4a);;All Files (*)");
 
     for (const QString& file : files) {
         // Check if already in list
@@ -1074,6 +1082,9 @@ void WatermarkPanel::onAddFiles() {
         QString ext = fi.suffix().toLower();
         if (ext == "pdf") {
             info.fileType = "pdf";
+        } else if (ext == "mp3" || ext == "flac" || ext == "wav" || ext == "aac" ||
+                   ext == "ogg" || ext == "m4a" || ext == "wma" || ext == "opus") {
+            info.fileType = "audio";
         } else {
             info.fileType = "video";
         }
@@ -1090,7 +1101,14 @@ void WatermarkPanel::onAddFolder() {
     QString dir = QFileDialog::getExistingDirectory(this, "Select Folder to Watermark");
     if (dir.isEmpty()) return;
 
-    QStringList filters = {"*.mp4", "*.mkv", "*.avi", "*.mov", "*.wmv", "*.flv", "*.webm", "*.pdf"};
+    // Store root directory for subfolder structure preservation
+    m_sourceRootDir = dir;
+
+    QStringList filters = {
+        "*.mp4", "*.mkv", "*.avi", "*.mov", "*.wmv", "*.flv", "*.webm",
+        "*.pdf",
+        "*.mp3", "*.flac", "*.wav", "*.aac", "*.ogg", "*.m4a", "*.wma", "*.opus"
+    };
     QDirIterator it(dir, filters, QDir::Files, QDirIterator::Subdirectories);
 
     while (it.hasNext()) {
@@ -1116,6 +1134,9 @@ void WatermarkPanel::onAddFolder() {
         QString ext = fi.suffix().toLower();
         if (ext == "pdf") {
             info.fileType = "pdf";
+        } else if (ext == "mp3" || ext == "flac" || ext == "wav" || ext == "aac" ||
+                   ext == "ogg" || ext == "m4a" || ext == "wma" || ext == "opus") {
+            info.fileType = "audio";
         } else {
             info.fileType = "video";
         }
@@ -1392,6 +1413,7 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setMemberId(memberId);
     m_worker->setMemberIds(allMemberIds);
     m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
+    m_worker->setRootDir(m_sourceRootDir);
 
     // Smart Engine: pass auto-upload and metrics to worker
     if (m_autoUploadCheck->isChecked() && m_megaApi) {
