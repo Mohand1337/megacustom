@@ -1,4 +1,5 @@
 #include "FolderMapperPanel.h"
+#include "EmptyStateWidget.h"
 #include "controllers/FileController.h"
 #include "dialogs/RemoteFolderBrowserDialog.h"
 #include "utils/PathUtils.h"
@@ -69,6 +70,16 @@ void FolderMapperPanel::setupUI()
     mainLayout->addWidget(subtitleLabel);
 
     mainLayout->addSpacing(8);
+
+    // Empty state (shown when no mappings exist)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/folder-sync.svg",
+        "No folder mappings",
+        "Create mappings between local and cloud folders to keep them in sync.",
+        "Add Mapping",
+        contentWidget);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &FolderMapperPanel::onAddClicked);
+    mainLayout->addWidget(m_emptyState);
 
     setupInputSection(mainLayout);
     setupToolbar(mainLayout);
@@ -277,6 +288,13 @@ void FolderMapperPanel::setupSettingsSection(QVBoxLayout* mainLayout)
 
     settingsGroup->setLayout(settingsLayout);
     mainLayout->addWidget(settingsGroup);
+}
+
+void FolderMapperPanel::updateEmptyState()
+{
+    bool empty = m_mappingTable->rowCount() == 0;
+    m_emptyState->setVisible(empty);
+    m_mappingTable->setVisible(!empty);
 }
 
 void FolderMapperPanel::updateButtonStates()
@@ -543,6 +561,7 @@ void FolderMapperPanel::onMappingsLoaded(int count)
     // So we actually need to clear BEFORE loadMappings is called
     // This signal comes AFTER all mappingAdded signals, so just update state
     updateButtonStates();
+    updateEmptyState();
 }
 
 void FolderMapperPanel::clearMappingsTable()
@@ -551,6 +570,7 @@ void FolderMapperPanel::clearMappingsTable()
     while (m_mappingTable->rowCount() > 0) {
         m_mappingTable->removeRow(0);
     }
+    updateEmptyState();
 }
 
 void FolderMapperPanel::onMappingAdded(const QString& name, const QString& localPath,
@@ -576,6 +596,7 @@ void FolderMapperPanel::onMappingAdded(const QString& name, const QString& local
     m_mappingTable->setCellWidget(row, COL_ENABLED, checkboxWidget);
 
     updateButtonStates();
+    updateEmptyState();
 }
 
 void FolderMapperPanel::onMappingRemoved(const QString& name)
@@ -585,6 +606,7 @@ void FolderMapperPanel::onMappingRemoved(const QString& name)
         m_mappingTable->removeRow(row);
     }
     updateButtonStates();
+    updateEmptyState();
 }
 
 void FolderMapperPanel::onMappingUpdated(const QString& name)
@@ -626,7 +648,7 @@ void FolderMapperPanel::onUploadProgress(const QString& mappingName, const QStri
     int percent = (totalFiles > 0) ? (filesCompleted * 100 / totalFiles) : 0;
     m_progressBar->setValue(percent);
 
-    m_statsLabel->setText(QString("Files: %1/%2 | Uploaded: %3 / %4 | Speed: %5")
+    m_statsLabel->setText(QString("Files: %1 of %2 | Uploaded: %3 / %4 | Speed: %5")
         .arg(filesCompleted)
         .arg(totalFiles)
         .arg(formatSize(bytesUploaded))
@@ -637,7 +659,7 @@ void FolderMapperPanel::onUploadProgress(const QString& mappingName, const QStri
     int row = findRowByName(mappingName);
     if (row >= 0) {
         m_mappingTable->item(row, COL_STATUS)->setText(
-            QString("%1% (%2/%3)").arg(percent).arg(filesCompleted).arg(totalFiles));
+            QString("%1% (%2 of %3)").arg(percent).arg(filesCompleted).arg(totalFiles));
     }
 }
 

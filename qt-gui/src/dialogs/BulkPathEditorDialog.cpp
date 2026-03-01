@@ -203,13 +203,16 @@ void BulkPathEditorDialog::analyzePaths()
     }
 
     QString info = QString(
-        "<b>%1 path(s) analyzed</b><br>"
-        "Found <b>%2</b> editable segments (same across all paths) and "
-        "<b>%3</b> variable segments (preserved as-is, like member names).<br>"
+        "<b>%1 %2 analyzed</b><br>"
+        "Found <b>%3</b> editable %4 (same across all paths) and "
+        "<b>%5</b> variable %6 (preserved as-is, like member names).<br>"
         "<i>Edit the green fields to change all paths at once. Yellow fields show variable segments that will be kept unique.</i>")
         .arg(m_originalPaths.size())
+        .arg(m_originalPaths.size() == 1 ? "path" : "paths")
         .arg(editableCount)
-        .arg(variableCount);
+        .arg(editableCount == 1 ? "segment" : "segments")
+        .arg(variableCount)
+        .arg(variableCount == 1 ? "segment" : "segments");
     m_infoLabel->setText(info);
 }
 

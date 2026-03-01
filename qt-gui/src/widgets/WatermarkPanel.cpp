@@ -1,4 +1,5 @@
 #include "WatermarkPanel.h"
+#include "EmptyStateWidget.h"
 #include "utils/MemberRegistry.h"
 #include "utils/TemplateExpander.h"
 #include "utils/CopyHelper.h"
@@ -450,6 +451,16 @@ void WatermarkPanel::setupUI() {
     QGroupBox* fileGroup = new QGroupBox("Source Files");
     QVBoxLayout* fileLayout = new QVBoxLayout(fileGroup);
 
+    // Empty state (shown when no files are added)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/droplets.svg",
+        "No files to watermark",
+        "Add video or image files to apply custom watermarks before distribution.",
+        "Add Files",
+        this);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &WatermarkPanel::onAddFiles);
+    fileLayout->addWidget(m_emptyState);
+
     // File table
     m_fileTable = new QTableWidget();
     m_fileTable->setColumnCount(6);
@@ -891,7 +902,7 @@ void WatermarkPanel::addFilesFromDownloader(const QStringList& filePaths) {
 
     // Show notification
     if (!filePaths.isEmpty()) {
-        m_statusLabel->setText(QString("Received %1 file(s) from Downloader").arg(filePaths.size()));
+        m_statusLabel->setText(QString("Received %1 %2 from Downloader").arg(filePaths.size()).arg(filePaths.size() == 1 ? "file" : "files"));
     }
 }
 
@@ -943,7 +954,7 @@ void WatermarkPanel::loadMembers() {
             QString("[Group] %1 (%2 members)").arg(name).arg(count));
         item->setData(Qt::UserRole, "GROUP:" + name);
         item->setCheckState(previouslyChecked.contains("GROUP:" + name) ? Qt::Checked : Qt::Unchecked);
-        item->setForeground(QColor("#2196F3"));
+        item->setForeground(ThemeManager::instance().supportInfo());
         m_memberListWidget->addItem(item);
     }
 
@@ -1568,7 +1579,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
 
     if (failCount == 0) {
         QMessageBox::information(this, "Complete",
-            QString("Successfully watermarked %1 file(s).").arg(successCount));
+            QString("Successfully watermarked %1 %2.").arg(successCount).arg(successCount == 1 ? "file" : "files"));
     } else {
         QMessageBox::warning(this, "Complete with Errors",
             QString("Completed: %1 success, %2 failed.\n\nCheck the table for error details.")
@@ -1657,6 +1668,14 @@ void WatermarkPanel::populateTable() {
             outputItem->setBackground(successBg);
         }
     }
+
+    updateEmptyState();
+}
+
+void WatermarkPanel::updateEmptyState() {
+    bool empty = m_files.isEmpty();
+    m_emptyState->setVisible(empty);
+    m_fileTable->setVisible(!empty);
 }
 
 void WatermarkPanel::updateStats() {
@@ -1696,7 +1715,7 @@ void WatermarkPanel::updateStats() {
     }
 
     if (errorCount > 0) {
-        statsText += QString(" | <span style='color: #D90007; font-weight: bold;'>%1 error(s)</span>").arg(errorCount);
+        statsText += QString(" | <span style='color: #D90007; font-weight: bold;'>%1 %2</span>").arg(errorCount).arg(errorCount == 1 ? "error" : "errors");
     }
 
     m_statsLabel->setTextFormat(Qt::RichText);
@@ -1836,7 +1855,7 @@ void WatermarkPanel::onSendToDistribution() {
         return;
     }
 
-    m_statusLabel->setText(QString("Sending %1 file(s) to Distribution...").arg(completedFiles.size()));
+    m_statusLabel->setText(QString("Sending %1 %2 to Distribution...").arg(completedFiles.size()).arg(completedFiles.size() == 1 ? "file" : "files"));
     emit sendToDistribution(completedFiles);
 }
 

@@ -1,6 +1,5 @@
 #include "TransferQueue.h"
 #include "controllers/TransferController.h"
-#include "utils/Constants.h"
 #include "utils/DpiScaler.h"
 #include "styles/ThemeManager.h"
 #include "utils/CopyHelper.h"
@@ -47,9 +46,10 @@ void TransferQueue::setupUi() {
     headerLayout->addWidget(m_titleLabel);
 
     // Status badges
-    m_activeBadge = createBadge("0 Active", Constants::Colors::TRANSFER_ACTIVE);
-    m_pendingBadge = createBadge("0 Pending", Constants::Colors::TRANSFER_PENDING);
-    m_completedBadge = createBadge("0 Completed", Constants::Colors::TRANSFER_COMPLETED);
+    auto& tm = ThemeManager::instance();
+    m_activeBadge = createBadge("0 Active", tm.supportInfo().name());
+    m_pendingBadge = createBadge("0 Pending", tm.textSecondary().name());
+    m_completedBadge = createBadge("0 Completed", tm.supportSuccess().name());
 
     headerLayout->addWidget(m_activeBadge);
     headerLayout->addWidget(m_pendingBadge);
@@ -167,7 +167,7 @@ void TransferQueue::onTransferAdded(const QString& type, const QString& sourcePa
 
     // Status
     QTableWidgetItem* statusItem = new QTableWidgetItem("Starting...");
-    statusItem->setForeground(Qt::blue);
+    statusItem->setForeground(ThemeManager::instance().supportInfo());
     m_transferTable->setItem(row, COL_STATUS, statusItem);
 
     // Track this transfer
@@ -361,7 +361,7 @@ void TransferQueue::onCancelAllClicked() {
             if (statusItem && (statusItem->text() == "Starting..." ||
                               statusItem->text() == "Transferring...")) {
                 statusItem->setText("Cancelled");
-                statusItem->setForeground(Qt::gray);
+                statusItem->setForeground(ThemeManager::instance().textSecondary());
             }
         }
     }

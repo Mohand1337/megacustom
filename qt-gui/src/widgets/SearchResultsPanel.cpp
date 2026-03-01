@@ -1,5 +1,6 @@
 #include "SearchResultsPanel.h"
 #include "IconProvider.h"
+#include "styles/ThemeManager.h"
 #include <algorithm>
 #include <QPainter>
 #include <QApplication>
@@ -25,15 +26,21 @@ void SearchResultDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
 
+    auto& tm = ThemeManager::instance();
+
     QRect rect = option.rect;
     bool isSelected = option.state & QStyle::State_Selected;
     bool isHovered = option.state & QStyle::State_MouseOver;
 
     // Background
     if (isSelected) {
-        painter->fillRect(rect, QColor(221, 20, 5, 26)); // MEGA Red 10%
+        QColor selBg = tm.brandDefault();
+        selBg.setAlpha(26);
+        painter->fillRect(rect, selBg);
     } else if (isHovered) {
-        painter->fillRect(rect, QColor(0, 0, 0, 13)); // Light hover
+        QColor hoverBg = tm.textPrimary();
+        hoverBg.setAlpha(13);
+        painter->fillRect(rect, hoverBg);
     }
 
     // Get data
@@ -63,7 +70,7 @@ void SearchResultDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
     QFont nameFont = option.font;
     nameFont.setBold(true);
     painter->setFont(nameFont);
-    QColor nameColor = isSelected ? QColor(123, 33, 24) : QColor(50, 50, 50);
+    QColor nameColor = isSelected ? tm.brandDefault().darker(150) : tm.textPrimary();
 
     QRect nameRect = textRect;
     nameRect.setHeight(textRect.height() / 2);
@@ -109,7 +116,9 @@ void SearchResultDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
             // Draw yellow background
             QRect highlightRect(x, nameRect.top() + (nameRect.height() - fm.height()) / 2 + fm.height() / 4,
                                 matchWidth, fm.height());
-            painter->fillRect(highlightRect, QColor(255, 245, 157)); // Yellow highlight
+            QColor highlightColor = tm.supportWarning();
+            highlightColor.setAlpha(80);
+            painter->fillRect(highlightRect, highlightColor);
 
             // Draw text
             painter->setPen(nameColor);
@@ -131,7 +140,7 @@ void SearchResultDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
     QFont pathFont = option.font;
     pathFont.setPointSize(pathFont.pointSize() - 1);
     painter->setFont(pathFont);
-    painter->setPen(QColor(128, 128, 128));
+    painter->setPen(tm.textSecondary());
 
     QRect pathRect = textRect;
     pathRect.setTop(nameRect.bottom());
@@ -147,7 +156,7 @@ void SearchResultDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
     infoRect.setRight(rect.right() - 12);
 
     painter->setFont(pathFont);
-    painter->setPen(QColor(100, 100, 100));
+    painter->setPen(tm.textSecondary());
 
     // Size
     QRect sizeRect = infoRect;
@@ -220,40 +229,46 @@ SearchResultsPanel::SearchResultsPanel(QWidget* parent)
     m_searchTimer->setSingleShot(true);
     connect(m_searchTimer, &QTimer::timeout, this, &SearchResultsPanel::executeSearch);
 
-    // Styling
-    setStyleSheet(R"(
-        SearchResultsPanel {
-            background-color: #FFFFFF;
-            border: 1px solid #DCDDDD;
-            border-radius: 8px;
-        }
-        QListView {
-            background-color: transparent;
-            border: none;
-            outline: none;
-        }
-        QListView::item {
-            border-bottom: 1px solid #F0F0F0;
-        }
-        QListView::item:selected {
-            background-color: rgba(221, 20, 5, 0.1);
-        }
-        QComboBox {
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            padding: 4px 8px;
-            background: white;
-        }
-        QPushButton {
-            border: 1px solid #DCDDDD;
-            border-radius: 4px;
-            padding: 4px 8px;
-            background: white;
-        }
-        QPushButton:hover {
-            background: #F5F5F5;
-        }
-    )");
+    // Styling - use ThemeManager tokens
+    auto& tm = ThemeManager::instance();
+    QColor brandCol = tm.brandDefault();
+    setStyleSheet(QString(
+        "SearchResultsPanel {"
+        "  background-color: %1;"
+        "  border: 1px solid %2;"
+        "  border-radius: 8px;"
+        "}"
+        "QListView {"
+        "  background-color: transparent;"
+        "  border: none;"
+        "  outline: none;"
+        "}"
+        "QListView::item {"
+        "  border-bottom: 1px solid %3;"
+        "}"
+        "QListView::item:selected {"
+        "  background-color: rgba(%4, %5, %6, 0.1);"
+        "}"
+        "QComboBox {"
+        "  border: 1px solid %2;"
+        "  border-radius: 4px;"
+        "  padding: 4px 8px;"
+        "  background: %1;"
+        "}"
+        "QPushButton {"
+        "  border: 1px solid %2;"
+        "  border-radius: 4px;"
+        "  padding: 4px 8px;"
+        "  background: %1;"
+        "}"
+        "QPushButton:hover {"
+        "  background: %7;"
+        "}"
+    ).arg(tm.surfacePrimary().name())
+     .arg(tm.borderSubtle().name())
+     .arg(tm.surface2().name())
+     .arg(brandCol.red()).arg(brandCol.green()).arg(brandCol.blue())
+     .arg(tm.surface2().name()));
 
     setAttribute(Qt::WA_TranslucentBackground, false);
 
@@ -265,6 +280,8 @@ SearchResultsPanel::~SearchResultsPanel() = default;
 
 void SearchResultsPanel::setupUI()
 {
+    auto& tm = ThemeManager::instance();
+
     m_mainLayout = new QVBoxLayout(this);
     m_mainLayout->setContentsMargins(8, 8, 8, 8);
     m_mainLayout->setSpacing(4);
@@ -276,7 +293,7 @@ void SearchResultsPanel::setupUI()
     headerLayout->setSpacing(8);
 
     m_queryLabel = new QLabel("Search Results", this);
-    m_queryLabel->setStyleSheet("font-weight: bold; color: #333;");
+    m_queryLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(tm.textPrimary().name()));
     headerLayout->addWidget(m_queryLabel);
 
     headerLayout->addStretch();
@@ -330,13 +347,13 @@ void SearchResultsPanel::setupUI()
     statusLayout->setSpacing(8);
 
     m_statusLabel = new QLabel("Ready", this);
-    m_statusLabel->setStyleSheet("color: #666; font-size: 11px;");
+    m_statusLabel->setStyleSheet(QString("color: %1; font-size: 11px;").arg(tm.textSecondary().name()));
     statusLayout->addWidget(m_statusLabel);
 
     statusLayout->addStretch();
 
     m_indexStatusLabel = new QLabel("", this);
-    m_indexStatusLabel->setStyleSheet("color: #999; font-size: 11px;");
+    m_indexStatusLabel->setStyleSheet(QString("color: %1; font-size: 11px;").arg(tm.textSecondary().name()));
     statusLayout->addWidget(m_indexStatusLabel);
 
     m_bulkRenameBtn = new QPushButton("Bulk Rename...", this);

@@ -13,6 +13,8 @@
 #include <QTabWidget>
 #include <QTimer>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 class MemberRegistry;
@@ -79,6 +81,7 @@ private slots:
 private:
     void setupUI();
     void populateTable();
+    void updateEmptyState();
     void refreshGroups();
     QString getSelectedMemberId() const;
     void showMemberEditDialog(const MemberInfo& member, bool isNew);
@@ -88,6 +91,9 @@ private:
     QWidget* m_pathTypesWidget;
     QMap<QString, QCheckBox*> m_pathTypeChecks;
     QMap<QString, QLineEdit*> m_pathTypeEdits;
+
+    // Empty state
+    EmptyStateWidget* m_emptyState = nullptr;
 
     // Member table
     QTableWidget* m_memberTable;

@@ -164,6 +164,7 @@ set(SOURCES
     src/widgets/IconButton.cpp
     src/widgets/ModernMenu.cpp
     src/widgets/ButtonFactory.cpp
+    src/widgets/EmptyStateWidget.cpp
     # Dialog management (Phase 3)
     src/dialogs/DialogManager.cpp
     # Stylesheet generation (Phase 4)

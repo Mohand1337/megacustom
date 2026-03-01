@@ -14,6 +14,8 @@
 #include <QThread>
 #include <memory>
 
+class EmptyStateWidget;
+
 namespace mega {
     class MegaApi;
 }
@@ -35,7 +37,7 @@ struct WmFolderInfo {
     QString memberId;        // e.g., "vanchow555"
     QString timestamp;       // e.g., "20251125_113923"
     QString fullPath;        // e.g., "/latest-wm/vanchow555_20251125_113923"
-    QString matchType;       // "pattern", "id", "email", "name", "fuzzy", "manual", "none"
+    QString matchType;       // "pattern", "id", "email", "name", "fuzzy", "manual", "broadcast", "none"
     int matchConfidence = 0; // 1-5
     bool matched = false;    // True if member exists in registry
     bool selected = false;   // True if selected for distribution
@@ -74,6 +76,7 @@ public slots:
 
 private slots:
     void onScanWmFolder();
+    void onBroadcastScan();
     void onSelectAll();
     void onDeselectAll();
     void onStartDistribution();
@@ -112,12 +115,15 @@ private slots:
 private:
     void setupUI();
     void populateTable();
+    void updateEmptyState();
+    void populateBroadcastTable(const QString& sourcePath);
     QString getDestinationPath(const QString& memberId);
     void executeBulkRename(const QString& folderPath);
 
     // UI Components - Configuration
     QLineEdit* m_wmPathEdit;
     QPushButton* m_scanBtn;
+    QCheckBox* m_broadcastCheck;
     QLineEdit* m_destTemplateEdit;
     QComboBox* m_quickTemplateCombo;
     QComboBox* m_monthCombo;
@@ -138,6 +144,9 @@ private:
     QPushButton* m_addRowBtn = nullptr;
     QPushButton* m_pasteDestsBtn = nullptr;
     QPushButton* m_clearAllBtn = nullptr;
+
+    // Empty state
+    EmptyStateWidget* m_emptyState = nullptr;
 
     // Table
     QTableWidget* m_memberTable;

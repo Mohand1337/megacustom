@@ -372,7 +372,7 @@ void QuickPeekPanel::onCopyToActive()
 
     emit copyToActiveRequested(paths, m_accountId);
 
-    m_statusLabel->setText(QString("Copying %1 item(s)...").arg(paths.size()));
+    m_statusLabel->setText(QString("Copying %1 %2...").arg(paths.size()).arg(paths.size() == 1 ? "item" : "items"));
 }
 
 void QuickPeekPanel::onGetLink()
@@ -484,23 +484,23 @@ void QuickPeekPanel::onDownload()
     }
 
     if (downloadCount > 0) {
-        QString msg = QString("Started downloading %1 item(s) to %2")
-            .arg(downloadCount).arg(downloadPath);
+        QString msg = QString("Started downloading %1 %2 to %3")
+            .arg(downloadCount).arg(downloadCount == 1 ? "item" : "items").arg(downloadPath);
         if (errorCount > 0) {
             msg += QString(" (%1 errors)").arg(errorCount);
         }
         m_statusLabel->setText(msg);
 
         QMessageBox::information(this, "Download Started",
-            QString("Started downloading %1 item(s) from %2's account.\n\n"
-                    "Downloads run in the background. Check your local folder:\n%3")
-                .arg(downloadCount).arg(m_accountEmail).arg(downloadPath));
+            QString("Started downloading %1 %2 from %3's account.\n\n"
+                    "Downloads run in the background. Check your local folder:\n%4")
+                .arg(downloadCount).arg(downloadCount == 1 ? "item" : "items").arg(m_accountEmail).arg(downloadPath));
     } else {
         m_statusLabel->setText("No items were downloaded");
         if (errorCount > 0) {
             QMessageBox::warning(this, "Download Failed",
-                QString("Could not find %1 selected item(s) for download.")
-                    .arg(errorCount));
+                QString("Could not find %1 selected %2 for download.")
+                    .arg(errorCount).arg(errorCount == 1 ? "item" : "items"));
         }
     }
 }

@@ -13,6 +13,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 class FolderMapperController;
@@ -90,6 +92,7 @@ private:
     void setupProgressSection(QVBoxLayout* mainLayout);
     void setupSettingsSection(QVBoxLayout* mainLayout);
     void updateButtonStates();
+    void updateEmptyState();
     void clearInputFields();
     int findRowByName(const QString& name);
     QString formatSize(qint64 bytes);
@@ -119,6 +122,9 @@ private:
     QPushButton* m_previewButton = nullptr;
     QPushButton* m_cancelButton = nullptr;
     QPushButton* m_refreshButton = nullptr;
+
+    // Empty state
+    EmptyStateWidget* m_emptyState = nullptr;
 
     // Mapping table
     QTableWidget* m_mappingTable = nullptr;

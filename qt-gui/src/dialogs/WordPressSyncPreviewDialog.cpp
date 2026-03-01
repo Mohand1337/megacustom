@@ -381,7 +381,7 @@ void WordPressSyncPreviewDialog::onFetchProgress(int current, int total)
         m_progressBar->setRange(0, total);
         m_progressBar->setValue(current);
     }
-    m_statusLabel->setText(QString("Fetching users... %1/%2").arg(current).arg(total));
+    m_statusLabel->setText(QString("Fetching users... %1 of %2").arg(current).arg(total));
 }
 
 void WordPressSyncPreviewDialog::onFetchFinished(const QList<WpUserPreview>& users, const QString& error)
@@ -498,7 +498,7 @@ void WordPressSyncPreviewDialog::updateStats()
         }
     }
 
-    m_statsLabel->setText(QString("Showing: %1/%2 users | Selected: %3")
+    m_statsLabel->setText(QString("Showing: %1 of %2 users | Selected: %3")
         .arg(m_visibleIndices.size())
         .arg(m_allUsers.size())
         .arg(selectedCount));
@@ -600,7 +600,7 @@ void WordPressSyncPreviewDialog::onSyncSelected()
 void WordPressSyncPreviewDialog::onSyncProgress(int current, int total, const QString& username)
 {
     m_progressBar->setValue(current);
-    m_statusLabel->setText(QString("Syncing %1/%2: %3").arg(current).arg(total).arg(username));
+    m_statusLabel->setText(QString("Syncing %1 of %2: %3").arg(current).arg(total).arg(username));
 }
 
 void WordPressSyncPreviewDialog::onSyncFinished(int created, int updated, int failed, const QString& error)

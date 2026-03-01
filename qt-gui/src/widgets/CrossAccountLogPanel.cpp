@@ -2,6 +2,7 @@
 #include "accounts/CrossAccountTransferManager.h"
 #include "accounts/TransferLogStore.h"
 #include "accounts/AccountManager.h"
+#include "styles/ThemeManager.h"
 #include "utils/DpiScaler.h"
 #include <QMessageBox>
 #include <QFileInfo>
@@ -53,8 +54,10 @@ void CrossAccountLogPanel::setupUI()
     m_titleLabel->setFont(titleFont);
     headerLayout->addWidget(m_titleLabel);
 
+    auto& tm = ThemeManager::instance();
+
     m_countLabel = new QLabel("0 transfers", this);
-    m_countLabel->setStyleSheet("color: #888;");
+    m_countLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
     headerLayout->addWidget(m_countLabel);
 
     headerLayout->addStretch();
@@ -130,7 +133,7 @@ void CrossAccountLogPanel::setupUI()
     actionLayout->addStretch();
 
     m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet("color: #888;");
+    m_statusLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
     actionLayout->addWidget(m_statusLabel);
 
     mainLayout->addLayout(actionLayout);
@@ -261,7 +264,7 @@ void CrossAccountLogPanel::updateStatusCounts()
 
     int active = m_transferManager->activeTransferCount();
     if (active > 0) {
-        m_statusLabel->setText(QString("%1 active transfer(s)").arg(active));
+        m_statusLabel->setText(QString("%1 active %2").arg(active).arg(active == 1 ? "transfer" : "transfers"));
     } else {
         m_statusLabel->setText("No active transfers");
     }
@@ -312,14 +315,15 @@ QString CrossAccountLogPanel::getStatusText(CrossAccountTransfer::Status status)
 
 QString CrossAccountLogPanel::getStatusColor(CrossAccountTransfer::Status status) const
 {
+    auto& tm = ThemeManager::instance();
     switch (status) {
-    case CrossAccountTransfer::Pending: return "#888888";
-    case CrossAccountTransfer::InProgress: return "#2196F3";
-    case CrossAccountTransfer::Completed: return "#4CAF50";
-    case CrossAccountTransfer::Failed: return "#EF4444";
-    case CrossAccountTransfer::Cancelled: return "#888888";
+    case CrossAccountTransfer::Pending: return tm.textSecondary().name();
+    case CrossAccountTransfer::InProgress: return tm.supportInfo().name();
+    case CrossAccountTransfer::Completed: return tm.supportSuccess().name();
+    case CrossAccountTransfer::Failed: return tm.supportError().name();
+    case CrossAccountTransfer::Cancelled: return tm.textSecondary().name();
     }
-    return "#888888";
+    return tm.textSecondary().name();
 }
 
 QString CrossAccountLogPanel::getAccountEmail(const QString& accountId) const
@@ -502,8 +506,10 @@ void TransferLogItemWidget::setupUI(const CrossAccountTransfer& transfer)
     m_statusIcon->setAlignment(Qt::AlignCenter);
     topRow->addWidget(m_statusIcon);
 
+    auto& tm = ThemeManager::instance();
+
     m_timeLabel = new QLabel(transfer.timestamp.toString("HH:mm"), this);
-    m_timeLabel->setStyleSheet("color: #888;");
+    m_timeLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
     m_timeLabel->setFixedWidth(DpiScaler::scale(40));
     topRow->addWidget(m_timeLabel);
 
@@ -547,13 +553,13 @@ void TransferLogItemWidget::setupUI(const CrossAccountTransfer& transfer)
 
     QString opSymbol = (transfer.operation == CrossAccountTransfer::Move) ? " -> " : " => ";
     m_accountsLabel = new QLabel(sourceEmail + opSymbol + targetEmail, this);
-    m_accountsLabel->setStyleSheet("color: #666;");
+    m_accountsLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
     mainLayout->addWidget(m_accountsLabel);
 
     // Third row: paths
     m_pathLabel = new QLabel(this);
     m_pathLabel->setText(QString("%1 -> %2").arg(transfer.sourcePath).arg(transfer.targetPath));
-    m_pathLabel->setStyleSheet("color: #888; font-size: 10px;");
+    m_pathLabel->setStyleSheet(QString("color: %1; font-size: 10px;").arg(tm.textSecondary().name()));
     m_pathLabel->setWordWrap(true);
     mainLayout->addWidget(m_pathLabel);
 
@@ -581,7 +587,7 @@ void TransferLogItemWidget::setupUI(const CrossAccountTransfer& transfer)
         } else {
             m_progressLabel->setText("Calculating...");
         }
-        m_progressLabel->setStyleSheet("color: #888;");
+        m_progressLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
         progressRow->addWidget(m_progressLabel);
 
         mainLayout->addLayout(progressRow);
@@ -590,7 +596,7 @@ void TransferLogItemWidget::setupUI(const CrossAccountTransfer& transfer)
     // Error row (for failed transfers)
     if (transfer.status == CrossAccountTransfer::Failed && !transfer.errorMessage.isEmpty()) {
         m_errorLabel = new QLabel("Error: " + transfer.errorMessage, this);
-        m_errorLabel->setStyleSheet("color: #EF4444;");
+        m_errorLabel->setStyleSheet(QString("color: %1;").arg(tm.supportError().name()));
         m_errorLabel->setWordWrap(true);
         mainLayout->addWidget(m_errorLabel);
     }
@@ -679,14 +685,15 @@ QString TransferLogItemWidget::getStatusIconPath(CrossAccountTransfer::Status st
 
 QString TransferLogItemWidget::getStatusColor(CrossAccountTransfer::Status status) const
 {
+    auto& tm = ThemeManager::instance();
     switch (status) {
-    case CrossAccountTransfer::Pending: return "#888888";
-    case CrossAccountTransfer::InProgress: return "#2196F3";
-    case CrossAccountTransfer::Completed: return "#4CAF50";
-    case CrossAccountTransfer::Failed: return "#EF4444";
-    case CrossAccountTransfer::Cancelled: return "#888888";
+    case CrossAccountTransfer::Pending: return tm.textSecondary().name();
+    case CrossAccountTransfer::InProgress: return tm.supportInfo().name();
+    case CrossAccountTransfer::Completed: return tm.supportSuccess().name();
+    case CrossAccountTransfer::Failed: return tm.supportError().name();
+    case CrossAccountTransfer::Cancelled: return tm.textSecondary().name();
     }
-    return "#888888";
+    return tm.textSecondary().name();
 }
 
 } // namespace MegaCustom

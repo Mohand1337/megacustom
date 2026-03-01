@@ -122,7 +122,7 @@ void RemoteFolderBrowserDialog::setFileController(FileController* controller) {
                         }
                     }
 
-                    m_statusLabel->setText(QString("%1 item(s)").arg(files.size()));
+                    m_statusLabel->setText(QString("%1 %2").arg(files.size()).arg(files.size() == 1 ? "item" : "items"));
                     updateButtonStates();
                 });
 
@@ -622,11 +622,14 @@ void RemoteFolderBrowserDialog::onSearchTextChanged(const QString& text) {
 
     // Update status with filter info
     if (lowerSearchText.isEmpty()) {
-        m_statusLabel->setText(QString("%1 item(s)").arg(m_treeWidget->topLevelItemCount()));
+        int totalCount = m_treeWidget->topLevelItemCount();
+        m_statusLabel->setText(QString("%1 %2").arg(totalCount).arg(totalCount == 1 ? "item" : "items"));
     } else {
-        m_statusLabel->setText(QString("%1 of %2 item(s) matching \"%3\"")
+        int totalCount = m_treeWidget->topLevelItemCount();
+        m_statusLabel->setText(QString("%1 of %2 %3 matching \"%4\"")
                                .arg(visibleCount)
-                               .arg(m_treeWidget->topLevelItemCount())
+                               .arg(totalCount)
+                               .arg(totalCount == 1 ? "item" : "items")
                                .arg(text));
     }
 }
@@ -708,7 +711,7 @@ void RemoteFolderBrowserDialog::onSearchResultsReceived(const QVariantList& resu
         }
     }
 
-    m_statusLabel->setText(QString("%1 search result(s)").arg(results.size()));
+    m_statusLabel->setText(QString("%1 search %2").arg(results.size()).arg(results.size() == 1 ? "result" : "results"));
     updateButtonStates();
 }
 

@@ -1,4 +1,5 @@
 #include "DownloaderPanel.h"
+#include "EmptyStateWidget.h"
 #include "styles/ThemeManager.h"
 #include "core/LogManager.h"
 #include "utils/AnimationHelper.h"
@@ -366,6 +367,18 @@ void DownloaderPanel::setupUI() {
     QGroupBox* queueGroup = new QGroupBox("Download Queue");
     QVBoxLayout* queueLayout = new QVBoxLayout(queueGroup);
 
+    // Empty state (shown when download queue is empty)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/download.svg",
+        "No downloads queued",
+        "Paste MEGA links or add URLs to start downloading files.",
+        "Add URLs",
+        this);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, [this]() {
+        m_urlInput->setFocus();
+    });
+    queueLayout->addWidget(m_emptyState);
+
     m_downloadTable = new QTableWidget();
     m_downloadTable->setColumnCount(6);
     m_downloadTable->setHorizontalHeaderLabels({"File Name", "Source", "Status", "Progress", "Speed", "ETA"});
@@ -602,7 +615,7 @@ void DownloaderPanel::onParseUrls() {
     updateStats();
     updateButtonStates();
 
-    m_statusLabel->setText(QString("Added %1 URL(s) to queue").arg(urls.size()));
+    m_statusLabel->setText(QString("Added %1 %2 to queue").arg(urls.size()).arg(urls.size() == 1 ? "URL" : "URLs"));
 }
 
 void DownloaderPanel::onClearInput() {
@@ -834,7 +847,7 @@ void DownloaderPanel::onSendToWatermark() {
     }
 
     emit sendToWatermark(filesToSend);
-    m_statusLabel->setText(QString("Sent %1 file(s) to Watermark panel").arg(filesToSend.size()));
+    m_statusLabel->setText(QString("Sent %1 %2 to Watermark panel").arg(filesToSend.size()).arg(filesToSend.size() == 1 ? "file" : "files"));
 }
 
 void DownloaderPanel::onAutoSendToggled(bool checked) {
@@ -932,7 +945,7 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
 
     if (failCount == 0 && successCount > 0) {
         QMessageBox::information(this, "Complete",
-            QString("Successfully downloaded %1 file(s).").arg(successCount));
+            QString("Successfully downloaded %1 %2.").arg(successCount).arg(successCount == 1 ? "file" : "files"));
     } else if (failCount > 0) {
         QMessageBox::warning(this, "Complete with Errors",
             QString("Completed: %1 success, %2 failed.\n\nCheck the table for error details.")
@@ -950,7 +963,7 @@ void DownloaderPanel::onWorkerLog(const QString& message) {
 void DownloaderPanel::checkAndAutoSend() {
     if (m_autoSendCheck->isChecked() && !m_completedFiles.isEmpty()) {
         emit sendToWatermark(m_completedFiles);
-        m_statusLabel->setText(m_statusLabel->text() + QString(" | Auto-sent %1 file(s) to Watermark").arg(m_completedFiles.size()));
+        m_statusLabel->setText(m_statusLabel->text() + QString(" | Auto-sent %1 %2 to Watermark").arg(m_completedFiles.size()).arg(m_completedFiles.size() == 1 ? "file" : "files"));
     }
 }
 
@@ -1029,6 +1042,14 @@ void DownloaderPanel::populateTable() {
         etaItem->setTextAlignment(Qt::AlignCenter);
         m_downloadTable->setItem(row, 5, etaItem);
     }
+
+    updateEmptyState();
+}
+
+void DownloaderPanel::updateEmptyState() {
+    bool empty = m_items.isEmpty();
+    m_emptyState->setVisible(empty);
+    m_downloadTable->setVisible(!empty);
 }
 
 void DownloaderPanel::updateStats() {

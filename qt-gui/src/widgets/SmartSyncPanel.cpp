@@ -590,13 +590,13 @@ void SmartSyncPanel::onScheduleClicked()
                         scheduleDesc = QString("Scheduled to run once at %1").arg(dialog.startTime().toString("yyyy-MM-dd hh:mm"));
                         break;
                     case ScheduleSyncDialog::ScheduleType::HOURLY:
-                        scheduleDesc = QString("Scheduled to run every %1 hour(s)").arg(dialog.repeatInterval());
+                        scheduleDesc = QString("Scheduled to run every %1 %2").arg(dialog.repeatInterval()).arg(dialog.repeatInterval() == 1 ? "hour" : "hours");
                         break;
                     case ScheduleSyncDialog::ScheduleType::DAILY:
-                        scheduleDesc = QString("Scheduled to run every %1 day(s)").arg(dialog.repeatInterval());
+                        scheduleDesc = QString("Scheduled to run every %1 %2").arg(dialog.repeatInterval()).arg(dialog.repeatInterval() == 1 ? "day" : "days");
                         break;
                     case ScheduleSyncDialog::ScheduleType::WEEKLY:
-                        scheduleDesc = QString("Scheduled to run every %1 week(s)").arg(dialog.repeatInterval());
+                        scheduleDesc = QString("Scheduled to run every %1 %2").arg(dialog.repeatInterval()).arg(dialog.repeatInterval() == 1 ? "week" : "weeks");
                         break;
                 }
             } else {

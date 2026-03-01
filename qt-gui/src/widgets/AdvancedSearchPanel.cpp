@@ -1,4 +1,5 @@
 #include "AdvancedSearchPanel.h"
+#include "styles/ThemeManager.h"
 #include "IconProvider.h"
 #include "LoadingSpinner.h"
 #include "dialogs/BulkNameEditorDialog.h"
@@ -457,7 +458,7 @@ void AdvancedSearchPanel::setupSortSection()
     sortLayout->addStretch();
 
     m_resultsCountLabel = new QLabel("Ready", this);
-    m_resultsCountLabel->setStyleSheet("color: #616366;");
+    m_resultsCountLabel->setStyleSheet(QString("color: %1;").arg(ThemeManager::instance().textSecondary().name()));
     sortLayout->addWidget(m_resultsCountLabel);
 
     m_mainLayout->addLayout(sortLayout);
@@ -539,7 +540,7 @@ void AdvancedSearchPanel::setupStatusSection()
     statusLayout->addWidget(m_indexingSpinner);
 
     m_indexStatusLabel = new QLabel("Index: Not loaded", this);
-    m_indexStatusLabel->setStyleSheet("color: #999; font-size: 11px;");
+    m_indexStatusLabel->setStyleSheet(QString("color: %1; font-size: 11px;").arg(ThemeManager::instance().textSecondary().name()));
     statusLayout->addWidget(m_indexStatusLabel);
 
     statusLayout->addStretch();
@@ -956,8 +957,9 @@ void AdvancedSearchPanel::onBulkRename()
         }
 
         auto confirm = QMessageBox::question(this, "Confirm Bulk Rename",
-            QString("Rename %1 item(s)?\n\n%2")
+            QString("Rename %1 %2?\n\n%3")
             .arg(changeCount)
+            .arg(changeCount == 1 ? "item" : "items")
             .arg(summary.left(500) + (summary.length() > 500 ? "\n..." : "")),
             QMessageBox::Yes | QMessageBox::No);
 
@@ -985,9 +987,10 @@ void AdvancedSearchPanel::onBulkRename()
         emit bulkRenameRequested(paths);  // For any listeners that want to know about the rename operation
 
         QMessageBox::information(this, "Bulk Rename",
-            QString("Rename requests sent for %1 item(s).\n"
+            QString("Rename requests sent for %1 %2.\n"
                     "Check the file explorer to verify results.")
-            .arg(successCount));
+            .arg(successCount)
+            .arg(successCount == 1 ? "item" : "items"));
 
         // Refresh search results after rename
         QTimer::singleShot(500, this, &AdvancedSearchPanel::executeSearch);

@@ -2,6 +2,7 @@
 #include "core/LogManager.h"
 #include "utils/MemberRegistry.h"
 #include "utils/CopyHelper.h"
+#include "styles/ThemeManager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -640,7 +641,7 @@ void LogViewerPanel::showEmptyState(QTableWidget* table, const QString& message)
 
     QTableWidgetItem* item = new QTableWidgetItem(message);
     item->setTextAlignment(Qt::AlignCenter);
-    item->setForeground(QColor("#666"));
+    item->setForeground(ThemeManager::instance().textSecondary());
     item->setFlags(item->flags() & ~Qt::ItemIsSelectable);  // Make non-selectable
     table->setItem(0, 0, item);
 
@@ -818,23 +819,25 @@ QString LogViewerPanel::formatDuration(qint64 ms) const {
 }
 
 QColor LogViewerPanel::getLevelColor(int level) const {
+    auto& tm = ThemeManager::instance();
     switch (level) {
-        case 0: return QColor("#888");      // Debug - gray
-        case 1: return QColor("#333");      // Info - dark text
-        case 2: return QColor("#b45309");   // Warning - dark amber
-        case 3: return QColor("#dc2626");   // Error - red
-        default: return QColor("#333");
+        case 0: return tm.textSecondary();   // Debug - gray
+        case 1: return tm.textPrimary();     // Info - primary text
+        case 2: return tm.supportWarning();  // Warning - amber
+        case 3: return tm.supportError();    // Error - red
+        default: return tm.textPrimary();
     }
 }
 
 QColor LogViewerPanel::getStatusColor(int status) const {
+    auto& tm = ThemeManager::instance();
     switch (status) {
-        case 0: return QColor("#888");      // Pending - gray
-        case 1: return QColor("#2563eb");   // Watermarking - blue
-        case 2: return QColor("#6366f1");   // Uploading - purple
-        case 3: return QColor("#16a34a");   // Completed - green
-        case 4: return QColor("#dc2626");   // Failed - red
-        default: return QColor("#333");
+        case 0: return tm.textSecondary();   // Pending - gray
+        case 1: return tm.supportInfo();     // Watermarking - blue
+        case 2: return tm.supportInfo();     // Uploading - purple (closest: info)
+        case 3: return tm.supportSuccess();  // Completed - green
+        case 4: return tm.supportError();    // Failed - red
+        default: return tm.textPrimary();
     }
 }
 

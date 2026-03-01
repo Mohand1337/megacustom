@@ -1393,6 +1393,17 @@ void MainWindow::onNavigationItemClicked(int item)
         m_toolbarContainer->setFixedHeight(isCloudDrive ? DpiScaler::scale(48) : 0);
     }
 
+    // Update window title to reflect current panel
+    static const QStringList panelNames = {
+        "Cloud Drive", "Folder Mapper", "Multi Uploader", "Cloud Copier",
+        "Smart Sync", "Members", "Distribution", "Watermark",
+        "Activity Log", "Settings", "Transfers", "Downloader"
+    };
+    QString title = "MegaCustom";
+    if (item >= 0 && item < panelNames.size())
+        title += " — " + panelNames[item];
+    setWindowTitle(title);
+
     qDebug() << "Navigation item clicked:" << item;
 }
 
@@ -1453,7 +1464,7 @@ void MainWindow::onSearchResultsReceived(const QVariantList& results)
     if (results.isEmpty()) {
         updateStatus("No results found");
     } else {
-        updateStatus(QString("Found %1 result(s)").arg(results.size()));
+        updateStatus(QString("Found %1 %2").arg(results.size()).arg(results.size() == 1 ? "result" : "results"));
     }
 }
 
@@ -1483,6 +1494,7 @@ void MainWindow::onAdvancedSearch()
     if (m_toolbarContainer) {
         m_toolbarContainer->setFixedHeight(0);
     }
+    setWindowTitle("MegaCustom — Advanced Search");
 }
 
 void MainWindow::onLoginStatusChanged(bool loggedIn)
@@ -1506,9 +1518,10 @@ void MainWindow::onLoginStatusChanged(bool loggedIn)
             m_userLabel->setText(m_authController->currentUser());
         }
         m_connectionLabel->setText("Connected");
-        m_connectionLabel->setStyleSheet("QLabel { color: #22C55E; }");
+        auto& tm = ThemeManager::instance();
+        m_connectionLabel->setStyleSheet(QString("QLabel { color: %1; }").arg(tm.supportSuccess().name()));
         m_connectionIndicator->setStyleSheet(
-            "QLabel { background-color: #22C55E; border-radius: 5px; }"
+            QString("QLabel { background-color: %1; border-radius: 5px; }").arg(tm.supportSuccess().name())
         );
 
         // Enable remote explorer
@@ -1529,9 +1542,10 @@ void MainWindow::onLoginStatusChanged(bool loggedIn)
     } else {
         m_userLabel->setText("Not logged in");
         m_connectionLabel->setText("Disconnected");
-        m_connectionLabel->setStyleSheet("QLabel { color: #EF4444; }");
+        auto& tmDisc = ThemeManager::instance();
+        m_connectionLabel->setStyleSheet(QString("QLabel { color: %1; }").arg(tmDisc.supportError().name()));
         m_connectionIndicator->setStyleSheet(
-            "QLabel { background-color: #E0E0E0; border-radius: 5px; }"
+            QString("QLabel { background-color: %1; border-radius: 5px; }").arg(tmDisc.borderSubtle().name())
         );
 
         // Disable remote explorer
@@ -1644,6 +1658,32 @@ void MainWindow::setupAccountShortcuts()
     // Ctrl+Shift+A - show account switcher
     QShortcut* showSwitcher = new QShortcut(QKeySequence("Ctrl+Shift+A"), this);
     connect(showSwitcher, &QShortcut::activated, this, &MainWindow::showAccountSwitcher);
+
+    // Panel navigation shortcuts: Ctrl+1 through Ctrl+9 and Ctrl+0
+    struct PanelShortcut {
+        const char* key;
+        MegaSidebar::NavigationItem item;
+    };
+    const PanelShortcut panelShortcuts[] = {
+        {"Ctrl+1", MegaSidebar::NavigationItem::CloudDrive},
+        {"Ctrl+2", MegaSidebar::NavigationItem::FolderMapper},
+        {"Ctrl+3", MegaSidebar::NavigationItem::MultiUploader},
+        {"Ctrl+4", MegaSidebar::NavigationItem::CloudCopier},
+        {"Ctrl+5", MegaSidebar::NavigationItem::MemberRegistry},
+        {"Ctrl+6", MegaSidebar::NavigationItem::Distribution},
+        {"Ctrl+7", MegaSidebar::NavigationItem::Watermark},
+        {"Ctrl+8", MegaSidebar::NavigationItem::Downloader},
+        {"Ctrl+9", MegaSidebar::NavigationItem::LogViewer},
+        {"Ctrl+0", MegaSidebar::NavigationItem::Transfers},
+    };
+    for (const auto& ps : panelShortcuts) {
+        auto* sc = new QShortcut(QKeySequence(ps.key), this);
+        auto navItem = ps.item;
+        connect(sc, &QShortcut::activated, this, [this, navItem]() {
+            onNavigationItemClicked(static_cast<int>(navItem));
+            if (m_sidebar) m_sidebar->setActiveItem(navItem);
+        });
+    }
 
     // Connect to AccountManager signals
     AccountManager& mgr = AccountManager::instance();
@@ -1908,7 +1948,7 @@ void MainWindow::onCrossAccountCopy(const QStringList& paths, const QString& tar
         paths, sourceAccountId, targetAccountId, targetPath);
 
     if (!transferId.isEmpty()) {
-        updateStatus(QString("Cross-account copy started: %1 item(s) to %2").arg(paths.size()).arg(targetPath));
+        updateStatus(QString("Cross-account copy started: %1 %2 to %3").arg(paths.size()).arg(paths.size() == 1 ? "item" : "items").arg(targetPath));
     } else {
         showError("Error", "Failed to start cross-account copy");
     }
@@ -1953,9 +1993,10 @@ void MainWindow::onCrossAccountMove(const QStringList& paths, const QString& tar
     int ret = QMessageBox::question(
         this,
         "Confirm Move",
-        QString("Move %1 item(s) to %2 in %3?\n\n"
+        QString("Move %1 %2 to %3 in %4?\n\n"
                 "This will delete the files from the current account after copying.")
             .arg(paths.size())
+            .arg(paths.size() == 1 ? "item" : "items")
             .arg(targetPath)
             .arg(targetAccountName),
         QMessageBox::Yes | QMessageBox::No,
@@ -1970,7 +2011,7 @@ void MainWindow::onCrossAccountMove(const QStringList& paths, const QString& tar
         paths, sourceAccountId, targetAccountId, targetPath);
 
     if (!transferId.isEmpty()) {
-        updateStatus(QString("Cross-account move started: %1 item(s) to %2").arg(paths.size()).arg(targetPath));
+        updateStatus(QString("Cross-account move started: %1 %2 to %3").arg(paths.size()).arg(paths.size() == 1 ? "item" : "items").arg(targetPath));
     } else {
         showError("Error", "Failed to start cross-account move");
     }
@@ -2001,7 +2042,7 @@ void MainWindow::onCrossAccountTransferCompleted(const MegaCustom::CrossAccountT
     if (fileName.contains(";")) {
         // Multiple files - just show count
         int fileCount = transfer.sourcePath.split(";", Qt::SkipEmptyParts).count();
-        fileName = QString("%1 file(s)").arg(fileCount);
+        fileName = QString("%1 %2").arg(fileCount).arg(fileCount == 1 ? "file" : "files");
     }
 
     QString message = QString("Cross-account %1 completed: %2")
@@ -2035,7 +2076,7 @@ void MainWindow::onCrossAccountTransferFailed(const MegaCustom::CrossAccountTran
     if (fileName.contains(";")) {
         // Multiple files - just show count
         int fileCount = transfer.sourcePath.split(";", Qt::SkipEmptyParts).count();
-        fileName = QString("%1 file(s)").arg(fileCount);
+        fileName = QString("%1 %2").arg(fileCount).arg(fileCount == 1 ? "file" : "files");
     }
 
     QString message = QString("Cross-account %1 failed: %2\n\nError: %3")
@@ -2088,8 +2129,8 @@ void MainWindow::onSharedLinksWillBreak(const QStringList& sourcePaths,
             sourcePaths, sourceAccountId, targetAccountId, targetPath, true);
 
         if (!transferId.isEmpty()) {
-            updateStatus(QString("Moving %1 item(s) to another account...")
-                .arg(sourcePaths.count()));
+            updateStatus(QString("Moving %1 %2 to another account...")
+                .arg(sourcePaths.count()).arg(sourcePaths.count() == 1 ? "item" : "items"));
         }
     } else {
         updateStatus("Move cancelled - shared links preserved");
@@ -2149,7 +2190,7 @@ void MainWindow::onQuickPeekCopyToActive(const QStringList& paths, const QString
         paths, sourceAccountId, targetAccountId, targetPath);
 
     if (!transferId.isEmpty()) {
-        updateStatus(QString("Copying %1 item(s) to active account...").arg(paths.size()));
+        updateStatus(QString("Copying %1 %2 to active account...").arg(paths.size()).arg(paths.size() == 1 ? "item" : "items"));
     } else {
         showError("Error", "Failed to start copy to active account");
     }
@@ -2197,6 +2238,21 @@ void MainWindow::onKeyboardShortcuts()
 <tr><td>Ctrl+V</td><td>Paste</td></tr>
 <tr><td>Ctrl+A</td><td>Select all</td></tr>
 <tr><td>Ctrl+F</td><td>Find</td></tr>
+</table>
+
+<h3>Panel Navigation</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td>Ctrl+1</td><td>Cloud Drive</td></tr>
+<tr><td>Ctrl+2</td><td>Folder Mapper</td></tr>
+<tr><td>Ctrl+3</td><td>Multi Uploader</td></tr>
+<tr><td>Ctrl+4</td><td>Cloud Copier</td></tr>
+<tr><td>Ctrl+5</td><td>Members</td></tr>
+<tr><td>Ctrl+6</td><td>Distribution</td></tr>
+<tr><td>Ctrl+7</td><td>Watermark</td></tr>
+<tr><td>Ctrl+8</td><td>Downloader</td></tr>
+<tr><td>Ctrl+9</td><td>Activity Log</td></tr>
+<tr><td>Ctrl+0</td><td>Transfers</td></tr>
 </table>
 
 <h3>Navigation</h3>

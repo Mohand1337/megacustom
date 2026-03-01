@@ -452,7 +452,7 @@ void SettingsPanel::setupAboutPage()
     logoLabel->setStyleSheet(QString(
         "QLabel#AboutLogo {"
         "  background-color: %1;"
-        "  color: #FFFFFF;"
+        "  color: white;"
         "  font-size: %2px;"
         "  font-weight: bold;"
         "  border-radius: %3px;"

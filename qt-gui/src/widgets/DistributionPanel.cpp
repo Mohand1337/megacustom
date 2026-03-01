@@ -1,4 +1,5 @@
 #include "DistributionPanel.h"
+#include "EmptyStateWidget.h"
 #include "utils/MemberRegistry.h"
 #include "utils/TemplateExpander.h"
 #include "utils/CopyHelper.h"
@@ -23,6 +24,7 @@
 #include <QStyle>
 #include <QMutex>
 #include "utils/AnimationHelper.h"
+#include "styles/ThemeManager.h"
 #include <QWaitCondition>
 #include <QDebug>
 #include <QClipboard>
@@ -299,23 +301,24 @@ void DistributionPanel::setDistributionController(DistributionController* contro
             QTableWidgetItem* statusItem = m_memberTable->item(row, COL_STATUS);
             if (!statusItem) return;
 
+            auto& tm = ThemeManager::instance();
             if (status.state == "uploading") {
                 statusItem->setText("Uploading...");
-                statusItem->setForeground(QColor("#ffd43b"));
+                statusItem->setForeground(tm.supportWarning());
             } else if (status.state == "completed") {
                 statusItem->setText(QString("Done (%1 files)").arg(status.filesUploaded));
-                statusItem->setForeground(QColor("#009B48"));
+                statusItem->setForeground(tm.supportSuccess());
                 m_successCount++;
                 AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
             } else if (status.state == "failed") {
                 statusItem->setText("Failed");
-                statusItem->setForeground(QColor("#E31B57"));
+                statusItem->setForeground(tm.supportError());
                 statusItem->setToolTip(status.lastError);
                 m_failCount++;
                 AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
             } else if (status.state == "skipped") {
                 statusItem->setText("Skipped");
-                statusItem->setForeground(QColor("#616366"));
+                statusItem->setForeground(tm.textSecondary());
                 statusItem->setToolTip(status.lastError);
                 m_failCount++;
                 AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
@@ -339,7 +342,7 @@ void DistributionPanel::setDistributionController(DistributionController* contro
             m_modeIndicator->style()->polish(m_modeIndicator);
             m_uploadBanner->setVisible(false);
 
-            m_statusLabel->setText(QString("Upload complete: %1/%2 members, %3 files uploaded")
+            m_statusLabel->setText(QString("Upload complete: %1 of %2 members, %3 files uploaded")
                 .arg(result.membersCompleted).arg(result.totalMembers).arg(result.filesUploaded));
 
             QMessageBox::information(this, "Upload Complete",
@@ -422,7 +425,7 @@ void DistributionPanel::setupUI() {
     mainLayout->addWidget(m_moveWarningBanner);
 
     // Source/Destination Config
-    QGroupBox* configGroup = new QGroupBox("CONFIGURATION");
+    QGroupBox* configGroup = new QGroupBox("Configuration");
     QGridLayout* configLayout = new QGridLayout(configGroup);
     configLayout->setSpacing(8);
 
@@ -438,7 +441,17 @@ void DistributionPanel::setupUI() {
     connect(m_scanBtn, &QPushButton::clicked, this, &DistributionPanel::onScanWmFolder);
     configLayout->addWidget(m_scanBtn, 0, 2);
 
-    configLayout->addWidget(new QLabel("Quick Template:"), 1, 0);
+    m_broadcastCheck = new QCheckBox("Broadcast — copy this folder to all selected members");
+    m_broadcastCheck->setToolTip("When checked, the source folder itself is copied to every member's destination.\n"
+                                 "When unchecked, subfolders are scanned and auto-matched to individual members.");
+    connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_modeIndicator->setText(checked
+            ? QString("Mode: Broadcast (one source %1 all members)").arg(QChar(0x2192))
+            : "Mode: Cloud Copy (scan and distribute)");
+    });
+    configLayout->addWidget(m_broadcastCheck, 1, 1, 1, 2);
+
+    configLayout->addWidget(new QLabel("Quick Template:"), 2, 0);
     m_quickTemplateCombo = new QComboBox();
     m_quickTemplateCombo->addItem("Distribution Folder", "{member}");
     m_quickTemplateCombo->addItem("Hot Seats", "{archive_root}/{fast_forward}/{hot_seats}");
@@ -448,14 +461,14 @@ void DistributionPanel::setupUI() {
     m_quickTemplateCombo->setToolTip("Quick preset for destination path template");
     connect(m_quickTemplateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &DistributionPanel::onQuickTemplateChanged);
-    configLayout->addWidget(m_quickTemplateCombo, 1, 1, 1, 2);
+    configLayout->addWidget(m_quickTemplateCombo, 2, 1, 1, 2);
 
-    configLayout->addWidget(new QLabel("Dest Template:"), 2, 0);
+    configLayout->addWidget(new QLabel("Dest Template:"), 3, 0);
     m_destTemplateEdit = new QLineEdit("{member}");
     m_destTemplateEdit->setToolTip("Destination path template. Variables: {member}, {member_id}, "
                                    "{archive_root}, {nhb_calls}, {fast_forward}, {theory_calls}, "
                                    "{hot_seats}, {year}, {month}, etc.");
-    configLayout->addWidget(m_destTemplateEdit, 2, 1);
+    configLayout->addWidget(m_destTemplateEdit, 3, 1);
 
     // Real-time template validation
     connect(m_destTemplateEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
@@ -504,7 +517,7 @@ void DistributionPanel::setupUI() {
     connect(m_variableHelpBtn, &QPushButton::clicked, this, &DistributionPanel::onVariableHelpClicked);
     templateBtnLayout->addWidget(m_variableHelpBtn);
 
-    configLayout->addWidget(templateBtnWidget, 2, 2);
+    configLayout->addWidget(templateBtnWidget, 3, 2);
 
     // Button row: Preview Paths + Generate Destinations
     QHBoxLayout* previewRow = new QHBoxLayout();
@@ -521,9 +534,9 @@ void DistributionPanel::setupUI() {
     previewRow->addWidget(m_generateDestsBtn);
 
     previewRow->addStretch();
-    configLayout->addLayout(previewRow, 3, 1, 1, 2);
+    configLayout->addLayout(previewRow, 4, 1, 1, 2);
 
-    // Row 4: Saved templates + Import/Export
+    // Row 5: Saved templates + Import/Export
     QHBoxLayout* templateMgmtRow = new QHBoxLayout();
 
     QLabel* savedLabel = new QLabel("Saved:");
@@ -563,7 +576,7 @@ void DistributionPanel::setupUI() {
     templateMgmtRow->addWidget(m_exportDestsBtn);
 
     templateMgmtRow->addStretch();
-    configLayout->addLayout(templateMgmtRow, 4, 0, 1, 3);
+    configLayout->addLayout(templateMgmtRow, 5, 0, 1, 3);
 
     // Load saved templates from disk
     loadSavedTemplates();
@@ -571,7 +584,7 @@ void DistributionPanel::setupUI() {
     mainLayout->addWidget(configGroup);
 
     // Options Group
-    QGroupBox* optionsGroup = new QGroupBox("OPTIONS");
+    QGroupBox* optionsGroup = new QGroupBox("Options");
     QGridLayout* optionsLayout = new QGridLayout(optionsGroup);
     optionsLayout->setSpacing(8);
 
@@ -610,8 +623,18 @@ void DistributionPanel::setupUI() {
     mainLayout->addWidget(optionsGroup);
 
     // Members Table Group
-    QGroupBox* tableGroup = new QGroupBox("DETECTED FOLDERS");
+    QGroupBox* tableGroup = new QGroupBox("Detected Folders");
     QVBoxLayout* tableLayout = new QVBoxLayout(tableGroup);
+
+    // Empty state (shown when no folders are scanned)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/share.svg",
+        "No folders detected",
+        "Set a source path and scan to detect folders for distribution to members.",
+        "Scan Folder",
+        this);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &DistributionPanel::onScanWmFolder);
+    tableLayout->addWidget(m_emptyState);
 
     m_memberTable = new QTableWidget();
     m_memberTable->setObjectName("DistributionTable");
@@ -801,7 +824,7 @@ void DistributionPanel::addFilesFromWatermark(const QStringList& filePaths) {
     // Store received files for reference and potential highlighting
     m_receivedWatermarkFiles = filePaths;
 
-    m_statusLabel->setText(QString("Received %1 file(s) from Watermark panel — scanning cloud...").arg(filePaths.size()));
+    m_statusLabel->setText(QString("Received %1 %2 from Watermark panel — scanning cloud...").arg(filePaths.size()).arg(filePaths.size() == 1 ? "file" : "files"));
 
     qDebug() << "DistributionPanel: Received" << filePaths.size() << "files from Watermark:";
     for (const QString& path : filePaths) {
@@ -863,14 +886,15 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
         MemberInfo memberInfo = m_registry->getMember(memberId);
         QString display = memberInfo.displayName.isEmpty() ? memberId
             : QString("%1 (%2)").arg(memberInfo.displayName, memberId);
+        auto& tm = ThemeManager::instance();
         auto* memberItem = new QTableWidgetItem(display);
-        memberItem->setForeground(QColor("#009B48"));
+        memberItem->setForeground(tm.supportSuccess());
         m_memberTable->setItem(row, COL_MATCHED_MEMBER, memberItem);
 
         // COL_MATCH_TYPE: Upload mode
         auto* matchItem = new QTableWidgetItem("Upload");
         matchItem->setTextAlignment(Qt::AlignCenter);
-        matchItem->setForeground(QColor("#5C7AEA"));
+        matchItem->setForeground(tm.supportInfo());
         m_memberTable->setItem(row, COL_MATCH_TYPE, matchItem);
 
         // COL_DESTINATION
@@ -882,7 +906,7 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
         // COL_STATUS - pending
         auto* statusItem = new QTableWidgetItem("Pending");
         statusItem->setTextAlignment(Qt::AlignCenter);
-        statusItem->setForeground(QColor("#616366"));
+        statusItem->setForeground(tm.textSecondary());
         m_memberTable->setItem(row, COL_STATUS, statusItem);
 
         row++;
@@ -904,6 +928,8 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
         .arg(totalFiles).arg(memberFileMap.size()));
     m_statsLabel->setText(QString("Members: %1 | Files: %2")
         .arg(memberFileMap.size()).arg(totalFiles));
+
+    updateEmptyState();
 }
 
 void DistributionPanel::onScanWmFolder() {
@@ -923,6 +949,12 @@ void DistributionPanel::onScanWmFolder() {
     m_registry->load();
     qDebug() << "DistributionPanel: Reloaded member registry, count:" << m_registry->getAllMembers().size();
 
+    // Broadcast mode: validate source and populate all members
+    if (m_broadcastCheck->isChecked()) {
+        onBroadcastScan();
+        return;
+    }
+
     QString wmPath = m_wmPathEdit->text();
     m_statusLabel->setText("Scanning " + wmPath + "...");
     m_scanBtn->setEnabled(false);
@@ -932,6 +964,64 @@ void DistributionPanel::onScanWmFolder() {
     // Request folder listing via FileController
     // The result will come back via onFileListReceived slot
     m_fileController->refreshRemote(wmPath);
+}
+
+void DistributionPanel::onBroadcastScan() {
+    QString sourcePath = m_wmPathEdit->text().trimmed();
+    if (sourcePath.isEmpty()) {
+        m_statusLabel->setText("Enter a source folder path");
+        m_scanBtn->setEnabled(true);
+        return;
+    }
+
+    if (!m_megaApi) {
+        m_statusLabel->setText("Error: Not connected to MEGA");
+        m_scanBtn->setEnabled(true);
+        return;
+    }
+
+    // Validate source exists on MEGA
+    mega::MegaNode* sourceNode = m_megaApi->getNodeByPath(sourcePath.toUtf8().constData());
+    if (!sourceNode) {
+        m_statusLabel->setText("Source folder not found: " + sourcePath);
+        m_scanBtn->setEnabled(true);
+        return;
+    }
+    bool isFolder = sourceNode->isFolder();
+    delete sourceNode;
+    if (!isFolder) {
+        m_statusLabel->setText("Source path is not a folder: " + sourcePath);
+        m_scanBtn->setEnabled(true);
+        return;
+    }
+
+    populateBroadcastTable(sourcePath);
+    m_scanBtn->setEnabled(true);
+}
+
+void DistributionPanel::populateBroadcastTable(const QString& sourcePath) {
+    m_wmFolders.clear();
+
+    QList<MemberInfo> allMembers = m_registry->getAllMembers();
+    for (const MemberInfo& member : allMembers) {
+        if (!member.active) continue;
+
+        WmFolderInfo info;
+        info.folderName = sourcePath.section('/', -1);
+        info.fullPath = sourcePath;
+        info.memberId = member.id;
+        info.matchType = "broadcast";
+        info.matchConfidence = 5;
+        info.matched = true;
+        info.selected = true;
+        m_wmFolders.append(info);
+    }
+
+    populateTable();
+
+    m_statusLabel->setText(QString("Broadcast mode: %1 members ready. Source: %2")
+        .arg(m_wmFolders.size()).arg(sourcePath));
+    m_statsLabel->setText(QString("Members: %1 | Source: %2").arg(m_wmFolders.size()).arg(sourcePath));
 }
 
 void DistributionPanel::onFileListReceived(const QVariantList& files) {
@@ -1070,9 +1160,10 @@ void DistributionPanel::populateTable() {
                     m_wmFolders[row].matchConfidence = 5;
 
                     // Update match type column
+                    auto& tm = ThemeManager::instance();
                     if (m_memberTable->item(row, COL_MATCH_TYPE)) {
                         m_memberTable->item(row, COL_MATCH_TYPE)->setText("Manual");
-                        m_memberTable->item(row, COL_MATCH_TYPE)->setForeground(QColor("#5C7AEA"));
+                        m_memberTable->item(row, COL_MATCH_TYPE)->setForeground(tm.supportInfo());
                     }
                     // Update destination column
                     QString dest = getDestinationPath(selectedId);
@@ -1083,7 +1174,7 @@ void DistributionPanel::populateTable() {
                     // Update status
                     if (m_memberTable->item(row, COL_STATUS)) {
                         m_memberTable->item(row, COL_STATUS)->setText("Ready");
-                        m_memberTable->item(row, COL_STATUS)->setForeground(QColor("#009B48"));
+                        m_memberTable->item(row, COL_STATUS)->setForeground(tm.supportSuccess());
                     }
                     // Check the checkbox
                     QWidget* w = m_memberTable->cellWidget(row, COL_CHECK);
@@ -1099,13 +1190,14 @@ void DistributionPanel::populateTable() {
                     m_wmFolders[row].matchConfidence = 0;
                     memberCombo->setProperty("error", true);
                     memberCombo->style()->polish(memberCombo);
+                    auto& tm2 = ThemeManager::instance();
                     if (m_memberTable->item(row, COL_MATCH_TYPE)) {
                         m_memberTable->item(row, COL_MATCH_TYPE)->setText("No match");
-                        m_memberTable->item(row, COL_MATCH_TYPE)->setForeground(QColor("#E31B57"));
+                        m_memberTable->item(row, COL_MATCH_TYPE)->setForeground(tm2.supportError());
                     }
                     if (m_memberTable->item(row, COL_STATUS)) {
                         m_memberTable->item(row, COL_STATUS)->setText("Select Member");
-                        m_memberTable->item(row, COL_STATUS)->setForeground(QColor("#E31B57"));
+                        m_memberTable->item(row, COL_STATUS)->setForeground(tm2.supportError());
                     }
                 }
             }
@@ -1113,29 +1205,33 @@ void DistributionPanel::populateTable() {
         m_memberTable->setCellWidget(row, COL_MATCHED_MEMBER, memberCombo);
 
         // COL_MATCH_TYPE: How the match was made
+        auto& tm = ThemeManager::instance();
         QString matchLabel;
         QColor matchColor;
         if (info.matchType == "pattern") {
             matchLabel = "Pattern";
-            matchColor = QColor("#009B48");
+            matchColor = tm.supportSuccess();
         } else if (info.matchType == "id") {
             matchLabel = "ID match";
-            matchColor = QColor("#009B48");
+            matchColor = tm.supportSuccess();
         } else if (info.matchType == "email") {
             matchLabel = "Email";
-            matchColor = QColor("#5C7AEA");
+            matchColor = tm.supportInfo();
         } else if (info.matchType == "name") {
             matchLabel = "Name";
-            matchColor = QColor("#5C7AEA");
+            matchColor = tm.supportInfo();
         } else if (info.matchType == "fuzzy") {
             matchLabel = "Fuzzy";
-            matchColor = QColor("#ffd43b");
+            matchColor = tm.supportWarning();
         } else if (info.matchType == "manual") {
             matchLabel = "Manual";
-            matchColor = QColor("#5C7AEA");
+            matchColor = tm.supportInfo();
+        } else if (info.matchType == "broadcast") {
+            matchLabel = "Broadcast";
+            matchColor = tm.supportInfo();
         } else {
             matchLabel = "No match";
-            matchColor = QColor("#E31B57");
+            matchColor = tm.supportError();
         }
         QTableWidgetItem* matchItem = new QTableWidgetItem(matchLabel);
         matchItem->setTextAlignment(Qt::AlignCenter);
@@ -1155,9 +1251,17 @@ void DistributionPanel::populateTable() {
         QString status = info.matched ? "Ready" : "Select Member";
         QTableWidgetItem* statusItem = new QTableWidgetItem(status);
         statusItem->setTextAlignment(Qt::AlignCenter);
-        statusItem->setForeground(info.matched ? QColor("#009B48") : QColor("#E31B57"));
+        statusItem->setForeground(info.matched ? tm.supportSuccess() : tm.supportError());
         m_memberTable->setItem(row, COL_STATUS, statusItem);
     }
+
+    updateEmptyState();
+}
+
+void DistributionPanel::updateEmptyState() {
+    bool empty = m_memberTable->rowCount() == 0;
+    m_emptyState->setVisible(empty);
+    m_memberTable->setVisible(!empty);
 }
 
 QString DistributionPanel::getDestinationPath(const QString& memberId) {
@@ -1259,7 +1363,7 @@ void DistributionPanel::onPreviewDistribution() {
         .arg(copyFolder ? "folders" : "folder contents")
         .arg(selectedCount);
     if (skippedCount > 0) {
-        msg += QString("(%1 row(s) have no source path and will be skipped)\n\n").arg(skippedCount);
+        msg += QString("(%1 %2 no source path and will be skipped)\n\n").arg(skippedCount).arg(skippedCount == 1 ? "row has" : "rows have");
     }
     msg += preview.join("\n");
 
@@ -1355,9 +1459,9 @@ void DistributionPanel::onStartDistribution() {
 
     if (!skippedNoSource.isEmpty()) {
         QMessageBox::warning(this, "Skipped Rows",
-            QString("%1 row(s) skipped (no source path):\n%2\n\n"
+            QString("%1 %2 skipped (no source path):\n%3\n\n"
                     "Manual/imported rows require a scanned source folder.")
-                .arg(skippedNoSource.size()).arg(skippedNoSource.join(", ")));
+                .arg(skippedNoSource.size()).arg(skippedNoSource.size() == 1 ? "row" : "rows").arg(skippedNoSource.join(", ")));
     }
 
     if (tasks.isEmpty()) {
@@ -1536,7 +1640,7 @@ void DistributionPanel::onWorkerTaskStarted(int index, const QString& source, co
         QTableWidgetItem* statusItem = m_memberTable->item(index, COL_STATUS);
         if (statusItem) {
             statusItem->setText("Copying...");
-            statusItem->setForeground(QColor("#ffd43b"));
+            statusItem->setForeground(ThemeManager::instance().supportWarning());
         }
     }
 }
@@ -1544,13 +1648,14 @@ void DistributionPanel::onWorkerTaskStarted(int index, const QString& source, co
 void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QString& error) {
     if (index >= m_wmFolders.size()) return;
 
+    auto& tm = ThemeManager::instance();
     QTableWidgetItem* statusItem = m_memberTable->item(index, COL_STATUS);
 
     if (success) {
         m_successCount++;
         if (statusItem) {
             statusItem->setText("Done");
-            statusItem->setForeground(QColor("#009B48"));
+            statusItem->setForeground(tm.supportSuccess());
         }
 
         // Trigger bulk rename if option is checked
@@ -1562,7 +1667,7 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
         m_failCount++;
         if (statusItem) {
             statusItem->setText("Failed");
-            statusItem->setForeground(QColor("#E31B57"));
+            statusItem->setForeground(tm.supportError());
             statusItem->setToolTip(error);
         }
         qDebug() << "Task failed:" << m_wmFolders[index].memberId << "-" << error;
@@ -2146,8 +2251,8 @@ void DistributionPanel::onImportDestinations() {
         imported++;
     }
 
-    m_statusLabel->setText(QString("Imported %1 destination(s) from %2")
-                          .arg(imported).arg(QFileInfo(filePath).fileName()));
+    m_statusLabel->setText(QString("Imported %1 %2 from %3")
+                          .arg(imported).arg(imported == 1 ? "destination" : "destinations").arg(QFileInfo(filePath).fileName()));
 }
 
 void DistributionPanel::onExportDestinations() {
@@ -2188,8 +2293,8 @@ void DistributionPanel::onExportDestinations() {
     }
 
     file.close();
-    m_statusLabel->setText(QString("Exported %1 destination(s) to %2")
-                          .arg(exported).arg(QFileInfo(filePath).fileName()));
+    m_statusLabel->setText(QString("Exported %1 %2 to %3")
+                          .arg(exported).arg(exported == 1 ? "destination" : "destinations").arg(QFileInfo(filePath).fileName()));
 }
 
 // ==================== Manual Destination Management ====================
@@ -2388,7 +2493,7 @@ void DistributionPanel::onPasteDestinations() {
         added++;
     }
 
-    m_statusLabel->setText(QString("Added %1 destination(s) from paste.").arg(added));
+    m_statusLabel->setText(QString("Added %1 %2 from paste.").arg(added).arg(added == 1 ? "destination" : "destinations"));
 }
 
 void DistributionPanel::onClearAllRows() {
@@ -2402,6 +2507,7 @@ void DistributionPanel::onClearAllRows() {
     m_memberTable->setRowCount(0);
     m_wmFolders.clear();
     m_statusLabel->setText("Table cleared.");
+    updateEmptyState();
 }
 
 void DistributionPanel::onVariableHelpClicked() {

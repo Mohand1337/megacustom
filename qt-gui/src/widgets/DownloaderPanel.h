@@ -17,6 +17,8 @@
 #include <memory>
 #include <atomic>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 /**
@@ -159,6 +161,7 @@ private slots:
 private:
     void setupUI();
     void populateTable();
+    void updateEmptyState();
     void updateStats();
     void updateButtonStates();
     void checkAndAutoSend();
@@ -177,6 +180,9 @@ private:
     QPlainTextEdit* m_urlInput;
     QPushButton* m_parseBtn;
     QPushButton* m_clearInputBtn;
+
+    // Empty state
+    EmptyStateWidget* m_emptyState = nullptr;
 
     // UI Components - Download Queue
     QTableWidget* m_downloadTable;

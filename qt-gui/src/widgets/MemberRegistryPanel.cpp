@@ -1,9 +1,11 @@
 #include "MemberRegistryPanel.h"
+#include "EmptyStateWidget.h"
 #include "utils/MemberRegistry.h"
 #include "controllers/FileController.h"
 #include "utils/CopyHelper.h"
 #include "dialogs/RemoteFolderBrowserDialog.h"
 #include "dialogs/WordPressConfigDialog.h"
+#include "styles/ThemeManager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -138,6 +140,16 @@ void MemberRegistryPanel::setupUI() {
     QVBoxLayout* membersLayout = new QVBoxLayout(membersTab);
     membersLayout->setContentsMargins(8, 8, 8, 8);
 
+    // Empty state (shown when no members exist)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/users.svg",
+        "No members registered",
+        "Add members to distribute files, apply watermarks, and manage cloud folders.",
+        "Add Member",
+        membersTab);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &MemberRegistryPanel::onAddMember);
+    membersLayout->addWidget(m_emptyState);
+
     // Members table with extended columns
     m_memberTable = new QTableWidget();
     m_memberTable->setObjectName("MemberRegistryTable");
@@ -231,7 +243,7 @@ void MemberRegistryPanel::setupUI() {
         }
 
         menu.addSeparator();
-        menu.addAction("Remove", this, &MemberRegistryPanel::onRemoveMember);
+        menu.addAction("Delete", this, &MemberRegistryPanel::onRemoveMember);
         menu.exec(m_memberTable->viewport()->mapToGlobal(pos));
     });
 
@@ -251,7 +263,7 @@ void MemberRegistryPanel::setupUI() {
     m_editBtn->setEnabled(false);
     connect(m_editBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onEditMember);
 
-    m_removeBtn = new QPushButton("Remove");
+    m_removeBtn = new QPushButton("Delete");
     m_removeBtn->setObjectName("PanelDangerButton");
     m_removeBtn->setIcon(QIcon(":/icons/trash-2.svg"));
     m_removeBtn->setEnabled(false);
@@ -558,6 +570,7 @@ void MemberRegistryPanel::setupUI() {
 
 void MemberRegistryPanel::refresh() {
     populateTable();
+    updateEmptyState();
     refreshGroups();
 
     // Update stats
@@ -741,6 +754,8 @@ void MemberRegistryPanel::populateTable() {
 
     m_memberTable->setRowCount(members.size());
 
+    auto& tm = ThemeManager::instance();
+
     for (int row = 0; row < members.size(); ++row) {
         const MemberInfo& m = members[row];
 
@@ -761,7 +776,7 @@ void MemberRegistryPanel::populateTable() {
         // Email
         QTableWidgetItem* emailItem = new QTableWidgetItem(m.email);
         if (m.email.isEmpty()) {
-            emailItem->setForeground(QColor("#666"));
+            emailItem->setForeground(tm.textSecondary());
             emailItem->setText("-");
         }
         m_memberTable->setItem(row, 3, emailItem);
@@ -771,10 +786,10 @@ void MemberRegistryPanel::populateTable() {
         if (m.hasDistributionFolder()) {
             folderItem->setText(m.distributionFolder);
             folderItem->setIcon(QIcon(":/icons/folder.svg"));
-            folderItem->setForeground(QColor("#009B48")); // Green
+            folderItem->setForeground(tm.supportSuccess());
         } else {
             folderItem->setText("Not bound");
-            folderItem->setForeground(QColor("#666"));
+            folderItem->setForeground(tm.textSecondary());
         }
         m_memberTable->setItem(row, 4, folderItem);
 
@@ -782,12 +797,12 @@ void MemberRegistryPanel::populateTable() {
         QTableWidgetItem* wmItem = new QTableWidgetItem();
         if (m.useGlobalWatermark) {
             wmItem->setText("Global");
-            wmItem->setForeground(QColor("#F7A308")); // Yellow/amber
+            wmItem->setForeground(tm.supportWarning());
         } else if (!m.watermarkFields.isEmpty()) {
             wmItem->setText(m.watermarkFields.join(", "));
         } else {
             wmItem->setText("Default");
-            wmItem->setForeground(QColor("#888"));
+            wmItem->setForeground(tm.textSecondary());
         }
         m_memberTable->setItem(row, 5, wmItem);
 
@@ -795,7 +810,7 @@ void MemberRegistryPanel::populateTable() {
         QTableWidgetItem* activeItem = new QTableWidgetItem(m.active ? "Yes" : "No");
         activeItem->setTextAlignment(Qt::AlignCenter);
         if (!m.active) {
-            activeItem->setForeground(QColor("#888"));
+            activeItem->setForeground(tm.textSecondary());
         }
         m_memberTable->setItem(row, 6, activeItem);
 
@@ -804,10 +819,10 @@ void MemberRegistryPanel::populateTable() {
         QStringList memberGroups = m_registry->getGroupsForMember(m.id);
         if (memberGroups.isEmpty()) {
             groupsItem->setText("-");
-            groupsItem->setForeground(QColor("#666"));
+            groupsItem->setForeground(tm.textSecondary());
         } else {
             groupsItem->setText(memberGroups.join(", "));
-            groupsItem->setForeground(QColor("#4A90D9"));
+            groupsItem->setForeground(tm.supportInfo());
         }
         m_memberTable->setItem(row, 7, groupsItem);
 
@@ -820,7 +835,7 @@ void MemberRegistryPanel::populateTable() {
                : (ps.lastDistributionDate > ps.lastWatermarkDate ? ps.lastDistributionDate : ps.lastWatermarkDate));
         if (lastDate.isEmpty()) {
             activityItem->setText("-");
-            activityItem->setForeground(QColor("#666"));
+            activityItem->setForeground(tm.textSecondary());
         } else {
             activityItem->setText(lastDate);
             activityItem->setToolTip(
@@ -832,6 +847,12 @@ void MemberRegistryPanel::populateTable() {
         }
         m_memberTable->setItem(row, 8, activityItem);
     }
+}
+
+void MemberRegistryPanel::updateEmptyState() {
+    bool empty = m_registry->getAllMembers().isEmpty();
+    m_emptyState->setVisible(empty);
+    m_memberTable->setVisible(!empty);
 }
 
 QString MemberRegistryPanel::getSelectedMemberId() const {
@@ -1244,8 +1265,8 @@ void MemberRegistryPanel::onRemoveMember() {
 
     MemberInfo info = m_registry->getMember(memberId);
 
-    int ret = QMessageBox::question(this, "Remove Member",
-        QString("Are you sure you want to remove '%1'?").arg(info.displayName),
+    int ret = QMessageBox::question(this, "Delete Member",
+        QString("Are you sure you want to delete '%1'? This cannot be undone.").arg(info.displayName),
         QMessageBox::Yes | QMessageBox::No);
 
     if (ret == QMessageBox::Yes) {
@@ -1500,7 +1521,7 @@ void MemberRegistryPanel::refreshGroups() {
         m_groupList->setCurrentRow(selectRow);
     }
 
-    m_groupStatsLabel->setText(QString("%1 group(s)").arg(groupNames.size()));
+    m_groupStatsLabel->setText(QString("%1 %2").arg(groupNames.size()).arg(groupNames.size() == 1 ? "group" : "groups"));
 }
 
 void MemberRegistryPanel::onAddGroup() {

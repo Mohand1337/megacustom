@@ -937,8 +937,9 @@ void AccountManagerDialog::onDeleteGroupClicked()
 
     QString message = QString("Delete group '%1'?").arg(group.name);
     if (!accounts.isEmpty()) {
-        message += QString("\n\n%1 account(s) will be moved to the default group.")
-                       .arg(accounts.size());
+        message += QString("\n\n%1 %2 will be moved to the default group.")
+                       .arg(accounts.size())
+                       .arg(accounts.size() == 1 ? "account" : "accounts");
     }
 
     QMessageBox::StandardButton reply = QMessageBox::question(

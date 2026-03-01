@@ -6,6 +6,7 @@
 #include "utils/PathUtils.h"
 #include "utils/AnimationHelper.h"
 #include "utils/CopyHelper.h"
+#include "styles/ThemeManager.h"
 #include <QScrollArea>
 #include <QFileDialog>
 #include <QInputDialog>
@@ -211,7 +212,7 @@ void CloudCopierPanel::onSelectAllShortcut() {
 }
 
 void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
-    QGroupBox* sourceGroup = new QGroupBox("SOURCE", this);
+    QGroupBox* sourceGroup = new QGroupBox("Source", this);
 
     QVBoxLayout* sourceLayout = new QVBoxLayout(sourceGroup);
 
@@ -271,7 +272,7 @@ void CloudCopierPanel::setupSourceSection(QVBoxLayout* mainLayout) {
 }
 
 void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
-    QGroupBox* destGroup = new QGroupBox("DESTINATIONS", this);
+    QGroupBox* destGroup = new QGroupBox("Destinations", this);
 
     QVBoxLayout* destLayout = new QVBoxLayout(destGroup);
 
@@ -337,7 +338,7 @@ void CloudCopierPanel::setupDestinationSection(QVBoxLayout* mainLayout) {
 }
 
 void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
-    m_memberGroup = new QGroupBox("MEMBER MODE", this);
+    m_memberGroup = new QGroupBox("Member Mode", this);
 
     QVBoxLayout* memberLayout = new QVBoxLayout(m_memberGroup);
 
@@ -450,7 +451,7 @@ void CloudCopierPanel::setupMemberSection(QVBoxLayout* mainLayout) {
 }
 
 void CloudCopierPanel::setupTemplateSection(QVBoxLayout* mainLayout) {
-    QGroupBox* templateGroup = new QGroupBox("TEMPLATES & IMPORT", this);
+    QGroupBox* templateGroup = new QGroupBox("Templates & Import", this);
 
     QVBoxLayout* templateLayout = new QVBoxLayout(templateGroup);
 
@@ -508,7 +509,7 @@ void CloudCopierPanel::setupTemplateSection(QVBoxLayout* mainLayout) {
 }
 
 void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
-    QGroupBox* taskGroup = new QGroupBox("COPY TASKS", this);
+    QGroupBox* taskGroup = new QGroupBox("Copy Tasks", this);
 
     QVBoxLayout* taskLayout = new QVBoxLayout(taskGroup);
 
@@ -558,7 +559,7 @@ void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
 }
 
 void CloudCopierPanel::setupProgressSection(QVBoxLayout* mainLayout) {
-    m_progressGroup = new QGroupBox("PROGRESS", this);
+    m_progressGroup = new QGroupBox("Progress", this);
     m_progressGroup->setVisible(false);
 
     QVBoxLayout* progressLayout = new QVBoxLayout(m_progressGroup);
@@ -709,13 +710,14 @@ void CloudCopierPanel::setupErrorLogSection(QVBoxLayout* mainLayout) {
 }
 
 void CloudCopierPanel::logError(const QString& message, const QString& details) {
+    auto& tm = ThemeManager::instance();
     QString timestamp = QTime::currentTime().toString("HH:mm:ss");
-    QString logEntry = QString("<span style='color: #C00000;'>[%1] <b>ERROR:</b> %2</span>")
-        .arg(timestamp).arg(message.toHtmlEscaped());
+    QString logEntry = QString("<span style='color: %1;'>[%2] <b>ERROR:</b> %3</span>")
+        .arg(tm.supportError().name(), timestamp, message.toHtmlEscaped());
 
     if (!details.isEmpty()) {
-        logEntry += QString("<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style='color: #666;'>%1</span>")
-            .arg(details.toHtmlEscaped());
+        logEntry += QString("<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style='color: %1;'>%2</span>")
+            .arg(tm.textSecondary().name(), details.toHtmlEscaped());
     }
 
     m_errorLogEdit->append(logEntry);
@@ -729,13 +731,14 @@ void CloudCopierPanel::logError(const QString& message, const QString& details) 
 }
 
 void CloudCopierPanel::logWarning(const QString& message, const QString& details) {
+    auto& tm = ThemeManager::instance();
     QString timestamp = QTime::currentTime().toString("HH:mm:ss");
-    QString logEntry = QString("<span style='color: #CC7000;'>[%1] <b>WARNING:</b> %2</span>")
-        .arg(timestamp).arg(message.toHtmlEscaped());
+    QString logEntry = QString("<span style='color: %1;'>[%2] <b>WARNING:</b> %3</span>")
+        .arg(tm.supportWarning().name(), timestamp, message.toHtmlEscaped());
 
     if (!details.isEmpty()) {
-        logEntry += QString("<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style='color: #666;'>%1</span>")
-            .arg(details.toHtmlEscaped());
+        logEntry += QString("<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style='color: %1;'>%2</span>")
+            .arg(tm.textSecondary().name(), details.toHtmlEscaped());
     }
 
     m_errorLogEdit->append(logEntry);
@@ -885,8 +888,10 @@ QStringList CloudCopierPanel::showPastePathsDialog(const QString& title, const Q
 
     QVBoxLayout* layout = new QVBoxLayout(&dialog);
 
+    auto& tm = ThemeManager::instance();
+
     QLabel* instructionLabel = new QLabel(instruction, &dialog);
-    instructionLabel->setStyleSheet("color: #666; margin-bottom: 8px;");
+    instructionLabel->setStyleSheet(QString("color: %1; margin-bottom: 8px;").arg(tm.textSecondary().name()));
     layout->addWidget(instructionLabel);
 
     QTextEdit* textEdit = new QTextEdit(&dialog);
@@ -894,7 +899,7 @@ QStringList CloudCopierPanel::showPastePathsDialog(const QString& title, const Q
     layout->addWidget(textEdit);
 
     QLabel* countLabel = new QLabel("0 paths entered", &dialog);
-    countLabel->setStyleSheet("color: #888;");
+    countLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
     layout->addWidget(countLabel);
 
     // Update count as user types
@@ -907,7 +912,7 @@ QStringList CloudCopierPanel::showPastePathsDialog(const QString& title, const Q
                 count++;
             }
         }
-        countLabel->setText(QString("%1 path(s) entered").arg(count));
+        countLabel->setText(QString("%1 %2 entered").arg(count).arg(count == 1 ? "path" : "paths"));
     });
 
     // Buttons
@@ -920,9 +925,10 @@ QStringList CloudCopierPanel::showPastePathsDialog(const QString& title, const Q
 
     QPushButton* addBtn = new QPushButton(buttonText, &dialog);
     addBtn->setStyleSheet(
-        "QPushButton { background-color: #D90007; color: white; "
+        QString("QPushButton { background-color: %1; color: %2; "
         "border: none; border-radius: 4px; padding: 8px 16px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #C00006; }");
+        "QPushButton:hover { background-color: %3; }")
+        .arg(tm.brandDefault().name(), tm.textInverse().name(), tm.brandHover().name()));
     connect(addBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
     btnLayout->addWidget(addBtn);
 
@@ -948,7 +954,7 @@ void CloudCopierPanel::onSourcesChanged(const QStringList& sources) {
     for (const auto& source : sources) {
         m_sourceList->addItem(source);
     }
-    m_sourceSummaryLabel->setText(QString("%1 item(s) selected").arg(sources.size()));
+    m_sourceSummaryLabel->setText(QString("%1 %2 selected").arg(sources.size()).arg(sources.size() == 1 ? "item" : "items"));
     updateButtonStates();
 }
 
@@ -957,7 +963,7 @@ void CloudCopierPanel::onDestinationsChanged(const QStringList& destinations) {
     for (const auto& dest : destinations) {
         m_destinationList->addItem(dest);
     }
-    m_destSummaryLabel->setText(QString("%1 destination(s)").arg(destinations.size()));
+    m_destSummaryLabel->setText(QString("%1 %2").arg(destinations.size()).arg(destinations.size() == 1 ? "destination" : "destinations"));
     updateButtonStates();
 }
 
@@ -1011,16 +1017,17 @@ void CloudCopierPanel::onTaskStatusChanged(int taskId, const QString& status) {
         m_taskTable->item(row, COL_STATUS)->setText(status);
 
         // Color-code status
-        QColor bgColor = Qt::white;
+        auto& tm = ThemeManager::instance();
+        QColor bgColor = tm.surfacePrimary();
         if (status == "Completed") {
-            bgColor = QColor("#E8F5E9");  // Light green
+            bgColor = tm.supportSuccess(); bgColor.setAlpha(30);
             m_taskTable->item(row, COL_PROGRESS)->setText("100%");
         } else if (status == "Failed") {
-            bgColor = QColor("#FFEBEE");  // Light red
+            bgColor = tm.supportError(); bgColor.setAlpha(30);
         } else if (status == "Skipped") {
-            bgColor = QColor("#FFF3E0");  // Light orange
+            bgColor = tm.supportWarning(); bgColor.setAlpha(30);
         } else if (status == "Copying...") {
-            bgColor = QColor("#FFE6E7");  // Light MEGA red
+            bgColor = tm.brandDefault(); bgColor.setAlpha(30);
         }
 
         for (int col = 0; col < COL_COUNT; ++col) {
@@ -1238,9 +1245,9 @@ void CloudCopierPanel::onPasteDestinationsClicked() {
     }
 
     if (addedCount > 0 || skippedCount > 0) {
-        QString message = QString("Added %1 destination(s)").arg(addedCount);
+        QString message = QString("Added %1 %2").arg(addedCount).arg(addedCount == 1 ? "destination" : "destinations");
         if (skippedCount > 0) {
-            message += QString("\nSkipped %1 duplicate(s)").arg(skippedCount);
+            message += QString("\nSkipped %1 %2").arg(skippedCount).arg(skippedCount == 1 ? "duplicate" : "duplicates");
         }
         QMessageBox::information(this, "Destinations Added", message);
     }
@@ -1296,7 +1303,7 @@ void CloudCopierPanel::onEditDestinationsClicked() {
         }
 
         QMessageBox::information(this, "Paths Updated",
-            QString("Successfully updated %1 destination path(s).").arg(modifiedPaths.size()));
+            QString("Successfully updated %1 destination %2.").arg(modifiedPaths.size()).arg(modifiedPaths.size() == 1 ? "path" : "paths"));
     }
 }
 
@@ -1488,7 +1495,7 @@ void CloudCopierPanel::onClearAllTasksClicked() {
     }
 
     if (QMessageBox::question(this, "Clear All Tasks",
-                             QString("Remove all %1 task(s) from the list?").arg(m_taskTable->rowCount()),
+                             QString("Remove all %1 %2 from the list?").arg(m_taskTable->rowCount()).arg(m_taskTable->rowCount() == 1 ? "task" : "tasks"),
                              QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         // Clear all rows from the task table
         m_taskTable->setRowCount(0);
@@ -1511,7 +1518,7 @@ void CloudCopierPanel::onPreviewReady(const QVector<CopyPreviewItem>& previewIte
 
     // Summary
     QLabel* summaryLabel = new QLabel(
-        QString("<b>%1 copy operation(s) will be performed:</b>").arg(previewItems.size()),
+        QString("<b>%1 copy %2 will be performed:</b>").arg(previewItems.size()).arg(previewItems.size() == 1 ? "operation" : "operations"),
         &dialog);
     layout->addWidget(summaryLabel);
 
@@ -1547,8 +1554,9 @@ void CloudCopierPanel::onPreviewReady(const QVector<CopyPreviewItem>& previewIte
     // Options reminder
     QLabel* optionsLabel = new QLabel(&dialog);
     QString skipMode = m_skipExistingCheck->isChecked() ? "SKIP existing files" : "OVERWRITE existing files";
+    auto& tm = ThemeManager::instance();
     optionsLabel->setText(QString("<i>Conflict handling: %1</i>").arg(skipMode));
-    optionsLabel->setStyleSheet("color: #666;");
+    optionsLabel->setStyleSheet(QString("color: %1;").arg(tm.textSecondary().name()));
     layout->addWidget(optionsLabel);
 
     // Buttons
@@ -1561,9 +1569,10 @@ void CloudCopierPanel::onPreviewReady(const QVector<CopyPreviewItem>& previewIte
 
     QPushButton* proceedBtn = new QPushButton("Proceed with Copy", &dialog);
     proceedBtn->setStyleSheet(
-        "QPushButton { background-color: #D90007; color: white; "
+        QString("QPushButton { background-color: %1; color: %2; "
         "border: none; border-radius: 4px; padding: 10px 20px; font-weight: bold; } "
-        "QPushButton:hover { background-color: #C00006; }");
+        "QPushButton:hover { background-color: %3; }")
+        .arg(tm.brandDefault().name(), tm.textInverse().name(), tm.brandHover().name()));
     connect(proceedBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
     btnLayout->addWidget(proceedBtn);
 
@@ -1598,14 +1607,16 @@ void CloudCopierPanel::onSourcesValidated(const QVector<PathValidationResult>& r
         else invalidCount++;
     }
 
+    auto& tm = ThemeManager::instance();
+
     QLabel* summaryLabel = new QLabel(
         QString("<b>%1 sources checked:</b> %2 valid, %3 invalid")
             .arg(results.size()).arg(validCount).arg(invalidCount),
         &dialog);
     if (invalidCount > 0) {
-        summaryLabel->setStyleSheet("color: #C00; font-weight: bold;");
+        summaryLabel->setStyleSheet(QString("color: %1; font-weight: bold;").arg(tm.supportError().name()));
     } else {
-        summaryLabel->setStyleSheet("color: #060; font-weight: bold;");
+        summaryLabel->setStyleSheet(QString("color: %1; font-weight: bold;").arg(tm.supportSuccess().name()));
     }
     layout->addWidget(summaryLabel);
 
@@ -1619,7 +1630,7 @@ void CloudCopierPanel::onSourcesValidated(const QVector<PathValidationResult>& r
         QString type = result.isFolder ? "[FOLDER]" : "[FILE]";
         QString line = QString("[%1] %2 %3\n").arg(status, -9).arg(type).arg(result.path);
         if (!result.exists) {
-            line = QString("<span style='color:red;'>%1</span>").arg(line.toHtmlEscaped().replace("\n", "<br>"));
+            line = QString("<span style='color:%1;'>%2</span>").arg(tm.supportError().name(), line.toHtmlEscaped().replace("\n", "<br>"));
         }
         content += line;
     }
@@ -1649,14 +1660,16 @@ void CloudCopierPanel::onDestinationsValidated(const QVector<PathValidationResul
         else invalidCount++;
     }
 
+    auto& tm = ThemeManager::instance();
+
     QLabel* summaryLabel = new QLabel(
         QString("<b>%1 destinations checked:</b> %2 valid, %3 invalid/missing")
             .arg(results.size()).arg(validCount).arg(invalidCount),
         &dialog);
     if (invalidCount > 0) {
-        summaryLabel->setStyleSheet("color: #C00; font-weight: bold;");
+        summaryLabel->setStyleSheet(QString("color: %1; font-weight: bold;").arg(tm.supportError().name()));
     } else {
-        summaryLabel->setStyleSheet("color: #060; font-weight: bold;");
+        summaryLabel->setStyleSheet(QString("color: %1; font-weight: bold;").arg(tm.supportSuccess().name()));
     }
     layout->addWidget(summaryLabel);
 
@@ -1682,7 +1695,7 @@ void CloudCopierPanel::onDestinationsValidated(const QVector<PathValidationResul
         line += "\n";
 
         if (!result.exists || !result.errorMessage.isEmpty()) {
-            content += QString("<span style='color:red;'>%1</span>").arg(line.toHtmlEscaped().replace("\n", "<br>"));
+            content += QString("<span style='color:%1;'>%2</span>").arg(tm.supportError().name(), line.toHtmlEscaped().replace("\n", "<br>"));
         } else {
             content += line.toHtmlEscaped().replace("\n", "<br>");
         }
@@ -1866,6 +1879,7 @@ void CloudCopierPanel::onTemplateExpansionReady(const TemplateExpansionPreview& 
     resultText->setReadOnly(true);
     resultText->setFont(QFont("Courier New", 9));
 
+    auto& tm = ThemeManager::instance();
     QString content;
     for (const auto& member : preview.members) {
         QString status = member.isValid ? "OK" : "ERROR";
@@ -1876,7 +1890,7 @@ void CloudCopierPanel::onTemplateExpansionReady(const TemplateExpansionPreview& 
 
         if (!member.isValid) {
             line += QString("    Error: %1\n").arg(member.errorMessage);
-            content += QString("<span style='color:red;'>%1</span>").arg(line.toHtmlEscaped().replace("\n", "<br>"));
+            content += QString("<span style='color:%1;'>%2</span>").arg(tm.supportError().name(), line.toHtmlEscaped().replace("\n", "<br>"));
         } else {
             content += line.toHtmlEscaped().replace("\n", "<br>");
         }

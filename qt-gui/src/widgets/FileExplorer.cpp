@@ -377,7 +377,7 @@ void FileExplorer::deleteSelected()
     int ret = QMessageBox::question(
         this,
         "Confirm Delete",
-        QString("Delete %1 selected item(s)?").arg(files.size()),
+        QString("Delete %1 selected %2?").arg(files.size()).arg(files.size() == 1 ? "item" : "items"),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No
     );
@@ -1062,7 +1062,7 @@ void FileExplorer::showSearchResults(const QVariantList& results)
     QColor infoColor = tm.supportInfo();
     QColor infoBg = infoColor;
     infoBg.setAlpha(25);  // Light tint for background
-    m_statusLabel->setText(QString("Search results: %1 item(s)").arg(results.size()));
+    m_statusLabel->setText(QString("Search results: %1 %2").arg(results.size()).arg(results.size() == 1 ? "item" : "items"));
     m_statusLabel->setStyleSheet(QString("QLabel { padding: 5px; background-color: rgba(%1, %2, %3, 25); color: %4; }")
         .arg(infoBg.red()).arg(infoBg.green()).arg(infoBg.blue())
         .arg(infoColor.name()));

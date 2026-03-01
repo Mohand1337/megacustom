@@ -18,6 +18,8 @@
 #include <memory>
 #include <atomic>
 
+class EmptyStateWidget;
+
 namespace mega { class MegaApi; }
 
 namespace MegaCustom {
@@ -150,6 +152,7 @@ private slots:
 private:
     void setupUI();
     void populateTable();
+    void updateEmptyState();
     void updateStats();
     void updateButtonStates();
     void loadMembers();
@@ -159,6 +162,9 @@ private:
     void loadPresets();
     void applyPreset(const QString& presetName);
     void updateSmartEstimate();
+
+    // Empty state
+    EmptyStateWidget* m_emptyState = nullptr;
 
     // UI Components - File Selection
     QTableWidget* m_fileTable;
