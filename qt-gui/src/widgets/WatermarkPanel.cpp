@@ -9,6 +9,7 @@
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
 #include "dialogs/WatermarkSettingsDialog.h"
+#include "dialogs/RemoteFolderBrowserDialog.h"
 #include "styles/ThemeManager.h"
 #include "utils/AnimationHelper.h"
 #include <QSettings>
@@ -73,6 +74,10 @@ void WatermarkWorker::cancel() {
 void WatermarkWorker::setAutoUpload(bool enabled, void* megaApi) {
     m_autoUpload = enabled;
     m_megaApi = megaApi;
+}
+
+void WatermarkWorker::setCustomUploadPath(const QString& path) {
+    m_customUploadPath = path;
 }
 
 void WatermarkWorker::setMetricsStore(MetricsStore* store) {
@@ -195,7 +200,11 @@ void WatermarkWorker::process() {
                 mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
                 MemberInfo memberInfo = MemberRegistry::instance()->getMember(memberId);
 
-                if (!memberInfo.distributionFolder.isEmpty()) {
+                // Determine upload destination: custom path overrides member folder
+                QString uploadDest = m_customUploadPath.isEmpty()
+                    ? memberInfo.distributionFolder : m_customUploadPath;
+
+                if (!uploadDest.isEmpty()) {
                     int uploadOk = 0, uploadFail = 0, deleted = 0;
 
                     for (int f = 0; f < memberOutputFiles.size() && !m_cancelled; ++f) {
@@ -208,7 +217,7 @@ void WatermarkWorker::process() {
                         qint64 fileSize = QFileInfo(memberOutputFiles[f]).size();
 
                         bool ok = megaApiUpload(api, memberOutputFiles[f].toStdString(),
-                                                memberInfo.distributionFolder.toStdString(), error);
+                                                uploadDest.toStdString(), error);
 
                         qint64 uploadMs = uploadTimer.elapsed();
                         qint64 speed = (uploadMs > 0) ? (fileSize * 1000 / uploadMs) : 0;
@@ -255,7 +264,7 @@ void WatermarkWorker::process() {
                         }
                     }
                 } else {
-                    qWarning() << "Auto-upload: No distribution folder for member" << memberId;
+                    emit memberAutoUploadSkipped(memberId, "No distribution folder configured");
                 }
             }
         }
@@ -786,6 +795,50 @@ void WatermarkPanel::setupUI() {
     m_autoUploadCheck->setEnabled(false);  // Only enabled in per-member mode
     settingsLayout->addWidget(m_autoUploadCheck);
 
+    // Custom upload path (alternative to per-member distribution folders)
+    auto* customPathLayout = new QHBoxLayout();
+    m_customPathCheck = new QCheckBox("Upload to custom path instead of member folders");
+    m_customPathCheck->setToolTip(
+        "Upload all watermarked files to a single MEGA folder\n"
+        "instead of each member's distribution folder.");
+    m_customPathCheck->setEnabled(false);
+    connect(m_customPathCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_customPathEdit->setEnabled(checked);
+        m_browseCustomPathBtn->setEnabled(checked);
+    });
+    customPathLayout->addWidget(m_customPathCheck);
+
+    m_customPathEdit = new QLineEdit();
+    m_customPathEdit->setPlaceholderText("/Cloud/Watermarked");
+    m_customPathEdit->setEnabled(false);
+    customPathLayout->addWidget(m_customPathEdit, 1);
+
+    m_browseCustomPathBtn = new QPushButton("Browse...");
+    m_browseCustomPathBtn->setEnabled(false);
+    connect(m_browseCustomPathBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_megaApi) {
+            QMessageBox::warning(this, "Not Connected", "Please log in first.");
+            return;
+        }
+        RemoteFolderBrowserDialog dialog(this);
+        dialog.setMegaApi(m_megaApi);
+        dialog.setSelectionMode(RemoteFolderBrowserDialog::SingleFolder);
+        dialog.setTitle("Select Upload Destination");
+        if (dialog.exec() == QDialog::Accepted) {
+            m_customPathEdit->setText(dialog.selectedPath());
+        }
+    });
+    customPathLayout->addWidget(m_browseCustomPathBtn);
+    settingsLayout->addLayout(customPathLayout);
+
+    // Wire auto-upload toggle to enable/disable custom path
+    connect(m_autoUploadCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_customPathCheck->setEnabled(checked);
+        if (!checked) {
+            m_customPathCheck->setChecked(false);
+        }
+    });
+
     m_smartEstimateLabel = new QLabel();
     m_smartEstimateLabel->setObjectName("SmartEstimateLabel");
     m_smartEstimateLabel->setWordWrap(true);
@@ -1297,6 +1350,37 @@ void WatermarkPanel::onStartWatermark() {
         }
     }
 
+    // Pre-flight: validate auto-upload can work
+    if (m_autoUploadCheck->isChecked()) {
+        bool useCustomPath = m_customPathCheck->isChecked() && !m_customPathEdit->text().isEmpty();
+        if (useCustomPath) {
+            // Custom path mode — no need to check member folders
+        } else if (m_customPathCheck->isChecked() && m_customPathEdit->text().isEmpty()) {
+            QMessageBox::warning(this, "Missing Path",
+                "Custom upload path is enabled but no path specified.\n"
+                "Enter a MEGA cloud path or browse for one.");
+            return;
+        } else {
+            // Standard mode — check that members have distribution folders
+            QStringList checkIds = allMemberIds.isEmpty() ? QStringList{memberId} : allMemberIds;
+            QStringList membersWithoutFolder;
+            for (const QString& mid : checkIds) {
+                if (mid.isEmpty()) continue;
+                MemberInfo mi = m_registry->getMember(mid);
+                if (mi.distributionFolder.isEmpty()) {
+                    membersWithoutFolder << (mi.displayName.isEmpty() ? mid : mi.displayName);
+                }
+            }
+            if (!membersWithoutFolder.isEmpty()) {
+                QMessageBox::warning(this, "Missing Distribution Folders",
+                    QString("Auto-upload is enabled but these members have no distribution folder:\n\n%1\n\n"
+                            "Configure folders in the Members panel, or enable 'Upload to custom path'.")
+                        .arg(membersWithoutFolder.join("\n")));
+                return;
+            }
+        }
+    }
+
     // Create worker thread
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
@@ -1312,6 +1396,9 @@ void WatermarkPanel::onStartWatermark() {
     // Smart Engine: pass auto-upload and metrics to worker
     if (m_autoUploadCheck->isChecked() && m_megaApi) {
         m_worker->setAutoUpload(true, m_megaApi);
+        if (m_customPathCheck->isChecked() && !m_customPathEdit->text().isEmpty()) {
+            m_worker->setCustomUploadPath(m_customPathEdit->text());
+        }
     }
     if (m_metricsStore) {
         m_worker->setMetricsStore(m_metricsStore);
@@ -1324,11 +1411,21 @@ void WatermarkPanel::onStartWatermark() {
     connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
             [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
                 if (!memberFileMap.isEmpty()) {
-                    // Store the map for manual send — do NOT auto-emit
-                    m_lastMemberFileMap = memberFileMap;
-                    m_sendToDistBtn->setEnabled(true);
-                    m_statusLabel->setText(QString("Watermarked files for %1 members. Click 'Send to Distribution' to upload.")
-                        .arg(memberFileMap.size()));
+                    if (m_autoUploadCheck->isChecked()) {
+                        // Auto-upload handled everything — files already uploaded & deleted
+                        m_lastMemberFileMap.clear();
+                        m_sendToDistBtn->setEnabled(false);
+                        m_statusLabel->setText(QString("Auto-upload complete for %1 member%2.")
+                            .arg(memberFileMap.size())
+                            .arg(memberFileMap.size() == 1 ? "" : "s"));
+                    } else {
+                        // Manual mode — files still on disk, offer distribution
+                        m_lastMemberFileMap = memberFileMap;
+                        m_sendToDistBtn->setEnabled(true);
+                        m_statusLabel->setText(QString("Watermarked files for %1 member%2. Click 'Send to Distribution' to upload.")
+                            .arg(memberFileMap.size())
+                            .arg(memberFileMap.size() == 1 ? "" : "s"));
+                    }
                 }
             });
 
@@ -1348,6 +1445,11 @@ void WatermarkPanel::onStartWatermark() {
             qWarning() << "Low disk space! Available:" << available << "Needed:" << needed;
             m_statusLabel->setText(QString("Warning: Low disk (%1 free)")
                 .arg(formatFileSize(available)));
+        });
+    connect(m_worker, &WatermarkWorker::memberAutoUploadSkipped, this,
+        [this](const QString& memberId, const QString& reason) {
+            qWarning() << "Auto-upload skipped for" << memberId << ":" << reason;
+            m_statusLabel->setText(QString("Skipped upload for %1: %2").arg(memberId).arg(reason));
         });
 
     connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);

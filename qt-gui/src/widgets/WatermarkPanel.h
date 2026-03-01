@@ -62,6 +62,7 @@ public:
     void setMemberIds(const QStringList& memberIds);
     void setRawTemplates(const QString& primary, const QString& secondary);
     void setAutoUpload(bool enabled, void* megaApi);
+    void setCustomUploadPath(const QString& path);
     void setMetricsStore(MetricsStore* store);
 
 public slots:
@@ -77,6 +78,7 @@ signals:
                              const QMap<QString, QStringList>& memberFileMap);
     void memberBatchUploading(const QString& memberId, int fileIdx, int totalFiles, const QString& fileName);
     void memberBatchCleanedUp(const QString& memberId, int uploaded, int failed, int deleted);
+    void memberAutoUploadSkipped(const QString& memberId, const QString& reason);
     void diskSpaceWarning(qint64 available, qint64 needed);
 
 private:
@@ -90,6 +92,7 @@ private:
     std::atomic<bool> m_cancelled{false};
     bool m_autoUpload = false;
     void* m_megaApi = nullptr;
+    QString m_customUploadPath;
     MetricsStore* m_metricsStore = nullptr;
 };
 
@@ -239,6 +242,9 @@ private:
 
     // Smart Engine: auto-upload & disk management
     QCheckBox* m_autoUploadCheck = nullptr;
+    QCheckBox* m_customPathCheck = nullptr;
+    QLineEdit* m_customPathEdit = nullptr;
+    QPushButton* m_browseCustomPathBtn = nullptr;
     QLabel* m_smartEstimateLabel = nullptr;
     mega::MegaApi* m_megaApi = nullptr;
     MetricsStore* m_metricsStore = nullptr;
