@@ -491,12 +491,17 @@ void MainWindow::showTransfers()
         m_transferQueue->show();
         m_transferQueue->raise();
     }
+    setWindowTitle("MegaCustom \xe2\x80\x94 Transfers");
 }
 
 void MainWindow::toggleTransfers()
 {
     if (m_transferQueue) {
-        m_transferQueue->setVisible(!m_transferQueue->isVisible());
+        bool willShow = !m_transferQueue->isVisible();
+        m_transferQueue->setVisible(willShow);
+        if (willShow) {
+            setWindowTitle("MegaCustom \xe2\x80\x94 Transfers");
+        }
     }
 }
 
@@ -1481,6 +1486,7 @@ void MainWindow::onSettings()
     if (m_toolbarContainer) {
         m_toolbarContainer->setFixedHeight(0);
     }
+    setWindowTitle("MegaCustom \xe2\x80\x94 Settings");
 }
 
 void MainWindow::onAdvancedSearch()
@@ -2203,75 +2209,81 @@ void MainWindow::onQuickPeekCopyToActive(const QStringList& paths, const QString
 
 void MainWindow::onKeyboardShortcuts()
 {
-    QString shortcuts = R"(
-<style>
-    table { border-collapse: collapse; width: 100%; }
-    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #EFEFF0; }
-    th { background-color: #F7F7F7; color: #616366; font-weight: 600; }
-    td:first-child { font-weight: 600; color: #303233; }
-    h3 { color: #DD1405; margin-top: 16px; margin-bottom: 8px; }
-</style>
+    auto& tmk = ThemeManager::instance();
 
-<h3>Account Shortcuts</h3>
-<table>
-<tr><th>Shortcut</th><th>Action</th></tr>
-<tr><td>Ctrl+Tab</td><td>Switch to next account</td></tr>
-<tr><td>Ctrl+Shift+Tab</td><td>Switch to previous account</td></tr>
-<tr><td>Ctrl+Shift+A</td><td>Open account switcher</td></tr>
-</table>
+    QString shortcuts = QString(
+        "<style>"
+        "    table { border-collapse: collapse; width: 100%%; }"
+        "    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid %1; }"
+        "    th { background-color: %2; color: %3; font-weight: 600; }"
+        "    td:first-child { font-weight: 600; color: %4; }"
+        "    h3 { color: %5; margin-top: 16px; margin-bottom: 8px; }"
+        "</style>"
 
-<h3>File Operations</h3>
-<table>
-<tr><th>Shortcut</th><th>Action</th></tr>
-<tr><td>Ctrl+U</td><td>Upload files</td></tr>
-<tr><td>Ctrl+D</td><td>Download selected</td></tr>
-<tr><td>Ctrl+Shift+N</td><td>New folder</td></tr>
-<tr><td>Delete</td><td>Delete selected</td></tr>
-<tr><td>F2</td><td>Rename selected</td></tr>
-<tr><td>F5</td><td>Refresh</td></tr>
-</table>
+        "<h3>Account Shortcuts</h3>"
+        "<table>"
+        "<tr><th>Shortcut</th><th>Action</th></tr>"
+        "<tr><td>Ctrl+Tab</td><td>Switch to next account</td></tr>"
+        "<tr><td>Ctrl+Shift+Tab</td><td>Switch to previous account</td></tr>"
+        "<tr><td>Ctrl+Shift+A</td><td>Open account switcher</td></tr>"
+        "</table>"
 
-<h3>Edit</h3>
-<table>
-<tr><th>Shortcut</th><th>Action</th></tr>
-<tr><td>Ctrl+X</td><td>Cut</td></tr>
-<tr><td>Ctrl+C</td><td>Copy</td></tr>
-<tr><td>Ctrl+V</td><td>Paste</td></tr>
-<tr><td>Ctrl+A</td><td>Select all</td></tr>
-<tr><td>Ctrl+F</td><td>Find</td></tr>
-</table>
+        "<h3>File Operations</h3>"
+        "<table>"
+        "<tr><th>Shortcut</th><th>Action</th></tr>"
+        "<tr><td>Ctrl+U</td><td>Upload files</td></tr>"
+        "<tr><td>Ctrl+D</td><td>Download selected</td></tr>"
+        "<tr><td>Ctrl+Shift+N</td><td>New folder</td></tr>"
+        "<tr><td>Delete</td><td>Delete selected</td></tr>"
+        "<tr><td>F2</td><td>Rename selected</td></tr>"
+        "<tr><td>F5</td><td>Refresh</td></tr>"
+        "</table>"
 
-<h3>Panel Navigation</h3>
-<table>
-<tr><th>Shortcut</th><th>Action</th></tr>
-<tr><td>Ctrl+1</td><td>Cloud Drive</td></tr>
-<tr><td>Ctrl+2</td><td>Folder Mapper</td></tr>
-<tr><td>Ctrl+3</td><td>Multi Uploader</td></tr>
-<tr><td>Ctrl+4</td><td>Cloud Copier</td></tr>
-<tr><td>Ctrl+5</td><td>Smart Sync</td></tr>
-<tr><td>Ctrl+6</td><td>Members</td></tr>
-<tr><td>Ctrl+7</td><td>Distribution</td></tr>
-<tr><td>Ctrl+8</td><td>Watermark</td></tr>
-<tr><td>Ctrl+9</td><td>Downloader</td></tr>
-<tr><td>Ctrl+0</td><td>Activity Log</td></tr>
-</table>
+        "<h3>Edit</h3>"
+        "<table>"
+        "<tr><th>Shortcut</th><th>Action</th></tr>"
+        "<tr><td>Ctrl+X</td><td>Cut</td></tr>"
+        "<tr><td>Ctrl+C</td><td>Copy</td></tr>"
+        "<tr><td>Ctrl+V</td><td>Paste</td></tr>"
+        "<tr><td>Ctrl+A</td><td>Select all</td></tr>"
+        "<tr><td>Ctrl+F</td><td>Find</td></tr>"
+        "</table>"
 
-<h3>Navigation</h3>
-<table>
-<tr><th>Shortcut</th><th>Action</th></tr>
-<tr><td>Ctrl+H</td><td>Show/hide hidden files</td></tr>
-<tr><td>Ctrl+Shift+F</td><td>Advanced search</td></tr>
-<tr><td>Ctrl+Shift+L</td><td>Cross-account transfer log</td></tr>
-<tr><td>Ctrl+,</td><td>Settings</td></tr>
-<tr><td>F1</td><td>Keyboard shortcuts (this dialog)</td></tr>
-</table>
+        "<h3>Panel Navigation</h3>"
+        "<table>"
+        "<tr><th>Shortcut</th><th>Action</th></tr>"
+        "<tr><td>Ctrl+1</td><td>Cloud Drive</td></tr>"
+        "<tr><td>Ctrl+2</td><td>Folder Mapper</td></tr>"
+        "<tr><td>Ctrl+3</td><td>Multi Uploader</td></tr>"
+        "<tr><td>Ctrl+4</td><td>Cloud Copier</td></tr>"
+        "<tr><td>Ctrl+5</td><td>Smart Sync</td></tr>"
+        "<tr><td>Ctrl+6</td><td>Members</td></tr>"
+        "<tr><td>Ctrl+7</td><td>Distribution</td></tr>"
+        "<tr><td>Ctrl+8</td><td>Watermark</td></tr>"
+        "<tr><td>Ctrl+9</td><td>Downloader</td></tr>"
+        "<tr><td>Ctrl+0</td><td>Activity Log</td></tr>"
+        "</table>"
 
-<h3>Application</h3>
-<table>
-<tr><th>Shortcut</th><th>Action</th></tr>
-<tr><td>Ctrl+Q</td><td>Quit application</td></tr>
-</table>
-)";
+        "<h3>Navigation</h3>"
+        "<table>"
+        "<tr><th>Shortcut</th><th>Action</th></tr>"
+        "<tr><td>Ctrl+H</td><td>Show/hide hidden files</td></tr>"
+        "<tr><td>Ctrl+Shift+F</td><td>Advanced search</td></tr>"
+        "<tr><td>Ctrl+Shift+L</td><td>Cross-account transfer log</td></tr>"
+        "<tr><td>Ctrl+,</td><td>Settings</td></tr>"
+        "<tr><td>F1</td><td>Keyboard shortcuts (this dialog)</td></tr>"
+        "</table>"
+
+        "<h3>Application</h3>"
+        "<table>"
+        "<tr><th>Shortcut</th><th>Action</th></tr>"
+        "<tr><td>Ctrl+Q</td><td>Quit application</td></tr>"
+        "</table>"
+    ).arg(tmk.borderSubtle().name(),
+          tmk.surface2().name(),
+          tmk.textSecondary().name(),
+          tmk.textPrimary().name(),
+          tmk.brandDefault().name());
 
     QMessageBox msgBox(this);
     msgBox.setWindowTitle("Keyboard Shortcuts");

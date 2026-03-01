@@ -535,6 +535,7 @@ void WatermarkSettingsDialog::onCheckDependencies() {
 }
 
 void WatermarkSettingsDialog::updatePreview() {
+    auto& tm = ThemeManager::instance();
     QString primaryColor = m_primaryColorEdit->text();
     QString secondaryColor = m_secondaryColorEdit->text();
 
@@ -555,7 +556,7 @@ void WatermarkSettingsDialog::updatePreview() {
                 email@example.com - IP: 192.168.1.1
             </span>
         </div>
-        <div style='margin-top: 12px; color: #888; font-size: 11px;'>
+        <div style='margin-top: 12px; color: %9; font-size: 11px;'>
             Appears every %5s for %6s | Preset: %7 | CRF: %8
         </div>
     )")
@@ -566,7 +567,8 @@ void WatermarkSettingsDialog::updatePreview() {
         .arg(m_intervalSpin->value())
         .arg(m_durationSpin->value())
         .arg(m_presetCombo->currentText())
-        .arg(m_crfSpin->value());
+        .arg(m_crfSpin->value())
+        .arg(tm.textSecondary().name());
 
     m_previewLabel->setText(html);
 }

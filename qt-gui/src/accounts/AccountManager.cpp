@@ -2,6 +2,7 @@
 #include "CredentialStore.h"
 #include "SessionPool.h"
 #include "../utils/Constants.h"
+#include "styles/ThemeManager.h"
 #include <megaapi.h>
 #include <QStandardPaths>
 #include <QDir>
@@ -236,7 +237,7 @@ void AccountManager::createDefaultGroup()
         AccountGroup defaultGroup;
         defaultGroup.id = AccountGroup::generateId();
         defaultGroup.name = "Default";
-        defaultGroup.color = QColor("#2196F3");  // Blue
+        defaultGroup.color = ThemeManager::instance().supportInfo();
         defaultGroup.sortOrder = 0;
         m_groups[defaultGroup.id] = defaultGroup;
         m_dirty = true;

@@ -1,4 +1,5 @@
 #include "widgets/CloudCopierPanel.h"
+#include "EmptyStateWidget.h"
 #include "controllers/CloudCopierController.h"
 #include "controllers/FileController.h"
 #include "dialogs/RemoteFolderBrowserDialog.h"
@@ -15,6 +16,8 @@
 #include <QTextEdit>
 #include <QDialog>
 #include <QApplication>
+#include <QClipboard>
+#include <QMenu>
 #include <QShortcut>
 #include <QStyle>
 #include <QTime>
@@ -27,6 +30,7 @@ CloudCopierPanel::CloudCopierPanel(QWidget* parent)
     setObjectName("CloudCopierPanel");
     setupUI();
     updateButtonStates();
+    updateEmptyState();
 }
 
 CloudCopierPanel::~CloudCopierPanel() = default;
@@ -539,6 +543,16 @@ void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
 
     taskLayout->addLayout(filterLayout);
 
+    // Empty state (shown when task table is empty)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/copy.svg",
+        "No copy tasks",
+        "Add source and destination paths to start copying files between cloud locations.",
+        "Add Source",
+        this);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &CloudCopierPanel::onAddSourceClicked);
+    taskLayout->addWidget(m_emptyState);
+
     // Task table
     m_taskTable = new QTableWidget(this);
     m_taskTable->setColumnCount(COL_COUNT);
@@ -551,7 +565,60 @@ void CloudCopierPanel::setupTaskTable(QVBoxLayout* mainLayout) {
     m_taskTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_taskTable->verticalHeader()->setVisible(false);
     m_taskTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    CopyHelper::installTableCopyMenu(m_taskTable);
+
+    // Context menu for task table
+    m_taskTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_taskTable, &QTableWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QMenu menu(this);
+
+        QModelIndex idx = m_taskTable->indexAt(pos);
+
+        auto* copyCell = menu.addAction("Copy Cell");
+        copyCell->setEnabled(idx.isValid());
+        connect(copyCell, &QAction::triggered, this, [this, idx]() {
+            if (idx.isValid()) {
+                QTableWidgetItem* item = m_taskTable->item(idx.row(), idx.column());
+                if (item) {
+                    QApplication::clipboard()->setText(item->text());
+                }
+            }
+        });
+
+        auto* copyRow = menu.addAction("Copy Row");
+        copyRow->setEnabled(idx.isValid());
+        connect(copyRow, &QAction::triggered, this, [this, idx]() {
+            if (idx.isValid()) {
+                QStringList cells;
+                for (int col = 0; col < m_taskTable->columnCount(); ++col) {
+                    QTableWidgetItem* item = m_taskTable->item(idx.row(), col);
+                    cells << (item ? item->text() : QString());
+                }
+                QApplication::clipboard()->setText(cells.join("\t"));
+            }
+        });
+
+        menu.addSeparator();
+
+        auto* removeTask = menu.addAction("Remove Task");
+        removeTask->setEnabled(idx.isValid() && !m_isCopying);
+        connect(removeTask, &QAction::triggered, this, [this, idx]() {
+            if (idx.isValid() && idx.row() < m_taskTable->rowCount()) {
+                m_taskTable->removeRow(idx.row());
+                updateTaskCounts();
+                updateButtonStates();
+            }
+        });
+
+        auto* clearCompleted = menu.addAction("Clear Completed");
+        clearCompleted->setEnabled(m_taskTable->rowCount() > 0 && !m_isCopying);
+        connect(clearCompleted, &QAction::triggered, this, &CloudCopierPanel::onClearCompletedClicked);
+
+        auto* clearAll = menu.addAction("Clear All");
+        clearAll->setEnabled(m_taskTable->rowCount() > 0 && !m_isCopying);
+        connect(clearAll, &QAction::triggered, this, &CloudCopierPanel::onClearAllTasksClicked);
+
+        menu.exec(m_taskTable->viewport()->mapToGlobal(pos));
+    });
 
     taskLayout->addWidget(m_taskTable);
 
@@ -818,6 +885,12 @@ void CloudCopierPanel::updateTaskCounts() {
     m_taskCountLabel->setText(countText);
 }
 
+void CloudCopierPanel::updateEmptyState() {
+    bool empty = m_taskTable->rowCount() == 0;
+    m_emptyState->setVisible(empty);
+    m_taskTable->setVisible(!empty);
+}
+
 void CloudCopierPanel::updateButtonStates() {
     bool hasSources = m_sourceList->count() > 0;
     bool hasDestinations = m_destinationList->count() > 0;
@@ -975,6 +1048,7 @@ void CloudCopierPanel::onTasksClearing() {
     // Clear the task table before new tasks are added
     qDebug() << "CloudCopierPanel: Clearing task table (had" << m_taskTable->rowCount() << "rows)";
     m_taskTable->setRowCount(0);
+    updateEmptyState();
 }
 
 void CloudCopierPanel::onTaskCreated(int taskId, const QString& source, const QString& destination) {
@@ -1001,6 +1075,8 @@ void CloudCopierPanel::onTaskCreated(int taskId, const QString& source, const QS
 
     QTableWidgetItem* progressItem = new QTableWidgetItem("0%");
     m_taskTable->setItem(row, COL_PROGRESS, progressItem);
+
+    updateEmptyState();
 }
 
 void CloudCopierPanel::onTaskProgress(int taskId, int progress) {
@@ -1486,6 +1562,7 @@ void CloudCopierPanel::onClearCompletedClicked() {
 
     // Notify controller
     emit clearCompletedRequested();
+    updateEmptyState();
     qDebug() << "CloudCopierPanel::onClearCompletedClicked() - Done";
 }
 
@@ -1505,6 +1582,7 @@ void CloudCopierPanel::onClearAllTasksClicked() {
 
         // Update button states
         updateButtonStates();
+        updateEmptyState();
     }
 }
 

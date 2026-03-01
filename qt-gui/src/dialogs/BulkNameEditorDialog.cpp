@@ -441,8 +441,9 @@ void BulkNameEditorDialog::updatePreview()
         QRegularExpression regex(findText);
         validRegex = regex.isValid();
         if (!validRegex) {
-            m_changesLabel->setText(QString("<span style='color: #E31B57;'>Invalid regex: %1</span>")
-                                    .arg(regex.errorString().toHtmlEscaped()));
+            auto& tm = ThemeManager::instance();
+            m_changesLabel->setText(QString("<span style='color: %2;'>Invalid regex: %1</span>")
+                                    .arg(regex.errorString().toHtmlEscaped(), tm.supportError().name()));
             m_applyBtn->setEnabled(false);
             return;
         }
@@ -462,11 +463,11 @@ void BulkNameEditorDialog::updatePreview()
         QListWidgetItem* item = new QListWidgetItem();
         if (m_results[i].willChange) {
             item->setText(QString("%1  ->  %2").arg(originalName, newName));
-            item->setForeground(QColor(34, 139, 34)); // Green for changes
+            item->setForeground(ThemeManager::instance().supportSuccess());
             item->setToolTip(QString("Original: %1\nNew: %2").arg(originalName, newName));
         } else {
             item->setText(originalName);
-            item->setForeground(QColor(128, 128, 128)); // Gray for no change
+            item->setForeground(ThemeManager::instance().textSecondary());
             item->setToolTip("No change");
         }
         m_previewList->addItem(item);

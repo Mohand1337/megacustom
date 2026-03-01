@@ -41,17 +41,20 @@ void AdvancedSearchResultDelegate::paint(QPainter* painter, const QStyleOptionVi
     bool isHovered = option.state & QStyle::State_MouseOver;
     bool isChecked = index.data(CheckedRole).toBool();
 
+    auto& tm = ThemeManager::instance();
+
     // Background
     if (isSelected) {
-        painter->fillRect(rect, QColor(221, 20, 5, 26)); // MEGA Red 10%
+        QColor selBg = tm.brandDefault(); selBg.setAlpha(26);
+        painter->fillRect(rect, selBg);
     } else if (isHovered) {
         painter->fillRect(rect, QColor(0, 0, 0, 13)); // Light hover
     }
 
     // Checkbox
     QRect cbRect = checkboxRect(option);
-    painter->setPen(QColor(220, 221, 221));
-    painter->setBrush(isChecked ? QColor(221, 20, 5) : Qt::white);
+    painter->setPen(tm.borderSubtle());
+    painter->setBrush(isChecked ? tm.brandDefault() : Qt::white);
     painter->drawRoundedRect(cbRect, 3, 3);
     if (isChecked) {
         painter->setPen(QPen(Qt::white, 2));
@@ -88,7 +91,7 @@ void AdvancedSearchResultDelegate::paint(QPainter* painter, const QStyleOptionVi
     QFont nameFont = option.font;
     nameFont.setBold(true);
     painter->setFont(nameFont);
-    QColor nameColor = isSelected ? QColor(123, 33, 24) : QColor(50, 50, 50);
+    QColor nameColor = isSelected ? tm.brandDefault().darker(120) : tm.textPrimary();
 
     QRect nameRect = textRect;
     nameRect.setHeight(textRect.height() / 2);
@@ -134,7 +137,8 @@ void AdvancedSearchResultDelegate::paint(QPainter* painter, const QStyleOptionVi
             // Draw yellow background
             QRect highlightRect(x, nameRect.top() + (nameRect.height() - fm.height()) / 2 + fm.height() / 4,
                                 matchWidth, fm.height());
-            painter->fillRect(highlightRect, QColor(255, 245, 157)); // Yellow highlight
+            QColor hlColor = tm.supportWarning(); hlColor.setAlpha(80);
+            painter->fillRect(highlightRect, hlColor);
 
             // Draw text
             painter->setPen(nameColor);
@@ -156,7 +160,7 @@ void AdvancedSearchResultDelegate::paint(QPainter* painter, const QStyleOptionVi
     QFont pathFont = option.font;
     pathFont.setPointSize(pathFont.pointSize() - 1);
     painter->setFont(pathFont);
-    painter->setPen(QColor(128, 128, 128));
+    painter->setPen(tm.textSecondary());
 
     QRect pathRect = textRect;
     pathRect.setTop(nameRect.bottom());
@@ -172,7 +176,7 @@ void AdvancedSearchResultDelegate::paint(QPainter* painter, const QStyleOptionVi
     infoRect.setRight(rect.right() - 12);
 
     painter->setFont(pathFont);
-    painter->setPen(QColor(100, 100, 100));
+    painter->setPen(tm.textSecondary());
 
     // Size
     QRect sizeRect = infoRect;
@@ -550,16 +554,17 @@ void AdvancedSearchPanel::setupStatusSection()
 
 void AdvancedSearchPanel::applyStyles()
 {
-    setStyleSheet(R"(
+    auto& tm = ThemeManager::instance();
+    setStyleSheet(QString(R"(
         QLabel#panelTitle {
             font-size: 24px;
             font-weight: bold;
-            color: #303233;
+            color: %1;
             margin-bottom: 8px;
         }
         QGroupBox {
             font-weight: bold;
-            border: 1px solid #DCDDDD;
+            border: 1px solid %2;
             border-radius: 8px;
             margin-top: 12px;
             padding-top: 8px;
@@ -570,8 +575,8 @@ void AdvancedSearchPanel::applyStyles()
             padding: 0 4px;
         }
         QListView {
-            background-color: #FFFFFF;
-            border: 1px solid #DCDDDD;
+            background-color: %3;
+            border: 1px solid %2;
             border-radius: 8px;
         }
         QListView::item {
@@ -581,9 +586,13 @@ void AdvancedSearchPanel::applyStyles()
             background-color: rgba(221, 20, 5, 0.1);
         }
         QListView::item:alternate {
-            background-color: #FAFAFA;
+            background-color: %4;
         }
-    )");
+    )")
+        .arg(tm.textPrimary().name())
+        .arg(tm.borderSubtle().name())
+        .arg(tm.surfacePrimary().name())
+        .arg(tm.surface2().name()));
 }
 
 void AdvancedSearchPanel::setSearchIndex(CloudSearchIndex* index)

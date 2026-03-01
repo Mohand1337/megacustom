@@ -1,4 +1,5 @@
 #include "CloudPathValidator.h"
+#include "styles/ThemeManager.h"
 #include <megaapi.h>
 #include <QDialog>
 #include <QVBoxLayout>
@@ -115,15 +116,19 @@ CloudPathValidator::UserAction CloudPathValidator::showValidationDialog(
             .arg(invalid).arg(results.size()),
         &dialog);
     bannerLabel->setWordWrap(true);
+    auto& tm = ThemeManager::instance();
+    QColor warnBg = tm.supportWarning(); warnBg.setAlpha(40);
+    QColor warnBorder = tm.supportWarning(); warnBorder.setAlpha(80);
     bannerLabel->setStyleSheet(
-        "background: #FFF3CD; color: #856404; border: 1px solid #FFEEBA; "
-        "border-radius: 4px; padding: 10px; font-size: 13px;");
+        QString("background: %1; color: %2; border: 1px solid %3; "
+        "border-radius: 4px; padding: 10px; font-size: 13px;")
+            .arg(warnBg.name(), tm.supportWarning().darker(150).name(), warnBorder.name()));
     layout->addWidget(bannerLabel);
 
     // Summary line
     auto* summaryLabel = new QLabel(
-        QString("<b>%1</b> valid &nbsp;&nbsp; <span style='color:red;'><b>%2</b> missing/invalid</span>")
-            .arg(valid).arg(invalid),
+        QString("<b>%1</b> valid &nbsp;&nbsp; <span style='color:%3;'><b>%2</b> missing/invalid</span>")
+            .arg(valid).arg(invalid).arg(tm.supportError().name()),
         &dialog);
     layout->addWidget(summaryLabel);
 
@@ -150,11 +155,11 @@ CloudPathValidator::UserAction CloudPathValidator::showValidationDialog(
         line += "\n";
 
         if (!r.exists || !r.errorMessage.isEmpty()) {
-            content += QString("<span style='color:red;'>%1</span>")
-                .arg(line.toHtmlEscaped().replace("\n", "<br>"));
+            content += QString("<span style='color:%1;'>%2</span>")
+                .arg(tm.supportError().name(), line.toHtmlEscaped().replace("\n", "<br>"));
         } else {
-            content += QString("<span style='color:green;'>%1</span>")
-                .arg(line.toHtmlEscaped().replace("\n", "<br>"));
+            content += QString("<span style='color:%1;'>%2</span>")
+                .arg(tm.supportSuccess().name(), line.toHtmlEscaped().replace("\n", "<br>"));
         }
     }
     resultText->setHtml(QString("<pre style='white-space: pre-wrap;'>%1</pre>").arg(content));

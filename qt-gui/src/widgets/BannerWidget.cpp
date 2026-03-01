@@ -1,4 +1,5 @@
 #include "BannerWidget.h"
+#include "styles/ThemeManager.h"
 #include <QLabel>
 #include <QPushButton>
 #include <QHBoxLayout>
@@ -192,6 +193,12 @@ void BannerWidget::updateStyle()
     }
 
     // Apply styles
+    auto& tm = ThemeManager::instance();
+    QString textColor = tm.textPrimary().name();
+    QString btnBg = tm.brandDefault().darker(200).name();
+    QString btnHover = tm.brandDefault().darker(170).name();
+    QString btnPressed = tm.brandDefault().darker(250).name();
+
     QString styleSheet = QString(
         "QWidget#BannerContent {"
         "    background-color: %1;"
@@ -203,13 +210,13 @@ void BannerWidget::updateStyle()
         "QLabel#BannerTitle {"
         "    font-size: 12px;"
         "    font-weight: 600;"
-        "    color: #303233;"
+        "    color: %3;"
         "    background-color: transparent;"
         "}"
         "QLabel#BannerMessage {"
         "    font-size: 12px;"
         "    font-weight: 400;"
-        "    color: #303233;"
+        "    color: %3;"
         "    background-color: transparent;"
         "}"
         "%2"
@@ -217,19 +224,19 @@ void BannerWidget::updateStyle()
         "    font-size: 12px;"
         "    font-weight: 500;"
         "    color: #FFFFFF;"
-        "    background-color: #04101E;"
+        "    background-color: %4;"
         "    border: none;"
         "    border-radius: 6px;"
         "    padding: 4px 12px;"
         "    min-height: 26px;"
         "}"
         "QPushButton#BannerActionButton:hover {"
-        "    background-color: #1a2638;"
+        "    background-color: %5;"
         "}"
         "QPushButton#BannerActionButton:pressed {"
-        "    background-color: #000000;"
+        "    background-color: %6;"
         "}"
-    ).arg(backgroundColor, iconStyle);
+    ).arg(backgroundColor, iconStyle, textColor, btnBg, btnHover, btnPressed);
 
     setStyleSheet(styleSheet);
 }

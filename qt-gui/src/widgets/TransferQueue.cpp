@@ -1,4 +1,5 @@
 #include "TransferQueue.h"
+#include "EmptyStateWidget.h"
 #include "controllers/TransferController.h"
 #include "utils/DpiScaler.h"
 #include "styles/ThemeManager.h"
@@ -27,6 +28,7 @@ TransferQueue::TransferQueue(QWidget* parent)
     , m_controller(nullptr) {
 
     setupUi();
+    updateEmptyState();
     qDebug() << "TransferQueue constructed (with real progress tracking)";
 }
 
@@ -70,6 +72,15 @@ void TransferQueue::setupUi() {
     headerLayout->addWidget(m_clearCompletedButton);
 
     mainLayout->addLayout(headerLayout);
+
+    // Empty state (shown when no transfers are active)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/hard-drive.svg",
+        "No active transfers",
+        "Uploads and downloads will appear here when they start.",
+        QString(),
+        this);
+    mainLayout->addWidget(m_emptyState);
 
     // Transfer table
     m_transferTable = new QTableWidget(this);
@@ -175,6 +186,7 @@ void TransferQueue::onTransferAdded(const QString& type, const QString& sourcePa
     m_transferRows[sourcePath] = row;
 
     m_cancelAllButton->setEnabled(true);
+    updateEmptyState();
 
     qDebug() << "Transfer added to queue:" << fileName;
 }
@@ -392,6 +404,7 @@ void TransferQueue::onClearCompletedClicked() {
     m_completedCount = 0;
     m_failedCount = 0;
     updateStatusLabel();
+    updateEmptyState();
 
     m_clearCompletedButton->setEnabled(false);
 }
@@ -482,6 +495,12 @@ int TransferQueue::findRowByPath(const QString& path) {
         }
     }
     return -1;
+}
+
+void TransferQueue::updateEmptyState() {
+    bool empty = m_transferTable->rowCount() == 0;
+    m_emptyState->setVisible(empty);
+    m_transferTable->setVisible(!empty);
 }
 
 void TransferQueue::animateProgressBar(QProgressBar* progressBar, int targetValue) {

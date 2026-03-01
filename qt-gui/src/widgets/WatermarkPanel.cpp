@@ -1651,7 +1651,7 @@ void WatermarkPanel::populateTable() {
 
         // Highlight entire row for errors with light red background
         if (info.status == "error") {
-            QColor errorBg(255, 240, 240);  // Light red background
+            QColor errorBg = tm.supportError(); errorBg.setAlpha(30);
             nameItem->setBackground(errorBg);
             memberItem->setBackground(errorBg);
             typeItem->setBackground(errorBg);
@@ -1659,7 +1659,7 @@ void WatermarkPanel::populateTable() {
             statusItem->setBackground(errorBg);
             outputItem->setBackground(errorBg);
         } else if (info.status == "complete") {
-            QColor successBg(240, 255, 240);  // Light green background
+            QColor successBg = tm.supportSuccess(); successBg.setAlpha(30);
             nameItem->setBackground(successBg);
             memberItem->setBackground(successBg);
             typeItem->setBackground(successBg);
@@ -1715,7 +1715,8 @@ void WatermarkPanel::updateStats() {
     }
 
     if (errorCount > 0) {
-        statsText += QString(" | <span style='color: #D90007; font-weight: bold;'>%1 %2</span>").arg(errorCount).arg(errorCount == 1 ? "error" : "errors");
+        auto& tm = ThemeManager::instance();
+        statsText += QString(" | <span style='color: %3; font-weight: bold;'>%1 %2</span>").arg(errorCount).arg(errorCount == 1 ? "error" : "errors").arg(tm.supportError().name());
     }
 
     m_statsLabel->setTextFormat(Qt::RichText);
@@ -2050,6 +2051,9 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
     QString expandedSecondary = TemplateExpander::expand(secondaryText, vars);
 
     // Build preview dialog
+    auto& tmPreview = ThemeManager::instance();
+    QString bgColor = tmPreview.borderSubtle().name();
+    QString tmplColor = tmPreview.textSecondary().name();
     QString previewText = QString(R"(
 <h3>Watermark Preview</h3>
 <p><b>Mode:</b> %1</p>
@@ -2058,26 +2062,26 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
 <table style="width: 100%;">
 <tr>
     <td style="width: 100px;"><b>Primary Text:</b></td>
-    <td style="background: #f0f0f0; padding: 8px; border-radius: 4px;">
+    <td style="background: %7; padding: 8px; border-radius: 4px;">
         <code>%3</code>
     </td>
 </tr>
 <tr><td colspan="2" style="height: 8px;"></td></tr>
 <tr>
     <td><b>Template:</b></td>
-    <td style="color: #666;"><i>%4</i></td>
+    <td style="color: %8;"><i>%4</i></td>
 </tr>
 <tr><td colspan="2" style="height: 16px;"></td></tr>
 <tr>
     <td><b>Secondary Text:</b></td>
-    <td style="background: #f0f0f0; padding: 8px; border-radius: 4px;">
+    <td style="background: %7; padding: 8px; border-radius: 4px;">
         <code>%5</code>
     </td>
 </tr>
 <tr><td colspan="2" style="height: 8px;"></td></tr>
 <tr>
     <td><b>Template:</b></td>
-    <td style="color: #666;"><i>%6</i></td>
+    <td style="color: %8;"><i>%6</i></td>
 </tr>
 </table>
 )")
@@ -2086,7 +2090,9 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
         .arg(expandedPrimary.isEmpty() ? "<i>(empty)</i>" : expandedPrimary.toHtmlEscaped())
         .arg(primaryText.isEmpty() ? "<i>(empty)</i>" : primaryText.toHtmlEscaped())
         .arg(expandedSecondary.isEmpty() ? "<i>(empty)</i>" : expandedSecondary.toHtmlEscaped())
-        .arg(secondaryText.isEmpty() ? "<i>(empty)</i>" : secondaryText.toHtmlEscaped());
+        .arg(secondaryText.isEmpty() ? "<i>(empty)</i>" : secondaryText.toHtmlEscaped())
+        .arg(bgColor)
+        .arg(tmplColor);
 
     QMessageBox msgBox(this);
     msgBox.setWindowTitle("Watermark Preview");

@@ -15,6 +15,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 class SmartSyncController;
@@ -65,12 +67,14 @@ private:
     void setupActionSection(QVBoxLayout* mainLayout);
     void setupDetailTabs(QVBoxLayout* mainLayout);
     void updateButtonStates();
+    void updateEmptyState();
     QWidget* createActionBadge(const QString& action);
 
 private:
     SmartSyncController* m_controller = nullptr;
 
     // Profile section
+    EmptyStateWidget* m_emptyState = nullptr;
     QTableWidget* m_profileTable = nullptr;
     QPushButton* m_newProfileBtn = nullptr;
     QPushButton* m_editProfileBtn = nullptr;

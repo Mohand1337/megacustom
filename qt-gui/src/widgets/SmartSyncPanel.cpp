@@ -1,9 +1,14 @@
 #include "SmartSyncPanel.h"
+#include "EmptyStateWidget.h"
 #include "controllers/SmartSyncController.h"
 #include "dialogs/SyncProfileDialog.h"
 #include "dialogs/ScheduleSyncDialog.h"
 #include "utils/CopyHelper.h"
+#include "styles/ThemeManager.h"
+#include <QApplication>
+#include <QClipboard>
 #include <QFileDialog>
+#include <QMenu>
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QDebug>
@@ -17,6 +22,7 @@ SmartSyncPanel::SmartSyncPanel(QWidget* parent)
 {
     setupUI();
     updateButtonStates();
+    updateEmptyState();
 }
 
 SmartSyncPanel::~SmartSyncPanel()
@@ -59,6 +65,7 @@ void SmartSyncPanel::setController(SmartSyncController* controller)
             }
             Q_UNUSED(count);
             updateButtonStates();
+            updateEmptyState();
         });
 
         connect(m_controller, &SmartSyncController::profileCreated,
@@ -73,6 +80,7 @@ void SmartSyncPanel::setController(SmartSyncController* controller)
             m_profileTable->setItem(row, 3, new QTableWidgetItem("Bidirectional"));
             m_profileTable->setItem(row, 4, new QTableWidgetItem("Ready"));
             m_profileTable->selectRow(row);
+            updateEmptyState();
         });
 
         connect(m_controller, &SmartSyncController::profileDeleted,
@@ -84,6 +92,7 @@ void SmartSyncPanel::setController(SmartSyncController* controller)
                 }
             }
             updateButtonStates();
+            updateEmptyState();
         });
 
         connect(m_controller, &SmartSyncController::analysisStarted,
@@ -226,6 +235,16 @@ void SmartSyncPanel::setupProfileSection(QVBoxLayout* mainLayout)
 
     profileLayout->addLayout(toolbarLayout);
 
+    // Empty state (shown when no sync profiles exist)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/folder-sync.svg",
+        "No sync profiles",
+        "Create a sync profile to keep local and cloud folders synchronized.",
+        "New Profile",
+        this);
+    connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &SmartSyncPanel::onNewProfileClicked);
+    profileLayout->addWidget(m_emptyState);
+
     // Profile table
     m_profileTable = new QTableWidget(this);
     m_profileTable->setColumnCount(5);
@@ -235,7 +254,37 @@ void SmartSyncPanel::setupProfileSection(QVBoxLayout* mainLayout)
     m_profileTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_profileTable->setMinimumHeight(100);
     m_profileTable->setMaximumHeight(180);
-    CopyHelper::installTableCopyMenu(m_profileTable);
+
+    // Context menu for profile table
+    m_profileTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_profileTable, &QTableWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QMenu menu(this);
+        QModelIndex idx = m_profileTable->indexAt(pos);
+        bool hasSelection = idx.isValid();
+
+        auto* editProfile = menu.addAction("Edit Profile");
+        editProfile->setEnabled(hasSelection);
+        connect(editProfile, &QAction::triggered, this, &SmartSyncPanel::onEditProfileClicked);
+
+        auto* deleteProfile = menu.addAction("Delete Profile");
+        deleteProfile->setEnabled(hasSelection && !m_isSyncing);
+        connect(deleteProfile, &QAction::triggered, this, &SmartSyncPanel::onDeleteProfileClicked);
+
+        menu.addSeparator();
+
+        auto* exportProfile = menu.addAction("Export Profile");
+        exportProfile->setEnabled(hasSelection);
+        connect(exportProfile, &QAction::triggered, this, [this]() {
+            if (m_currentProfileId.isEmpty() || !m_controller) return;
+            QString filePath = QFileDialog::getSaveFileName(this, "Export Sync Profile",
+                QString(), "JSON Files (*.json);;All Files (*)");
+            if (!filePath.isEmpty()) {
+                m_controller->exportProfile(m_currentProfileId, filePath);
+            }
+        });
+
+        menu.exec(m_profileTable->viewport()->mapToGlobal(pos));
+    });
 
     connect(m_profileTable, &QTableWidget::itemSelectionChanged,
             this, &SmartSyncPanel::onProfileSelectionChanged);
@@ -420,6 +469,13 @@ void SmartSyncPanel::updateButtonStates()
     if (m_pauseSyncBtn) m_pauseSyncBtn->setEnabled(m_isSyncing);
     if (m_stopSyncBtn) m_stopSyncBtn->setEnabled(m_isSyncing);
     if (m_scheduleBtn) m_scheduleBtn->setEnabled(hasSelection);
+}
+
+void SmartSyncPanel::updateEmptyState()
+{
+    bool empty = m_profileTable->rowCount() == 0;
+    m_emptyState->setVisible(empty);
+    m_profileTable->setVisible(!empty);
 }
 
 void SmartSyncPanel::onNewProfileClicked()
@@ -639,13 +695,14 @@ QWidget* SmartSyncPanel::createActionBadge(const QString& action)
 {
     QLabel* badge = new QLabel(action, this);
 
+    auto& tm = ThemeManager::instance();
     QString color;
     if (action == "Upload") {
-        color = "#D90007";      // Red for uploads
+        color = tm.supportError().name();
     } else if (action == "Download") {
-        color = "#0066CC";      // Blue for downloads
+        color = tm.supportInfo().name();
     } else {
-        color = "#999999";      // Gray for Skip/other
+        color = tm.textSecondary().name();
     }
 
     badge->setStyleSheet(QString(

@@ -15,6 +15,8 @@
 #include <QFutureWatcher>
 #include <vector>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 struct LogEntry;
@@ -66,7 +68,7 @@ private:
     void populateDistributionTableFromRecords(const std::vector<DistributionRecord>& records);
     void updateStatsDisplay();
     void setLoadingState(bool loading);
-    void showEmptyState(QTableWidget* table, const QString& message);
+    void updateEmptyState();
     void updateLastRefreshedLabel();
     QString formatTimestamp(qint64 timestamp) const;
     QString formatFileSize(qint64 bytes) const;
@@ -87,6 +89,9 @@ private:
     QTableWidget* m_distributionTable = nullptr;
     QComboBox* m_memberFilterCombo = nullptr;
     QComboBox* m_statusFilterCombo = nullptr;
+
+    // Empty state
+    EmptyStateWidget* m_emptyState = nullptr;
 
     // UI Components - Common
     QTabWidget* m_tabWidget = nullptr;

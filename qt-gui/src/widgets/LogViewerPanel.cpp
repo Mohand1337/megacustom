@@ -1,4 +1,5 @@
 #include "LogViewerPanel.h"
+#include "EmptyStateWidget.h"
 #include "core/LogManager.h"
 #include "utils/MemberRegistry.h"
 #include "utils/CopyHelper.h"
@@ -68,6 +69,15 @@ void LogViewerPanel::setupUI() {
     descLabel->setObjectName("PanelSubtitle");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
+
+    // Empty state (shown when both tables are empty)
+    m_emptyState = new EmptyStateWidget(
+        ":/icons/clipboard.svg",
+        "No activity logged",
+        "Activity and distribution logs will appear here as you use the app.",
+        QString(),
+        this);
+    mainLayout->addWidget(m_emptyState);
 
     // Tab widget
     m_tabWidget = new QTabWidget();
@@ -467,8 +477,8 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
 
     // Show empty state if no entries
     if (entries.empty()) {
-        showEmptyState(m_activityTable, "No log entries found.\nTry adjusting your filters or wait for activity.");
         if (m_countLabel) m_countLabel->setText("Showing 0 entries");
+        updateEmptyState();
         return;
     }
 
@@ -511,6 +521,7 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
     }
 
     if (m_countLabel) m_countLabel->setText(QString("Showing %1 entries").arg(entries.size()));
+    updateEmptyState();
 }
 
 void LogViewerPanel::populateDistributionTable() {
@@ -595,12 +606,12 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
     // Show empty state if no visible records
     if (visibleCount == 0) {
         m_distributionTable->setRowCount(0);
-        showEmptyState(m_distributionTable, "No distribution history found.\nDistributed files will appear here.");
     }
 
     if (m_tabWidget && m_tabWidget->currentIndex() == 1 && m_countLabel) {
         m_countLabel->setText(QString("Showing %1 distributions").arg(visibleCount));
     }
+    updateEmptyState();
 }
 
 void LogViewerPanel::updateStatsDisplay() {
@@ -633,20 +644,11 @@ void LogViewerPanel::setLoadingState(bool loading) {
     }
 }
 
-void LogViewerPanel::showEmptyState(QTableWidget* table, const QString& message) {
-    if (!table) return;
-
-    table->setRowCount(1);
-    table->setSpan(0, 0, 1, table->columnCount());
-
-    QTableWidgetItem* item = new QTableWidgetItem(message);
-    item->setTextAlignment(Qt::AlignCenter);
-    item->setForeground(ThemeManager::instance().textSecondary());
-    item->setFlags(item->flags() & ~Qt::ItemIsSelectable);  // Make non-selectable
-    table->setItem(0, 0, item);
-
-    // Set minimum row height for the empty state
-    table->setRowHeight(0, 80);
+void LogViewerPanel::updateEmptyState() {
+    if (!m_emptyState || !m_activityTable || !m_distributionTable || !m_tabWidget) return;
+    bool empty = m_activityTable->rowCount() == 0 && m_distributionTable->rowCount() == 0;
+    m_emptyState->setVisible(empty);
+    m_tabWidget->setVisible(!empty);
 }
 
 void LogViewerPanel::updateLastRefreshedLabel() {

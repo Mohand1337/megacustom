@@ -175,7 +175,7 @@ void WordPressConfigDialog::setupUI()
         "<small>Use WordPress Application Passwords (Users > Profile > Application Passwords). "
         "Requires WordPress 5.6+</small>", this);
     helpLabel->setWordWrap(true);
-    helpLabel->setStyleSheet("color: #666;");
+    helpLabel->setStyleSheet(QString("color: %1;").arg(ThemeManager::instance().textSecondary().name()));
     connLayout->addRow("", helpLabel);
 
     mainLayout->addWidget(connGroup);
@@ -453,7 +453,7 @@ void WordPressConfigDialog::onTestConnection()
     m_isWorking = true;
     setControlsEnabled(false);
     m_connectionStatus->setText("Testing connection...");
-    m_connectionStatus->setStyleSheet("color: #666;");
+    m_connectionStatus->setStyleSheet(QString("color: %1;").arg(ThemeManager::instance().textSecondary().name()));
 
     // Create worker thread
     m_workerThread = new QThread(this);

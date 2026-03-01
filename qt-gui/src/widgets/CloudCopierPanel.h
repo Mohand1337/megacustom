@@ -19,6 +19,8 @@
 #include <QButtonGroup>
 #include <QShortcut>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 struct CopyPreviewItem;
@@ -197,6 +199,7 @@ private:
     void clearErrorLog();
     void filterTasks(const QString& status);
     void updateTaskCounts();
+    void updateEmptyState();
 
 private:
     CloudCopierController* m_controller = nullptr;
@@ -230,6 +233,7 @@ private:
     QPushButton* m_exportBtn = nullptr;
 
     // Task table
+    EmptyStateWidget* m_emptyState = nullptr;
     QTableWidget* m_taskTable = nullptr;
     QComboBox* m_taskFilterCombo = nullptr;
     QLabel* m_taskCountLabel = nullptr;

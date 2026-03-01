@@ -11,6 +11,8 @@
 #include <QMap>
 #include <QPropertyAnimation>
 
+class EmptyStateWidget;
+
 namespace MegaCustom {
 
 class TransferController;
@@ -44,8 +46,10 @@ private:
     int findRowByTransferId(const QString& transferId);
     int findRowByPath(const QString& path);
     void animateProgressBar(QProgressBar* progressBar, int targetValue);
+    void updateEmptyState();
 
     TransferController* m_controller = nullptr;
+    EmptyStateWidget* m_emptyState = nullptr;
     QTableWidget* m_transferTable = nullptr;
     QLabel* m_titleLabel = nullptr;
     QLabel* m_activeBadge = nullptr;
