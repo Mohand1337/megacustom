@@ -1824,6 +1824,15 @@ void MainWindow::onAccountSwitched(const QString& accountId)
         }
     }
 
+    // Update panels that hold a MegaApi pointer
+    mega::MegaApi* activeApi = AccountManager::instance().activeApi();
+    if (m_watermarkPanel && activeApi) {
+        m_watermarkPanel->setMegaApi(activeApi);
+    }
+    if (m_distributionPanel && activeApi) {
+        m_distributionPanel->setMegaApi(activeApi);
+    }
+
     // Clear stale search index from previous account
     if (m_searchIndex) {
         m_searchIndex->clear();
