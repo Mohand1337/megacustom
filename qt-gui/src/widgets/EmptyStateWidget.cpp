@@ -114,11 +114,13 @@ void EmptyStateWidget::setIcon(const QString& iconPath)
 
     if (iconPath.endsWith(".svg")) {
         QSvgRenderer renderer(iconPath);
-        QPixmap pixmap(iconSize, iconSize);
-        pixmap.fill(Qt::transparent);
-        QPainter painter(&pixmap);
-        renderer.render(&painter);
-        m_iconLabel->setPixmap(pixmap);
+        if (renderer.isValid()) {
+            QPixmap pixmap(iconSize, iconSize);
+            pixmap.fill(Qt::transparent);
+            QPainter painter(&pixmap);
+            renderer.render(&painter);
+            m_iconLabel->setPixmap(pixmap);
+        }
     } else {
         QPixmap pixmap(iconPath);
         if (!pixmap.isNull()) {

@@ -254,6 +254,7 @@ set(HEADERS
     src/widgets/IconButton.h
     src/widgets/ModernMenu.h
     src/widgets/ButtonFactory.h
+    src/widgets/EmptyStateWidget.h
     # Dialog management (Phase 3)
     src/dialogs/DialogManager.h
     # Stylesheet generation (Phase 4)

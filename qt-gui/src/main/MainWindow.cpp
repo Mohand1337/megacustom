@@ -1378,7 +1378,8 @@ void MainWindow::onNavigationItemClicked(int item)
 {
     // Map NavigationItem enum to content stack index
     // CloudDrive=0, FolderMapper=1, MultiUploader=2, CloudCopier=3, SmartSync=4,
-    // MemberRegistry=5, Distribution=6, Settings=7, Transfers=8
+    // MemberRegistry=5, Distribution=6, Watermark=7, LogViewer=8, Settings=9,
+    // Transfers=10, Downloader=11
     int stackIndex = item;
 
     // Switch content
@@ -1669,12 +1670,12 @@ void MainWindow::setupAccountShortcuts()
         {"Ctrl+2", MegaSidebar::NavigationItem::FolderMapper},
         {"Ctrl+3", MegaSidebar::NavigationItem::MultiUploader},
         {"Ctrl+4", MegaSidebar::NavigationItem::CloudCopier},
-        {"Ctrl+5", MegaSidebar::NavigationItem::MemberRegistry},
-        {"Ctrl+6", MegaSidebar::NavigationItem::Distribution},
-        {"Ctrl+7", MegaSidebar::NavigationItem::Watermark},
-        {"Ctrl+8", MegaSidebar::NavigationItem::Downloader},
-        {"Ctrl+9", MegaSidebar::NavigationItem::LogViewer},
-        {"Ctrl+0", MegaSidebar::NavigationItem::Transfers},
+        {"Ctrl+5", MegaSidebar::NavigationItem::SmartSync},
+        {"Ctrl+6", MegaSidebar::NavigationItem::MemberRegistry},
+        {"Ctrl+7", MegaSidebar::NavigationItem::Distribution},
+        {"Ctrl+8", MegaSidebar::NavigationItem::Watermark},
+        {"Ctrl+9", MegaSidebar::NavigationItem::Downloader},
+        {"Ctrl+0", MegaSidebar::NavigationItem::LogViewer},
     };
     for (const auto& ps : panelShortcuts) {
         auto* sc = new QShortcut(QKeySequence(ps.key), this);
@@ -2247,12 +2248,12 @@ void MainWindow::onKeyboardShortcuts()
 <tr><td>Ctrl+2</td><td>Folder Mapper</td></tr>
 <tr><td>Ctrl+3</td><td>Multi Uploader</td></tr>
 <tr><td>Ctrl+4</td><td>Cloud Copier</td></tr>
-<tr><td>Ctrl+5</td><td>Members</td></tr>
-<tr><td>Ctrl+6</td><td>Distribution</td></tr>
-<tr><td>Ctrl+7</td><td>Watermark</td></tr>
-<tr><td>Ctrl+8</td><td>Downloader</td></tr>
-<tr><td>Ctrl+9</td><td>Activity Log</td></tr>
-<tr><td>Ctrl+0</td><td>Transfers</td></tr>
+<tr><td>Ctrl+5</td><td>Smart Sync</td></tr>
+<tr><td>Ctrl+6</td><td>Members</td></tr>
+<tr><td>Ctrl+7</td><td>Distribution</td></tr>
+<tr><td>Ctrl+8</td><td>Watermark</td></tr>
+<tr><td>Ctrl+9</td><td>Downloader</td></tr>
+<tr><td>Ctrl+0</td><td>Activity Log</td></tr>
 </table>
 
 <h3>Navigation</h3>
