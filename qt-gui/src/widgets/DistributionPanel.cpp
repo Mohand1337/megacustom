@@ -4,6 +4,7 @@
 #include "utils/TemplateExpander.h"
 #include "utils/CopyHelper.h"
 #include "utils/CloudPathValidator.h"
+#include "utils/ContentRouter.h"
 #include "controllers/FileController.h"
 #include "controllers/DistributionController.h"
 #include "features/CloudCopier.h"
@@ -48,6 +49,9 @@ struct FolderCopyTask {
     QString destPath;
     QString memberId;
     bool copyFolderItself = false;
+    bool isSmartRouteChild = false;   // true = individual child item from smart routing
+    QStringList individualFiles;      // for NHB_ROOT_FILES: list of file paths to copy
+    QString contentTypeLabel;         // for status display
 };
 
 // ==================== FolderCopyWorker ====================
@@ -108,7 +112,28 @@ public slots:
                 m_cloudCopier->createDestinations({task.destPath.toStdString()});
             }
 
-            if (task.copyFolderItself) {
+            if (task.isSmartRouteChild && !task.individualFiles.isEmpty()) {
+                // Smart route: copy individual files to destination
+                int fileSuccess = 0, fileFailed = 0;
+                QStringList failedNames;
+                for (const QString& filePath : task.individualFiles) {
+                    CopyResult result = m_moveMode
+                        ? m_cloudCopier->moveTo(filePath.toStdString(), task.destPath.toStdString())
+                        : m_cloudCopier->copyTo(filePath.toStdString(), task.destPath.toStdString());
+                    if (result.success) {
+                        fileSuccess++;
+                    } else {
+                        fileFailed++;
+                        failedNames.append(filePath.section('/', -1));
+                    }
+                }
+                taskSuccess = (fileFailed == 0);
+                if (fileFailed > 0) {
+                    errorMsg = QString("%1/%2 files failed: %3")
+                        .arg(fileFailed).arg(task.individualFiles.size())
+                        .arg(failedNames.join(", ").left(200));
+                }
+            } else if (task.copyFolderItself) {
                 // Copy/move the entire folder (operation mode already set on CloudCopier)
                 CopyResult result = m_moveMode
                     ? m_cloudCopier->moveTo(task.sourcePath.toStdString(), task.destPath.toStdString())
@@ -232,6 +257,7 @@ DistributionPanel::DistributionPanel(QWidget* parent)
     , m_failCount(0)
 {
     setObjectName("DistributionPanel");
+    m_contentRouter = std::make_unique<ContentRouter>();
     setupUI();
     loadGroups();
 
@@ -445,11 +471,31 @@ void DistributionPanel::setupUI() {
     m_broadcastCheck->setToolTip("When checked, the source folder itself is copied to every member's destination.\n"
                                  "When unchecked, subfolders are scanned and auto-matched to individual members.");
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        m_modeIndicator->setText(checked
-            ? QString("Mode: Broadcast (one source %1 all members)").arg(QChar(0x2192))
-            : "Mode: Cloud Copy (scan and distribute)");
+        if (checked) {
+            m_smartRouteCheck->setChecked(false);
+            m_modeIndicator->setText(
+                QString("Mode: Broadcast (one source %1 all members)").arg(QChar(0x2192)));
+        } else if (!m_smartRouteCheck->isChecked()) {
+            m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+        }
     });
-    configLayout->addWidget(m_broadcastCheck, 1, 1, 1, 2);
+    configLayout->addWidget(m_broadcastCheck, 1, 1);
+
+    m_smartRouteCheck = new QCheckBox("Smart Route");
+    m_smartRouteCheck->setToolTip(
+        "Auto-detect content types (Hot Seats, Theory Calls, NHB files) within each\n"
+        "member folder and route to correct destinations using member archive paths.\n\n"
+        "Requires members to have archive paths configured in Member Registry.");
+    connect(m_smartRouteCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) {
+            m_broadcastCheck->setChecked(false);
+            m_modeIndicator->setText(
+                QString("Mode: Smart Route (auto-detect content %1 correct paths)").arg(QChar(0x2192)));
+        } else if (!m_broadcastCheck->isChecked()) {
+            m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+        }
+    });
+    configLayout->addWidget(m_smartRouteCheck, 1, 2);
 
     configLayout->addWidget(new QLabel("Quick Template:"), 2, 0);
     m_quickTemplateCombo = new QComboBox();
@@ -707,15 +753,19 @@ void DistributionPanel::setupUI() {
         onDeselectAll();
         QStringList groupMemberIds = m_registry->getGroupMemberIds(groupName);
 
+        int tableRow = 0;
         for (int i = 0; i < m_wmFolders.size(); ++i) {
             if (groupMemberIds.contains(m_wmFolders[i].memberId)) {
                 m_wmFolders[i].selected = true;
-                QWidget* w = m_memberTable->cellWidget(i, COL_CHECK);
+                // Use tableRow (accounts for smart route expansion) not i
+                QWidget* w = m_memberTable->cellWidget(tableRow, COL_CHECK);
                 if (w) {
                     QCheckBox* c = w->findChild<QCheckBox*>();
-                    if (c) c->setChecked(true);
+                    if (c) c->setChecked(true);  // Header checkbox toggle propagates to children
                 }
             }
+            // Advance by header + children for smart-routed, or 1 for legacy
+            tableRow += m_wmFolders[i].smartRouted ? (1 + m_wmFolders[i].routes.size()) : 1;
         }
 
         // Reset combo to prompt
@@ -1081,6 +1131,32 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
                  << "confidence:" << info.matchConfidence;
     }
 
+    // Smart routing pass: classify children for matched members
+    int smartRouted = 0;
+    if (m_smartRouteCheck->isChecked() && m_megaApi) {
+        QString month = m_monthCombo->currentText();
+        for (WmFolderInfo& info : m_wmFolders) {
+            if (!info.matched) continue;
+
+            MemberInfo member = m_registry->getMember(info.memberId);
+            if (member.paths.archiveRoot.isEmpty()) {
+                qDebug() << "ContentRouter: Skipping" << info.memberId
+                         << "— no archive root configured";
+                continue;
+            }
+
+            QString fallbackDest = getDestinationPath(info.memberId);
+            info.routes = m_contentRouter->classifyChildren(
+                m_megaApi, info.fullPath, member, month, fallbackDest);
+            info.smartRouted = !info.routes.isEmpty();
+            if (info.smartRouted) smartRouted++;
+
+            qDebug() << "ContentRouter:" << info.memberId
+                     << "→" << info.routes.size() << "routes"
+                     << (info.smartRouted ? "(smart)" : "(empty)");
+        }
+    }
+
     // Update stats
     int matched = 0, unmatched = 0;
     for (const WmFolderInfo& info : m_wmFolders) {
@@ -1088,8 +1164,12 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
         else unmatched++;
     }
 
-    m_statsLabel->setText(QString("Found: %1 folders (%2 matched, %3 unmatched)")
-        .arg(m_wmFolders.size()).arg(matched).arg(unmatched));
+    QString statsText = QString("Found: %1 folders (%2 matched, %3 unmatched)")
+        .arg(m_wmFolders.size()).arg(matched).arg(unmatched);
+    if (smartRouted > 0) {
+        statsText += QString(" — %1 smart-routed").arg(smartRouted);
+    }
+    m_statsLabel->setText(statsText);
     m_statusLabel->setText("Scan complete");
 
     populateTable();
@@ -1097,87 +1177,233 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
 
 void DistributionPanel::populateTable() {
     m_memberTable->setRowCount(0);
-    m_memberTable->setRowCount(m_wmFolders.size());
+    m_routeMap.clear();
+
+    // Calculate total rows (expand smart-routed folders)
+    int totalRows = 0;
+    for (const WmFolderInfo& info : m_wmFolders) {
+        totalRows++;  // The folder row itself
+        if (info.smartRouted) {
+            totalRows += info.routes.size();  // Child rows
+        }
+    }
+    m_memberTable->setRowCount(totalRows);
 
     // Get all members for dropdown
     QList<MemberInfo> allMembers = m_registry->getAllMembers();
+    auto& tm = ThemeManager::instance();
 
-    for (int row = 0; row < m_wmFolders.size(); ++row) {
-        WmFolderInfo& info = m_wmFolders[row];
+    int row = 0;
+    for (int folderIdx = 0; folderIdx < m_wmFolders.size(); ++folderIdx) {
+        WmFolderInfo& info = m_wmFolders[folderIdx];
 
-        // COL_CHECK: Checkbox
-        QCheckBox* check = new QCheckBox();
-        check->setChecked(info.selected);
-        connect(check, &QCheckBox::toggled, [this, row](bool checked) {
-            if (row < m_wmFolders.size()) {
-                m_wmFolders[row].selected = checked;
+        if (info.smartRouted) {
+            // ========== Smart-routed member: header row + child rows ==========
+            int headerRow = row;
+
+            // Header checkbox: toggles all children
+            QCheckBox* headerCheck = new QCheckBox();
+            headerCheck->setChecked(info.selected);
+            connect(headerCheck, &QCheckBox::toggled, [this, folderIdx, headerRow](bool checked) {
+                if (folderIdx >= m_wmFolders.size()) return;
+                m_wmFolders[folderIdx].selected = checked;
+                // Toggle all child route checkboxes
+                for (int r = 0; r < m_wmFolders[folderIdx].routes.size(); ++r) {
+                    m_wmFolders[folderIdx].routes[r].selected = checked;
+                    int childRow = headerRow + 1 + r;
+                    QWidget* w = m_memberTable->cellWidget(childRow, COL_CHECK);
+                    if (w) {
+                        QCheckBox* c = w->findChild<QCheckBox*>();
+                        if (c) { c->blockSignals(true); c->setChecked(checked); c->blockSignals(false); }
+                    }
+                }
+            });
+            QWidget* hCheckWidget = new QWidget();
+            hCheckWidget->setAutoFillBackground(true);
+            QPalette hPal = hCheckWidget->palette();
+            hPal.setColor(QPalette::Window, tm.surface2());
+            hCheckWidget->setPalette(hPal);
+            QHBoxLayout* hCheckLayout = new QHBoxLayout(hCheckWidget);
+            hCheckLayout->addWidget(headerCheck);
+            hCheckLayout->setAlignment(Qt::AlignCenter);
+            hCheckLayout->setContentsMargins(0, 0, 0, 0);
+            m_memberTable->setCellWidget(row, COL_CHECK, hCheckWidget);
+
+            // Header source: bold folder name
+            QTableWidgetItem* hSource = new QTableWidgetItem(info.folderName);
+            QFont boldFont = hSource->font();
+            boldFont.setBold(true);
+            hSource->setFont(boldFont);
+            hSource->setToolTip(info.fullPath);
+            hSource->setBackground(tm.surface2());
+            m_memberTable->setItem(row, COL_SOURCE_FOLDER, hSource);
+
+            // Header member display
+            QString memberDisplay = info.memberId;
+            if (m_registry->hasMember(info.memberId)) {
+                MemberInfo mi = m_registry->getMember(info.memberId);
+                if (!mi.displayName.isEmpty()) memberDisplay = mi.displayName;
             }
-        });
-        QWidget* checkWidget = new QWidget();
-        QHBoxLayout* checkLayout = new QHBoxLayout(checkWidget);
-        checkLayout->addWidget(check);
-        checkLayout->setAlignment(Qt::AlignCenter);
-        checkLayout->setContentsMargins(0, 0, 0, 0);
-        m_memberTable->setCellWidget(row, COL_CHECK, checkWidget);
+            QTableWidgetItem* hMember = new QTableWidgetItem(memberDisplay);
+            hMember->setFont(boldFont);
+            hMember->setBackground(tm.surface2());
+            m_memberTable->setItem(row, COL_MATCHED_MEMBER, hMember);
 
-        // COL_SOURCE_FOLDER: Source folder name
-        QTableWidgetItem* sourceItem = new QTableWidgetItem(info.folderName);
-        sourceItem->setToolTip(info.fullPath);
-        m_memberTable->setItem(row, COL_SOURCE_FOLDER, sourceItem);
+            // Header match type: "Smart Route"
+            QTableWidgetItem* hMatch = new QTableWidgetItem("Smart Route");
+            hMatch->setTextAlignment(Qt::AlignCenter);
+            hMatch->setForeground(tm.supportInfo());
+            hMatch->setFont(boldFont);
+            hMatch->setBackground(tm.surface2());
+            m_memberTable->setItem(row, COL_MATCH_TYPE, hMatch);
 
-        // COL_MATCHED_MEMBER: Member dropdown (always a combo for flexibility)
-        QComboBox* memberCombo = new QComboBox();
-        memberCombo->addItem("-- No Match --", QString());
-        for (const MemberInfo& member : allMembers) {
-            QString display = member.displayName.isEmpty() ? member.id
-                : QString("%1 (%2)").arg(member.displayName, member.id);
-            memberCombo->addItem(display, member.id);
-        }
+            // Header destination: summary
+            QTableWidgetItem* hDest = new QTableWidgetItem(
+                QString("%1 routes").arg(info.routes.size()));
+            hDest->setFont(boldFont);
+            hDest->setBackground(tm.surface2());
+            m_memberTable->setItem(row, COL_DESTINATION, hDest);
 
-        // Pre-select matched member
-        if (info.matched) {
-            for (int i = 0; i < memberCombo->count(); ++i) {
-                if (memberCombo->itemData(i).toString() == info.memberId) {
-                    memberCombo->setCurrentIndex(i);
-                    break;
+            // Header status
+            QTableWidgetItem* hStatus = new QTableWidgetItem("Ready");
+            hStatus->setTextAlignment(Qt::AlignCenter);
+            hStatus->setForeground(tm.supportSuccess());
+            hStatus->setFont(boldFont);
+            hStatus->setBackground(tm.surface2());
+            m_memberTable->setItem(row, COL_STATUS, hStatus);
+
+            row++;
+
+            // Child rows for each route
+            for (int routeIdx = 0; routeIdx < info.routes.size(); ++routeIdx) {
+                ContentRoute& route = info.routes[routeIdx];
+                m_routeMap[row] = routeIdx;
+
+                // Child checkbox
+                QCheckBox* childCheck = new QCheckBox();
+                childCheck->setChecked(route.selected);
+                connect(childCheck, &QCheckBox::toggled,
+                        [this, folderIdx, routeIdx](bool checked) {
+                    if (folderIdx < m_wmFolders.size()
+                        && routeIdx < m_wmFolders[folderIdx].routes.size()) {
+                        m_wmFolders[folderIdx].routes[routeIdx].selected = checked;
+                    }
+                });
+                QWidget* cCheckWidget = new QWidget();
+                QHBoxLayout* cCheckLayout = new QHBoxLayout(cCheckWidget);
+                cCheckLayout->addWidget(childCheck);
+                cCheckLayout->setAlignment(Qt::AlignCenter);
+                cCheckLayout->setContentsMargins(0, 0, 0, 0);
+                m_memberTable->setCellWidget(row, COL_CHECK, cCheckWidget);
+
+                // Child source: indented name
+                QString prefix = QString::fromUtf8("  \xe2\x86\xb3 ");  // "  ↳ "
+                QString displayName = route.isFolder
+                    ? route.childName + "/"
+                    : route.childName;
+                QTableWidgetItem* cSource = new QTableWidgetItem(prefix + displayName);
+                cSource->setToolTip(route.isFolder ? route.sourcePath : route.filePaths.join("\n"));
+                m_memberTable->setItem(row, COL_SOURCE_FOLDER, cSource);
+
+                // Child member (same as parent)
+                QTableWidgetItem* cMember = new QTableWidgetItem(memberDisplay);
+                m_memberTable->setItem(row, COL_MATCHED_MEMBER, cMember);
+
+                // Child content type label with color coding
+                QTableWidgetItem* cType = new QTableWidgetItem(route.contentTypeLabel);
+                cType->setTextAlignment(Qt::AlignCenter);
+                switch (route.contentType) {
+                case ContentType::NHB_ROOT_FILES: cType->setForeground(tm.supportInfo()); break;
+                case ContentType::HOT_SEATS:      cType->setForeground(tm.supportSuccess()); break;
+                case ContentType::THEORY_CALLS:   cType->setForeground(tm.supportSuccess()); break;
+                case ContentType::FAST_FORWARD:    cType->setForeground(tm.supportWarning()); break;
+                case ContentType::UNKNOWN:         cType->setForeground(tm.supportWarning()); break;
+                }
+                m_memberTable->setItem(row, COL_MATCH_TYPE, cType);
+
+                // Child destination (editable)
+                QTableWidgetItem* cDest = new QTableWidgetItem(route.destinationPath);
+                cDest->setToolTip(route.destinationPath);
+                m_memberTable->setItem(row, COL_DESTINATION, cDest);
+
+                // Child status
+                QString cStatus = route.destinationPath.isEmpty() ? "No path" : "Ready";
+                QTableWidgetItem* cStatusItem = new QTableWidgetItem(cStatus);
+                cStatusItem->setTextAlignment(Qt::AlignCenter);
+                cStatusItem->setForeground(
+                    route.destinationPath.isEmpty() ? tm.supportWarning() : tm.supportSuccess());
+                m_memberTable->setItem(row, COL_STATUS, cStatusItem);
+
+                row++;
+            }
+        } else {
+            // ========== Legacy row: one folder → one destination ==========
+
+            // COL_CHECK: Checkbox
+            QCheckBox* check = new QCheckBox();
+            check->setChecked(info.selected);
+            connect(check, &QCheckBox::toggled, [this, folderIdx](bool checked) {
+                if (folderIdx < m_wmFolders.size()) {
+                    m_wmFolders[folderIdx].selected = checked;
+                }
+            });
+            QWidget* checkWidget = new QWidget();
+            QHBoxLayout* checkLayout = new QHBoxLayout(checkWidget);
+            checkLayout->addWidget(check);
+            checkLayout->setAlignment(Qt::AlignCenter);
+            checkLayout->setContentsMargins(0, 0, 0, 0);
+            m_memberTable->setCellWidget(row, COL_CHECK, checkWidget);
+
+            // COL_SOURCE_FOLDER
+            QTableWidgetItem* sourceItem = new QTableWidgetItem(info.folderName);
+            sourceItem->setToolTip(info.fullPath);
+            m_memberTable->setItem(row, COL_SOURCE_FOLDER, sourceItem);
+
+            // COL_MATCHED_MEMBER: Member dropdown
+            QComboBox* memberCombo = new QComboBox();
+            memberCombo->addItem("-- No Match --", QString());
+            for (const MemberInfo& member : allMembers) {
+                QString display = member.displayName.isEmpty() ? member.id
+                    : QString("%1 (%2)").arg(member.displayName, member.id);
+                memberCombo->addItem(display, member.id);
+            }
+            if (info.matched) {
+                for (int i = 0; i < memberCombo->count(); ++i) {
+                    if (memberCombo->itemData(i).toString() == info.memberId) {
+                        memberCombo->setCurrentIndex(i);
+                        break;
+                    }
                 }
             }
-        }
-
-        if (!info.matched) {
-            memberCombo->setProperty("error", true);
-        }
-
-        connect(memberCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                [this, row, memberCombo]() {
-            if (row < m_wmFolders.size()) {
+            if (!info.matched) {
+                memberCombo->setProperty("error", true);
+            }
+            int capturedRow = row;
+            connect(memberCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                    [this, folderIdx, capturedRow, memberCombo]() {
+                if (folderIdx >= m_wmFolders.size()) return;
                 QString selectedId = memberCombo->currentData().toString();
                 if (!selectedId.isEmpty()) {
-                    m_wmFolders[row].memberId = selectedId;
-                    m_wmFolders[row].matched = true;
-                    m_wmFolders[row].selected = true;
-                    m_wmFolders[row].matchType = "manual";
-                    m_wmFolders[row].matchConfidence = 5;
-
-                    // Update match type column
-                    auto& tm = ThemeManager::instance();
-                    if (m_memberTable->item(row, COL_MATCH_TYPE)) {
-                        m_memberTable->item(row, COL_MATCH_TYPE)->setText("Manual");
-                        m_memberTable->item(row, COL_MATCH_TYPE)->setForeground(tm.supportInfo());
+                    m_wmFolders[folderIdx].memberId = selectedId;
+                    m_wmFolders[folderIdx].matched = true;
+                    m_wmFolders[folderIdx].selected = true;
+                    m_wmFolders[folderIdx].matchType = "manual";
+                    m_wmFolders[folderIdx].matchConfidence = 5;
+                    auto& tmInner = ThemeManager::instance();
+                    if (m_memberTable->item(capturedRow, COL_MATCH_TYPE)) {
+                        m_memberTable->item(capturedRow, COL_MATCH_TYPE)->setText("Manual");
+                        m_memberTable->item(capturedRow, COL_MATCH_TYPE)->setForeground(tmInner.supportInfo());
                     }
-                    // Update destination column
                     QString dest = getDestinationPath(selectedId);
-                    if (m_memberTable->item(row, COL_DESTINATION)) {
-                        m_memberTable->item(row, COL_DESTINATION)->setText(dest);
-                        m_memberTable->item(row, COL_DESTINATION)->setToolTip(dest);
+                    if (m_memberTable->item(capturedRow, COL_DESTINATION)) {
+                        m_memberTable->item(capturedRow, COL_DESTINATION)->setText(dest);
+                        m_memberTable->item(capturedRow, COL_DESTINATION)->setToolTip(dest);
                     }
-                    // Update status
-                    if (m_memberTable->item(row, COL_STATUS)) {
-                        m_memberTable->item(row, COL_STATUS)->setText("Ready");
-                        m_memberTable->item(row, COL_STATUS)->setForeground(tm.supportSuccess());
+                    if (m_memberTable->item(capturedRow, COL_STATUS)) {
+                        m_memberTable->item(capturedRow, COL_STATUS)->setText("Ready");
+                        m_memberTable->item(capturedRow, COL_STATUS)->setForeground(tmInner.supportSuccess());
                     }
-                    // Check the checkbox
-                    QWidget* w = m_memberTable->cellWidget(row, COL_CHECK);
+                    QWidget* w = m_memberTable->cellWidget(capturedRow, COL_CHECK);
                     if (w) {
                         QCheckBox* c = w->findChild<QCheckBox*>();
                         if (c) c->setChecked(true);
@@ -1185,74 +1411,75 @@ void DistributionPanel::populateTable() {
                     memberCombo->setProperty("error", false);
                     memberCombo->style()->polish(memberCombo);
                 } else {
-                    m_wmFolders[row].matched = false;
-                    m_wmFolders[row].matchType = "none";
-                    m_wmFolders[row].matchConfidence = 0;
+                    m_wmFolders[folderIdx].matched = false;
+                    m_wmFolders[folderIdx].matchType = "none";
+                    m_wmFolders[folderIdx].matchConfidence = 0;
                     memberCombo->setProperty("error", true);
                     memberCombo->style()->polish(memberCombo);
-                    auto& tm2 = ThemeManager::instance();
-                    if (m_memberTable->item(row, COL_MATCH_TYPE)) {
-                        m_memberTable->item(row, COL_MATCH_TYPE)->setText("No match");
-                        m_memberTable->item(row, COL_MATCH_TYPE)->setForeground(tm2.supportError());
+                    auto& tmInner = ThemeManager::instance();
+                    if (m_memberTable->item(capturedRow, COL_MATCH_TYPE)) {
+                        m_memberTable->item(capturedRow, COL_MATCH_TYPE)->setText("No match");
+                        m_memberTable->item(capturedRow, COL_MATCH_TYPE)->setForeground(tmInner.supportError());
                     }
-                    if (m_memberTable->item(row, COL_STATUS)) {
-                        m_memberTable->item(row, COL_STATUS)->setText("Select Member");
-                        m_memberTable->item(row, COL_STATUS)->setForeground(tm2.supportError());
+                    if (m_memberTable->item(capturedRow, COL_STATUS)) {
+                        m_memberTable->item(capturedRow, COL_STATUS)->setText("Select Member");
+                        m_memberTable->item(capturedRow, COL_STATUS)->setForeground(tmInner.supportError());
                     }
                 }
+            });
+            m_memberTable->setCellWidget(row, COL_MATCHED_MEMBER, memberCombo);
+
+            // COL_MATCH_TYPE
+            QString matchLabel;
+            QColor matchColor;
+            if (info.matchType == "pattern") {
+                matchLabel = "Pattern";
+                matchColor = tm.supportSuccess();
+            } else if (info.matchType == "id") {
+                matchLabel = "ID match";
+                matchColor = tm.supportSuccess();
+            } else if (info.matchType == "email") {
+                matchLabel = "Email";
+                matchColor = tm.supportInfo();
+            } else if (info.matchType == "name") {
+                matchLabel = "Name";
+                matchColor = tm.supportInfo();
+            } else if (info.matchType == "fuzzy") {
+                matchLabel = "Fuzzy";
+                matchColor = tm.supportWarning();
+            } else if (info.matchType == "manual") {
+                matchLabel = "Manual";
+                matchColor = tm.supportInfo();
+            } else if (info.matchType == "broadcast") {
+                matchLabel = "Broadcast";
+                matchColor = tm.supportInfo();
+            } else {
+                matchLabel = "No match";
+                matchColor = tm.supportError();
             }
-        });
-        m_memberTable->setCellWidget(row, COL_MATCHED_MEMBER, memberCombo);
+            QTableWidgetItem* matchItem = new QTableWidgetItem(matchLabel);
+            matchItem->setTextAlignment(Qt::AlignCenter);
+            matchItem->setForeground(matchColor);
+            if (info.matchConfidence > 0) {
+                matchItem->setToolTip(QString("Confidence: %1/5").arg(info.matchConfidence));
+            }
+            m_memberTable->setItem(row, COL_MATCH_TYPE, matchItem);
 
-        // COL_MATCH_TYPE: How the match was made
-        auto& tm = ThemeManager::instance();
-        QString matchLabel;
-        QColor matchColor;
-        if (info.matchType == "pattern") {
-            matchLabel = "Pattern";
-            matchColor = tm.supportSuccess();
-        } else if (info.matchType == "id") {
-            matchLabel = "ID match";
-            matchColor = tm.supportSuccess();
-        } else if (info.matchType == "email") {
-            matchLabel = "Email";
-            matchColor = tm.supportInfo();
-        } else if (info.matchType == "name") {
-            matchLabel = "Name";
-            matchColor = tm.supportInfo();
-        } else if (info.matchType == "fuzzy") {
-            matchLabel = "Fuzzy";
-            matchColor = tm.supportWarning();
-        } else if (info.matchType == "manual") {
-            matchLabel = "Manual";
-            matchColor = tm.supportInfo();
-        } else if (info.matchType == "broadcast") {
-            matchLabel = "Broadcast";
-            matchColor = tm.supportInfo();
-        } else {
-            matchLabel = "No match";
-            matchColor = tm.supportError();
+            // COL_DESTINATION
+            QString dest = info.matched ? getDestinationPath(info.memberId) : "";
+            QTableWidgetItem* destItem = new QTableWidgetItem(dest);
+            destItem->setToolTip(dest);
+            m_memberTable->setItem(row, COL_DESTINATION, destItem);
+
+            // COL_STATUS
+            QString status = info.matched ? "Ready" : "Select Member";
+            QTableWidgetItem* statusItem = new QTableWidgetItem(status);
+            statusItem->setTextAlignment(Qt::AlignCenter);
+            statusItem->setForeground(info.matched ? tm.supportSuccess() : tm.supportError());
+            m_memberTable->setItem(row, COL_STATUS, statusItem);
+
+            row++;
         }
-        QTableWidgetItem* matchItem = new QTableWidgetItem(matchLabel);
-        matchItem->setTextAlignment(Qt::AlignCenter);
-        matchItem->setForeground(matchColor);
-        if (info.matchConfidence > 0) {
-            matchItem->setToolTip(QString("Confidence: %1/5").arg(info.matchConfidence));
-        }
-        m_memberTable->setItem(row, COL_MATCH_TYPE, matchItem);
-
-        // COL_DESTINATION: Expanded destination path
-        QString dest = info.matched ? getDestinationPath(info.memberId) : "";
-        QTableWidgetItem* destItem = new QTableWidgetItem(dest);
-        destItem->setToolTip(dest);
-        m_memberTable->setItem(row, COL_DESTINATION, destItem);
-
-        // COL_STATUS
-        QString status = info.matched ? "Ready" : "Select Member";
-        QTableWidgetItem* statusItem = new QTableWidgetItem(status);
-        statusItem->setTextAlignment(Qt::AlignCenter);
-        statusItem->setForeground(info.matched ? tm.supportSuccess() : tm.supportError());
-        m_memberTable->setItem(row, COL_STATUS, statusItem);
     }
 
     updateEmptyState();
@@ -1303,9 +1530,7 @@ void DistributionPanel::onSelectAll() {
         if (widget) {
             QCheckBox* check = widget->findChild<QCheckBox*>();
             if (check) check->setChecked(true);
-        }
-        if (row < m_wmFolders.size()) {
-            m_wmFolders[row].selected = true;
+            // Data is updated via checkbox signal connections
         }
     }
 }
@@ -1317,9 +1542,6 @@ void DistributionPanel::onDeselectAll() {
             QCheckBox* check = widget->findChild<QCheckBox*>();
             if (check) check->setChecked(false);
         }
-        if (row < m_wmFolders.size()) {
-            m_wmFolders[row].selected = false;
-        }
     }
 }
 
@@ -1330,28 +1552,58 @@ void DistributionPanel::onPreviewDistribution() {
 
     bool copyFolder = !m_copyContentsOnlyCheck->isChecked();
 
+    int tableRow = 0;
     for (int i = 0; i < m_wmFolders.size(); ++i) {
         const WmFolderInfo& info = m_wmFolders[i];
-        if (!info.selected) continue;
 
-        // Read destination from table cell (user may have edited it)
-        QTableWidgetItem* destItem = m_memberTable->item(i, COL_DESTINATION);
-        QString dest = destItem ? destItem->text().trimmed() : "";
-        if (dest.isEmpty()) dest = getDestinationPath(info.memberId);
-
-        QString source = info.fullPath;
-        if (source.isEmpty()) {
-            preview.append(QString("[NO SOURCE] %1 -> %2")
-                .arg(info.memberId.isEmpty() ? "(unmatched)" : info.memberId)
-                .arg(dest));
-            skippedCount++;
-        } else if (copyFolder) {
-            preview.append(QString("%1 -> %2%3")
-                .arg(source).arg(dest).arg(info.folderName));
-        } else {
-            preview.append(QString("%1/* -> %2").arg(source).arg(dest));
+        if (!info.selected) {
+            // Advance table row even for unselected folders
+            tableRow += info.smartRouted ? (1 + info.routes.size()) : 1;
+            continue;
         }
-        selectedCount++;
+
+        if (info.smartRouted) {
+            // Smart-routed: show each child route (read destinations from data, not table)
+            preview.append(QString("--- %1 (Smart Route) ---").arg(info.memberId));
+            int childStart = tableRow + 1;  // Skip header row
+            for (int r = 0; r < info.routes.size(); ++r) {
+                const ContentRoute& route = info.routes[r];
+                if (!route.selected) continue;
+                // Read destination from table cell in case user edited it
+                int childRow = childStart + r;
+                QTableWidgetItem* destItem = m_memberTable->item(childRow, COL_DESTINATION);
+                QString dest = (destItem && !destItem->text().trimmed().isEmpty())
+                    ? destItem->text().trimmed() : route.destinationPath;
+                QString arrow = QString::fromUtf8(" \xe2\x86\x92 ");  // " → "
+                preview.append(QString("  [%1] %2%3%4")
+                    .arg(route.contentTypeLabel)
+                    .arg(route.childName)
+                    .arg(arrow)
+                    .arg(dest));
+                selectedCount++;
+            }
+            tableRow += 1 + info.routes.size();
+        } else {
+            // Legacy mode — use tableRow (not i) to read from the table
+            QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+            QString dest = destItem ? destItem->text().trimmed() : "";
+            if (dest.isEmpty()) dest = getDestinationPath(info.memberId);
+
+            QString source = info.fullPath;
+            if (source.isEmpty()) {
+                preview.append(QString("[NO SOURCE] %1 -> %2")
+                    .arg(info.memberId.isEmpty() ? "(unmatched)" : info.memberId)
+                    .arg(dest));
+                skippedCount++;
+            } else if (copyFolder) {
+                preview.append(QString("%1 -> %2%3")
+                    .arg(source).arg(dest).arg(info.folderName));
+            } else {
+                preview.append(QString("%1/* -> %2").arg(source).arg(dest));
+            }
+            selectedCount++;
+            tableRow++;
+        }
     }
 
     if (selectedCount == 0) {
@@ -1427,34 +1679,87 @@ void DistributionPanel::onStartDistribution() {
     bool copyFolderItself = !m_copyContentsOnlyCheck->isChecked();
     QStringList skippedNoSource;
 
+    // Track table row mapping for smart-routed folders
+    int tableRow = 0;
+
     for (int i = 0; i < m_wmFolders.size(); ++i) {
         const WmFolderInfo& info = m_wmFolders[i];
-        if (!info.selected) continue;
 
-        FolderCopyTask task;
-        task.index = i;
-        task.memberId = info.memberId;
-        task.copyFolderItself = copyFolderItself;
+        if (info.smartRouted) {
+            // Smart-routed: build per-child tasks from routes
+            tableRow++;  // Skip header row
 
-        // Source path: from scan data, or empty for manual/imported rows
-        task.sourcePath = info.fullPath;
-        if (task.sourcePath.isEmpty()) {
-            skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
-            continue;  // Can't copy without a source
+            if (info.selected) {
+                for (int r = 0; r < info.routes.size(); ++r) {
+                    const ContentRoute& route = info.routes[r];
+                    int childRow = tableRow + r;
+
+                    if (!route.selected) continue;
+
+                    // Read destination from table cell (user may have edited it)
+                    QTableWidgetItem* destItem = m_memberTable->item(childRow, COL_DESTINATION);
+                    QString cellDest = destItem ? destItem->text().trimmed() : "";
+                    QString dest = cellDest.isEmpty() ? route.destinationPath : cellDest;
+
+                    if (dest.isEmpty()) {
+                        skippedNoSource.append(QString("%1/%2").arg(info.memberId, route.childName));
+                        continue;
+                    }
+
+                    FolderCopyTask task;
+                    task.index = childRow;
+                    task.memberId = route.memberId;
+                    task.destPath = dest;
+                    task.isSmartRouteChild = true;
+                    task.contentTypeLabel = route.contentTypeLabel;
+
+                    if (route.isFolder) {
+                        // Subfolder → copy the whole folder
+                        task.sourcePath = route.sourcePath;
+                        task.copyFolderItself = true;
+                    } else {
+                        // Root files → copy individual files
+                        task.sourcePath = route.sourcePath;
+                        task.individualFiles = route.filePaths;
+                        task.copyFolderItself = false;
+                    }
+
+                    tasks.append(task);
+                }
+            }
+            tableRow += info.routes.size();
+        } else {
+            // Legacy mode: one folder → one destination
+            if (!info.selected) {
+                tableRow++;
+                continue;
+            }
+
+            FolderCopyTask task;
+            task.index = tableRow;
+            task.memberId = info.memberId;
+            task.copyFolderItself = copyFolderItself;
+
+            task.sourcePath = info.fullPath;
+            if (task.sourcePath.isEmpty()) {
+                skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
+                tableRow++;
+                continue;
+            }
+
+            QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+            QString cellDest = destItem ? destItem->text().trimmed() : "";
+            task.destPath = cellDest.isEmpty() ? getDestinationPath(info.memberId) : cellDest;
+
+            if (task.destPath.isEmpty()) {
+                skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
+                tableRow++;
+                continue;
+            }
+
+            tasks.append(task);
+            tableRow++;
         }
-
-        // Destination path: prefer the value in the table cell (user may have edited it),
-        // fall back to template expansion
-        QTableWidgetItem* destItem = m_memberTable->item(i, COL_DESTINATION);
-        QString cellDest = destItem ? destItem->text().trimmed() : "";
-        task.destPath = cellDest.isEmpty() ? getDestinationPath(info.memberId) : cellDest;
-
-        if (task.destPath.isEmpty()) {
-            skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
-            continue;
-        }
-
-        tasks.append(task);
     }
 
     if (!skippedNoSource.isEmpty()) {
@@ -1632,9 +1937,12 @@ void DistributionPanel::onPauseDistribution() {
 void DistributionPanel::onWorkerTaskStarted(int index, const QString& source, const QString& dest) {
     Q_UNUSED(source);
 
-    if (index < m_wmFolders.size()) {
+    // index is now the table row (works for both legacy and smart-routed)
+    if (index < m_memberTable->rowCount()) {
+        QTableWidgetItem* memberItem = m_memberTable->item(index, COL_MATCHED_MEMBER);
+        QString memberDisplay = memberItem ? memberItem->text() : "";
         m_statusLabel->setText(QString("Copying %1 -> %2")
-            .arg(m_wmFolders[index].memberId)
+            .arg(memberDisplay)
             .arg(dest.section('/', -2)));
 
         QTableWidgetItem* statusItem = m_memberTable->item(index, COL_STATUS);
@@ -1646,7 +1954,7 @@ void DistributionPanel::onWorkerTaskStarted(int index, const QString& source, co
 }
 
 void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QString& error) {
-    if (index >= m_wmFolders.size()) return;
+    if (index >= m_memberTable->rowCount()) return;
 
     auto& tm = ThemeManager::instance();
     QTableWidgetItem* statusItem = m_memberTable->item(index, COL_STATUS);
@@ -1660,8 +1968,10 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
 
         // Trigger bulk rename if option is checked
         if (m_removeWatermarkSuffixCheck->isChecked()) {
-            QString dest = getDestinationPath(m_wmFolders[index].memberId);
-            executeBulkRename(dest);
+            QTableWidgetItem* destItem = m_memberTable->item(index, COL_DESTINATION);
+            if (destItem && !destItem->text().isEmpty()) {
+                executeBulkRename(destItem->text());
+            }
         }
     } else {
         m_failCount++;
@@ -1670,7 +1980,8 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
             statusItem->setForeground(tm.supportError());
             statusItem->setToolTip(error);
         }
-        qDebug() << "Task failed:" << m_wmFolders[index].memberId << "-" << error;
+        QTableWidgetItem* memberItem = m_memberTable->item(index, COL_MATCHED_MEMBER);
+        qDebug() << "Task failed:" << (memberItem ? memberItem->text() : "?") << "-" << error;
     }
 
     AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);

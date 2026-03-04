@@ -14,6 +14,8 @@
 #include <QThread>
 #include <memory>
 
+#include "utils/ContentRouter.h"
+
 class EmptyStateWidget;
 
 namespace mega {
@@ -41,6 +43,10 @@ struct WmFolderInfo {
     int matchConfidence = 0; // 1-5
     bool matched = false;    // True if member exists in registry
     bool selected = false;   // True if selected for distribution
+
+    // Smart routing: per-child routes (populated when Smart Route is on)
+    QList<ContentRoute> routes;
+    bool smartRouted = false;
 };
 
 /**
@@ -173,6 +179,7 @@ private:
     QCheckBox* m_copyContentsOnlyCheck;  // Copy contents only (standardized naming)
     QCheckBox* m_skipExistingCheck;
     QCheckBox* m_moveFilesCheck;
+    QCheckBox* m_smartRouteCheck = nullptr;
 
     // Status
     QLabel* m_modeIndicator;
@@ -207,6 +214,10 @@ private:
 
     // Files received from the Watermark pipeline (for reference/highlighting)
     QStringList m_receivedWatermarkFiles;
+
+    // Smart content routing
+    std::unique_ptr<ContentRouter> m_contentRouter;
+    QMap<int, int> m_routeMap;  // table row → index in parent WmFolderInfo.routes
 
     // Helper methods
     void cleanupWorkerThread();
