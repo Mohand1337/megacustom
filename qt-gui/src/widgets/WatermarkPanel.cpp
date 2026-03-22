@@ -1062,6 +1062,10 @@ void WatermarkPanel::onAddFiles() {
         "Supported Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.pdf *.mp3 *.flac *.wav *.aac *.ogg *.m4a);;Videos (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm);;PDFs (*.pdf);;Audio (*.mp3 *.flac *.wav *.aac *.ogg *.m4a);;All Files (*)");
 
     for (const QString& file : files) {
+        // Skip already-watermarked files (e.g., *_wm.mp4)
+        QFileInfo checkFi(file);
+        if (checkFi.completeBaseName().endsWith("_wm")) continue;
+
         // Check if already in list
         bool exists = false;
         for (const WatermarkFileInfo& info : m_files) {
@@ -1113,6 +1117,10 @@ void WatermarkPanel::onAddFolder() {
 
     while (it.hasNext()) {
         QString file = it.next();
+
+        // Skip already-watermarked files (e.g., *_wm.mp4)
+        QFileInfo checkFi(file);
+        if (checkFi.completeBaseName().endsWith("_wm")) continue;
 
         // Check if already in list
         bool exists = false;

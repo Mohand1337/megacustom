@@ -77,10 +77,9 @@ std::string getExecutableDir() {
 #endif
 }
 
-// Check if a file exists
+// Check if a file exists (use std::filesystem for Unicode path support on Windows)
 bool fileExists(const std::string& path) {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0;
+    return std::filesystem::exists(std::filesystem::path(path));
 }
 } // anonymous namespace for getHomeDirectory
 
@@ -705,15 +704,16 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
         return result;
     }
 
-    // Check input file exists
-    struct stat st;
-    if (stat(input.c_str(), &st) != 0) {
+    // Check input file exists (use std::filesystem for Unicode path support)
+    namespace fs = std::filesystem;
+    fs::path inputFs(input);
+    if (!fs::exists(inputFs)) {
         result.error = "Input file not found: " + input;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "input_not_found", result.error);
         return result;
     }
-    result.inputSizeBytes = st.st_size;
+    result.inputSizeBytes = static_cast<int64_t>(fs::file_size(inputFs));
 
     // Get video duration for progress tracking
     double duration = getVideoDuration(input);
@@ -729,14 +729,18 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         endTime - startTime).count();
 
-    if (exitCode == 0 && stat(output.c_str(), &st) == 0) {
+    if (exitCode == 0 && fs::exists(output)) {
         result.success = true;
-        result.outputSizeBytes = st.st_size;
+        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(output));
         reportProgress(input, 1, 1, 100.0, "complete");
         LogManager::instance().logWatermark("video_complete",
             "Video watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
     } else {
-        result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+        if (exitCode != 0) {
+            result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+        } else {
+            result.error = "FFmpeg succeeded but output file not found: " + output;
+        }
         reportProgress(input, 1, 1, 0.0, "error");
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "video_watermark_failed", "Video watermark failed: " + input + " - " + result.error, input);
@@ -765,22 +769,23 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     }
 
     std::string scriptPath = getPdfScriptPath();
-    struct stat st;
-    if (stat(scriptPath.c_str(), &st) != 0) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(scriptPath)) {
         result.error = "PDF watermark script not found at: " + scriptPath;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "script_not_found", result.error);
         return result;
     }
 
-    // Check input file exists
-    if (stat(input.c_str(), &st) != 0) {
+    // Check input file exists (use std::filesystem for Unicode path support)
+    fs::path inputFs(input);
+    if (!fs::exists(inputFs)) {
         result.error = "Input file not found: " + input;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "input_not_found", result.error);
         return result;
     }
-    result.inputSizeBytes = st.st_size;
+    result.inputSizeBytes = static_cast<int64_t>(fs::file_size(inputFs));
 
     // Log resolved script path for debugging
     fprintf(stderr, "PDF watermark script: %s\n", scriptPath.c_str());
@@ -836,13 +841,17 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         endTime - startTime).count();
 
-    if (exitCode == 0 && stat(output.c_str(), &st) == 0) {
+    if (exitCode == 0 && fs::exists(output)) {
         result.success = true;
-        result.outputSizeBytes = st.st_size;
+        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(output));
         LogManager::instance().logWatermark("pdf_complete",
             "PDF watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
     } else {
-        result.error = "PDF watermarking failed: " + stdout_out;
+        if (exitCode != 0) {
+            result.error = "PDF watermarking failed (exit code " + std::to_string(exitCode) + "): " + stdout_out;
+        } else {
+            result.error = "PDF script succeeded but output file not found: " + output;
+        }
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "pdf_watermark_failed", "PDF watermark failed: " + input + " - " + result.error, input);
     }
@@ -899,8 +908,7 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
 
     // Check for existing file and add numbered suffix if needed
     std::string candidate = (memberDir / filename).string();
-    struct stat stCheck;
-    if (stat(candidate.c_str(), &stCheck) == 0) {
+    if (fs::exists(candidate)) {
         std::string fnStr = filename.string();
         size_t lastDot = fnStr.find_last_of('.');
         std::string baseName = (lastDot == std::string::npos) ?
@@ -909,7 +917,7 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
             "" : fnStr.substr(lastDot);
         for (int n = 1; n < 1000; ++n) {
             candidate = (memberDir / (baseName + " (" + std::to_string(n) + ")" + ext)).string();
-            if (stat(candidate.c_str(), &stCheck) != 0) {
+            if (!fs::exists(candidate)) {
                 break;
             }
         }
@@ -945,11 +953,10 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
 
     // Check if output file already exists; if so, append (1), (2), etc.
     std::string candidate = (outDir / (baseName + suffix + ext)).string();
-    struct stat stCheck;
-    if (stat(candidate.c_str(), &stCheck) == 0) {
+    if (fs::exists(candidate)) {
         for (int n = 1; n < 1000; ++n) {
             candidate = (outDir / (baseName + suffix + " (" + std::to_string(n) + ")" + ext)).string();
-            if (stat(candidate.c_str(), &stCheck) != 0) {
+            if (!fs::exists(candidate)) {
                 break;
             }
         }

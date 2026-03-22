@@ -50,7 +50,7 @@ struct WatermarkConfig {
     std::string metadataKeywords;            // PDF: /Keywords, Video: description
 
     // Output
-    std::string outputSuffix = "_wm";  // Suffix for output filename
+    std::string outputSuffix;           // Suffix for output filename (empty = no suffix)
     bool overwrite = true;             // Overwrite existing output files
 };
 

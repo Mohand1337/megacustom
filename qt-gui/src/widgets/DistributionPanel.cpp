@@ -894,6 +894,7 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
     m_modeIndicator->setProperty("mode", "active");
     m_modeIndicator->style()->polish(m_modeIndicator);
     m_memberRowMap.clear();
+    m_routeMap.clear();
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
     m_memberTable->setRowCount(memberFileMap.size());
@@ -1714,9 +1715,9 @@ void DistributionPanel::onStartDistribution() {
                     task.contentTypeLabel = route.contentTypeLabel;
 
                     if (route.isFolder) {
-                        // Subfolder → copy the whole folder
+                        // Subfolder → respect "copy contents only" checkbox
                         task.sourcePath = route.sourcePath;
-                        task.copyFolderItself = true;
+                        task.copyFolderItself = copyFolderItself;
                     } else {
                         // Root files → copy individual files
                         task.sourcePath = route.sourcePath;
@@ -1856,6 +1857,7 @@ void DistributionPanel::onStartDistribution() {
     m_copyWorker->setSkipExisting(m_skipExistingCheck->isChecked());
     m_copyWorker->setCreateDestFolder(m_createDestFolderCheck->isChecked());
     m_copyWorker->setMoveMode(m_moveFilesCheck->isChecked());
+    m_isMoving = m_moveFilesCheck->isChecked();
 
     // Connect signals
     connect(m_workerThread, &QThread::started, m_copyWorker, &FolderCopyWorker::process);
@@ -1941,13 +1943,15 @@ void DistributionPanel::onWorkerTaskStarted(int index, const QString& source, co
     if (index < m_memberTable->rowCount()) {
         QTableWidgetItem* memberItem = m_memberTable->item(index, COL_MATCHED_MEMBER);
         QString memberDisplay = memberItem ? memberItem->text() : "";
-        m_statusLabel->setText(QString("Copying %1 -> %2")
+        QString verb = m_isMoving ? "Moving" : "Copying";
+        m_statusLabel->setText(QString("%1 %2 -> %3")
+            .arg(verb)
             .arg(memberDisplay)
             .arg(dest.section('/', -2)));
 
         QTableWidgetItem* statusItem = m_memberTable->item(index, COL_STATUS);
         if (statusItem) {
-            statusItem->setText("Copying...");
+            statusItem->setText(verb + "...");
             statusItem->setForeground(ThemeManager::instance().supportWarning());
         }
     }
@@ -1990,6 +1994,7 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
 void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
     m_isRunning = false;
     m_isPaused = false;
+    m_isMoving = false;
     m_startBtn->setEnabled(true);
     m_pauseBtn->setEnabled(false);
     m_pauseBtn->setText("Pause");
@@ -2015,7 +2020,7 @@ void DistributionPanel::onWorkerProgress(int current, int total, const QString& 
 
     // Update status label with current item
     if (!currentItem.isEmpty()) {
-        m_statusLabel->setText(QString("Copying: %1").arg(currentItem));
+        m_statusLabel->setText(QString("%1: %2").arg(m_isMoving ? "Moving" : "Copying").arg(currentItem));
     }
 
     emit distributionProgress(current, total, currentItem);

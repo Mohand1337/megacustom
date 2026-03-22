@@ -40,7 +40,7 @@ struct QtWatermarkConfig {
     QString metadataAuthor;
     QString metadataComment;
     QString metadataKeywords;
-    QString outputSuffix = "_wm";
+    QString outputSuffix;
     bool overwrite = true;
 };
 

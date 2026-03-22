@@ -202,6 +202,7 @@ private:
     // State
     bool m_isRunning = false;
     bool m_isPaused = false;
+    bool m_isMoving = false;
     bool m_controllerActive = false;  // True when DistributionController is driving the UI
     int m_successCount = 0;
     int m_failCount = 0;
