@@ -878,6 +878,10 @@ bool FileExplorer::hasClipboard() const
 void FileExplorer::onRemoteFileListReceived(const QVariantList& files)
 {
     qDebug() << "FileExplorer: Received" << files.size() << "remote files";
+    for (const QVariant& f : files) {
+        QVariantMap fi = f.toMap();
+        qDebug() << "  " << (fi["isFolder"].toBool() ? "[DIR]" : "[FILE]") << fi["name"].toString();
+    }
 
     if (!m_remoteModel) {
         qDebug() << "FileExplorer: No remote model!";

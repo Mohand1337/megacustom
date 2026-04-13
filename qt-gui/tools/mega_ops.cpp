@@ -356,7 +356,10 @@ class MegaOps : public QObject {
     Q_OBJECT
 public:
     MegaOps(const QString& apiKey) {
-        m_api = new mega::MegaApi(apiKey.toUtf8().constData(), (const char*)nullptr, "MegaOps/1.0");
+        QString cachePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+            + "/MegaCustom/MegaCustom/mega_cache/mega_ops";
+        QDir().mkpath(cachePath);
+        m_api = new mega::MegaApi(apiKey.toUtf8().constData(), cachePath.toUtf8().constData(), "MegaOps/1.0");
         m_listener = new MegaOpsListener();
     }
 
@@ -577,6 +580,133 @@ public:
 
         qDebug() << "Copied:" << sourcePath << "->" << destPath;
         return true;
+    }
+
+    bool moveNode(const QString& sourcePath, const QString& destFolderPath) {
+        std::unique_ptr<mega::MegaNode> source(getNodeByPath(sourcePath));
+        if (!source) {
+            qDebug() << "Source not found:" << sourcePath;
+            return false;
+        }
+        std::unique_ptr<mega::MegaNode> dest(getNodeByPath(destFolderPath));
+        if (!dest || !dest->isFolder()) {
+            qDebug() << "Destination folder not found:" << destFolderPath;
+            return false;
+        }
+        m_listener->reset();
+        m_api->moveNode(source.get(), dest.get(), m_listener);
+        if (!m_listener->wait(60000) || !m_listener->success) {
+            qDebug() << "Move failed:" << m_listener->errorMsg;
+            return false;
+        }
+        qDebug() << "Moved:" << sourcePath << "->" << destFolderPath;
+        return true;
+    }
+
+    /**
+     * Organize FF content into subfolders for all members under basePath.
+     * Finds files matching "FF Hot Seats" or "FF Theory Call" and moves them
+     * into subfolders named by the call (e.g., "03-31-2026 FF Hot Seats/").
+     */
+    int organizeFF(const QString& basePath) {
+        std::unique_ptr<mega::MegaNode> baseNode(getNodeByPath(basePath));
+        if (!baseNode || !baseNode->isFolder()) {
+            qDebug() << "Base path not found:" << basePath;
+            return 0;
+        }
+
+        std::unique_ptr<mega::MegaNodeList> members(m_api->getChildren(baseNode.get()));
+        if (!members) return 0;
+
+        int totalMoved = 0;
+
+        for (int m = 0; m < members->size(); ++m) {
+            mega::MegaNode* memberNode = members->get(m);
+            if (!memberNode->isFolder()) continue;
+
+            QString memberName = QString::fromUtf8(memberNode->getName());
+            if (memberName == "topstriker") {
+                qDebug() << "Skipping topstriker (already organized)";
+                continue;
+            }
+
+            std::cout << "\n=== Processing: " << memberName.toStdString() << " ===" << std::endl;
+
+            std::unique_ptr<mega::MegaNodeList> children(m_api->getChildren(memberNode));
+            if (!children) continue;
+
+            // Group FF files by call name
+            // Key: base call name (e.g., "03-31-2026 FF Hot Seats")
+            // Value: list of child nodes to move
+            QMap<QString, QList<mega::MegaNode*>> ffGroups;
+
+            for (int c = 0; c < children->size(); ++c) {
+                mega::MegaNode* child = children->get(c);
+                if (child->isFolder()) continue;  // Skip existing subfolders
+
+                QString name = QString::fromUtf8(child->getName());
+                if (!name.contains("FF Hot Seat") && !name.contains("FF Theory Call"))
+                    continue;
+
+                // Extract base call name: strip extension and " AI Summary" suffix
+                QString baseName = name;
+                // Remove extension
+                int lastDot = baseName.lastIndexOf('.');
+                if (lastDot > 0) baseName = baseName.left(lastDot);
+                // Remove " AI Summary" suffix
+                baseName.replace(" AI Summary", "");
+                // Remove any trailing whitespace
+                baseName = baseName.trimmed();
+
+                ffGroups[baseName].append(child);
+            }
+
+            // Create subfolders and move files
+            for (auto it = ffGroups.constBegin(); it != ffGroups.constEnd(); ++it) {
+                QString folderName = it.key();
+                const QList<mega::MegaNode*>& files = it.value();
+
+                std::cout << "  Creating subfolder: " << folderName.toStdString()
+                          << " (" << files.size() << " files)" << std::endl;
+
+                // Create subfolder
+                m_listener->reset();
+                m_api->createFolder(folderName.toUtf8().constData(), memberNode, m_listener);
+                if (!m_listener->wait(60000) || !m_listener->success) {
+                    // Folder might already exist
+                    std::unique_ptr<mega::MegaNode> existing(
+                        m_api->getChildNode(memberNode, folderName.toUtf8().constData()));
+                    if (!existing) {
+                        qDebug() << "  Failed to create folder:" << folderName << m_listener->errorMsg;
+                        continue;
+                    }
+                }
+
+                // Get the newly created folder
+                std::unique_ptr<mega::MegaNode> subFolder(
+                    m_api->getChildNode(memberNode, folderName.toUtf8().constData()));
+                if (!subFolder) {
+                    qDebug() << "  Subfolder not found after creation:" << folderName;
+                    continue;
+                }
+
+                // Move each file into the subfolder
+                for (mega::MegaNode* file : files) {
+                    QString fileName = QString::fromUtf8(file->getName());
+                    m_listener->reset();
+                    m_api->moveNode(file, subFolder.get(), m_listener);
+                    if (m_listener->wait(60000) && m_listener->success) {
+                        std::cout << "    Moved: " << fileName.toStdString() << std::endl;
+                        totalMoved++;
+                    } else {
+                        std::cerr << "    FAILED: " << fileName.toStdString()
+                                  << " - " << m_listener->errorMsg.toStdString() << std::endl;
+                    }
+                }
+            }
+        }
+
+        return totalMoved;
     }
 
     bool removeNode(const QString& path) {
@@ -1284,9 +1414,20 @@ int main(int argc, char *argv[]) {
         return ops.removeNode(path) ? 0 : 1;
 
     } else if (cmd == "mv" && args.size() >= 3) {
+        QString source = args[1];
+        QString dest = args[2];
+        return ops.moveNode(source, dest) ? 0 : 1;
+
+    } else if (cmd == "rename" && args.size() >= 3) {
         QString path = args[1];
         QString newName = args[2];
         return ops.renameNode(path, newName) ? 0 : 1;
+
+    } else if (cmd == "organize-ff" && args.size() >= 2) {
+        QString basePath = args[1];
+        int moved = ops.organizeFF(basePath);
+        std::cout << "\nTotal files moved: " << moved << std::endl;
+        return moved >= 0 ? 0 : 1;
 
     } else if (cmd == "bulk-rename" && args.size() >= 3) {
         // bulk-rename /folder/path "string_to_remove"

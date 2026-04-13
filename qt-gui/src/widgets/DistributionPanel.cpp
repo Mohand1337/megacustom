@@ -5,6 +5,7 @@
 #include "utils/CopyHelper.h"
 #include "utils/CloudPathValidator.h"
 #include "utils/ContentRouter.h"
+#include "dialogs/SmartRouteReviewDialog.h"
 #include "controllers/FileController.h"
 #include "controllers/DistributionController.h"
 #include "features/CloudCopier.h"
@@ -1155,6 +1156,15 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
             qDebug() << "ContentRouter:" << info.memberId
                      << "→" << info.routes.size() << "routes"
                      << (info.smartRouted ? "(smart)" : "(empty)");
+        }
+    }
+
+    // Show Smart Route Review Dialog if any routes were detected
+    if (smartRouted > 0) {
+        SmartRouteReviewDialog reviewDialog(this);
+        reviewDialog.setRoutes(m_wmFolders, m_registry);
+        if (reviewDialog.exec() == QDialog::Accepted) {
+            m_wmFolders = reviewDialog.getReviewedFolders();
         }
     }
 

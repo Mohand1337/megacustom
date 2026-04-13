@@ -128,6 +128,7 @@ set(SOURCES
     src/dialogs/RemoteFolderBrowserDialog.cpp
     src/dialogs/BulkPathEditorDialog.cpp
     src/dialogs/BulkNameEditorDialog.cpp
+    src/dialogs/SmartRouteReviewDialog.cpp
     src/dialogs/AccountManagerDialog.cpp
     src/dialogs/WordPressConfigDialog.cpp
     src/dialogs/WordPressSyncPreviewDialog.cpp
@@ -217,6 +218,7 @@ set(HEADERS
     src/dialogs/RemoteFolderBrowserDialog.h
     src/dialogs/BulkPathEditorDialog.h
     src/dialogs/BulkNameEditorDialog.h
+    src/dialogs/SmartRouteReviewDialog.h
     src/dialogs/AccountManagerDialog.h
     src/dialogs/WordPressConfigDialog.h
     src/dialogs/WordPressSyncPreviewDialog.h
