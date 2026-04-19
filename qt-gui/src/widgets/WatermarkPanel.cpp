@@ -330,7 +330,7 @@ void WatermarkWorker::process() {
             // Global mode: text already expanded in config
             std::string outputPath = "";
             if (!outputDir.empty()) {
-                outputPath = watermarker.generateOutputPath(inputStd, outputDir);
+                outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
             }
             result = watermarker.watermarkFile(inputStd, outputPath);
         }

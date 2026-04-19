@@ -926,7 +926,8 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
 }
 
 std::string Watermarker::generateOutputPath(const std::string& inputPath,
-                                             const std::string& outputDir) const {
+                                             const std::string& outputDir,
+                                             const std::string& rootDir) const {
     namespace fs = std::filesystem;
 
     fs::path inputFs(inputPath);
@@ -942,6 +943,19 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
     // Build output path
     fs::path sourceDir = inputFs.parent_path();
     fs::path outDir = outputDir.empty() ? sourceDir : fs::path(outputDir);
+
+    // Preserve subfolder structure when rootDir is provided
+    if (!rootDir.empty() && !outputDir.empty()) {
+        fs::path rootFs(rootDir);
+        fs::path inputParent = inputFs.parent_path();
+        if (inputParent != rootFs) {
+            fs::path relativeSub = inputParent.lexically_relative(rootFs);
+            if (!relativeSub.empty() && relativeSub.string().substr(0, 2) != "..") {
+                outDir = outDir / relativeSub;
+                fs::create_directories(outDir);
+            }
+        }
+    }
 
     // Only add suffix when output goes to the same directory as the source
     // (to avoid overwriting the original). When a different output directory

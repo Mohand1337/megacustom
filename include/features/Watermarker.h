@@ -240,7 +240,8 @@ public:
      * Generate output path from input path
      */
     std::string generateOutputPath(const std::string& inputPath,
-                                   const std::string& outputDir = "") const;
+                                   const std::string& outputDir = "",
+                                   const std::string& rootDir = "") const;
 
     /**
      * Generate output path for per-member watermarking.
