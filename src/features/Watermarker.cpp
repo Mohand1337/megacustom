@@ -1109,9 +1109,23 @@ WatermarkResult Watermarker::watermarkFile(const std::string& inputPath,
     } else if (isAudioFile(inputPath)) {
         return watermarkAudio(inputPath, outputPath);
     } else {
+        // Passthrough: copy unsupported files as-is (e.g., .vtt, .docx, .txt)
         WatermarkResult result;
         result.inputFile = inputPath;
-        result.error = "Unsupported file type. Supported: video, PDF, and audio (mp3, flac, etc.)";
+        namespace fs = std::filesystem;
+        std::string outPath = outputPath.empty() ? generateOutputPath(inputPath, "") : outputPath;
+        try {
+            fs::create_directories(fs::path(outPath).parent_path());
+            fs::copy_file(inputPath, outPath, fs::copy_options::overwrite_existing);
+            result.success = true;
+            result.outputFile = outPath;
+            LogManager::instance().logWatermark("passthrough_copy",
+                "Copied passthrough file: " + outPath, inputPath);
+        } catch (const fs::filesystem_error& e) {
+            result.error = std::string("Failed to copy passthrough file: ") + e.what();
+            LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+                "passthrough_failed", result.error, inputPath);
+        }
         return result;
     }
 }

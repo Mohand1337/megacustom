@@ -1627,20 +1627,52 @@ void DistributionPanel::onPreviewDistribution() {
             tableRow += 1 + info.routes.size();
         } else {
             // Legacy mode — use tableRow (not i) to read from the table
-            QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
-            QString dest = destItem ? destItem->text().trimmed() : "";
-            if (dest.isEmpty()) dest = getDestinationPath(info.memberId);
-
             QString source = info.fullPath;
+            bool autoMonth = m_monthCombo->currentText().startsWith("Auto");
+
             if (source.isEmpty()) {
+                QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+                QString dest = destItem ? destItem->text().trimmed() : "";
+                if (dest.isEmpty()) dest = getDestinationPath(info.memberId);
                 preview.append(QString("[NO SOURCE] %1 -> %2")
                     .arg(info.memberId.isEmpty() ? "(unmatched)" : info.memberId)
                     .arg(dest));
                 skippedCount++;
+            } else if (autoMonth && m_megaApi) {
+                // Auto-month: scan children and show per-month breakdown
+                std::unique_ptr<mega::MegaNode> srcNode(
+                    m_megaApi->getNodeByPath(source.toUtf8().constData()));
+                if (srcNode) {
+                    std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(srcNode.get()));
+                    if (children && children->size() > 0) {
+                        QMap<QString, int> monthCounts;
+                        for (int c = 0; c < children->size(); ++c) {
+                            mega::MegaNode* child = children->get(c);
+                            if (!child) continue;
+                            QString name = QString::fromUtf8(child->getName());
+                            QString month = extractMonthFromFilename(name);
+                            if (month.isEmpty()) month = "Unknown";
+                            monthCounts[month]++;
+                        }
+                        QString arrow = QString::fromUtf8(" \xe2\x86\x92 ");
+                        preview.append(QString("--- %1 ---").arg(info.memberId));
+                        for (auto it = monthCounts.constBegin(); it != monthCounts.constEnd(); ++it) {
+                            QString dest = getDestinationPath(info.memberId, it.key());
+                            preview.append(QString("  %1 (%2 files)%3%4")
+                                .arg(it.key()).arg(it.value()).arg(arrow).arg(dest));
+                        }
+                    }
+                }
             } else if (copyFolder) {
+                QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+                QString dest = destItem ? destItem->text().trimmed() : "";
+                if (dest.isEmpty()) dest = getDestinationPath(info.memberId);
                 preview.append(QString("%1 -> %2%3")
                     .arg(source).arg(dest).arg(info.folderName));
             } else {
+                QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+                QString dest = destItem ? destItem->text().trimmed() : "";
+                if (dest.isEmpty()) dest = getDestinationPath(info.memberId);
                 preview.append(QString("%1/* -> %2").arg(source).arg(dest));
             }
             selectedCount++;

@@ -172,8 +172,14 @@ void WatermarkWorker::process() {
                 } else if (Watermarker::isAudioFile(inputStd)) {
                     result = watermarker.watermarkAudio(inputStd, outPath);
                 } else {
-                    result.success = false;
-                    result.error = "Unsupported file type";
+                    // Passthrough: copy file as-is (e.g., .vtt, .docx, .txt)
+                    if (QFile::copy(inputPath, QString::fromStdString(outPath))) {
+                        result.success = true;
+                        result.outputFile = outPath;
+                    } else {
+                        result.success = false;
+                        result.error = "Failed to copy passthrough file";
+                    }
                 }
 
                 // Record metrics (Smart Engine learning)
@@ -311,8 +317,14 @@ void WatermarkWorker::process() {
             } else if (Watermarker::isAudioFile(inputStd)) {
                 result = watermarker.watermarkAudio(inputStd, outPath);
             } else {
-                result.success = false;
-                result.error = "Unsupported file type";
+                // Passthrough: copy file as-is (e.g., .vtt, .docx, .txt)
+                if (QFile::copy(inputPath, QString::fromStdString(outPath))) {
+                    result.success = true;
+                    result.outputFile = outPath;
+                } else {
+                    result.success = false;
+                    result.error = "Failed to copy passthrough file";
+                }
             }
         } else {
             // Global mode: text already expanded in config
@@ -1084,13 +1096,17 @@ void WatermarkPanel::onAddFiles() {
         info.status = "pending";
 
         QString ext = fi.suffix().toLower();
+        static const QSet<QString> videoExts = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"};
+        static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
+
         if (ext == "pdf") {
             info.fileType = "pdf";
-        } else if (ext == "mp3" || ext == "flac" || ext == "wav" || ext == "aac" ||
-                   ext == "ogg" || ext == "m4a" || ext == "wma" || ext == "opus") {
+        } else if (audioExts.contains(ext)) {
             info.fileType = "audio";
-        } else {
+        } else if (videoExts.contains(ext)) {
             info.fileType = "video";
+        } else {
+            info.fileType = "passthrough"; // .vtt, .docx, .txt, etc. — copy as-is
         }
 
         m_files.append(info);
@@ -1108,12 +1124,8 @@ void WatermarkPanel::onAddFolder() {
     // Store root directory for subfolder structure preservation
     m_sourceRootDir = dir;
 
-    QStringList filters = {
-        "*.mp4", "*.mkv", "*.avi", "*.mov", "*.wmv", "*.flv", "*.webm",
-        "*.pdf",
-        "*.mp3", "*.flac", "*.wav", "*.aac", "*.ogg", "*.m4a", "*.wma", "*.opus"
-    };
-    QDirIterator it(dir, filters, QDir::Files, QDirIterator::Subdirectories);
+    // Scan ALL files — watermarkable ones get processed, others get copied as-is
+    QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
 
     while (it.hasNext()) {
         QString file = it.next();
@@ -1140,13 +1152,17 @@ void WatermarkPanel::onAddFolder() {
         info.status = "pending";
 
         QString ext = fi.suffix().toLower();
+        static const QSet<QString> videoExts = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"};
+        static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
+
         if (ext == "pdf") {
             info.fileType = "pdf";
-        } else if (ext == "mp3" || ext == "flac" || ext == "wav" || ext == "aac" ||
-                   ext == "ogg" || ext == "m4a" || ext == "wma" || ext == "opus") {
+        } else if (audioExts.contains(ext)) {
             info.fileType = "audio";
-        } else {
+        } else if (videoExts.contains(ext)) {
             info.fileType = "video";
+        } else {
+            info.fileType = "passthrough"; // .vtt, .docx, .txt, etc. — copy as-is
         }
 
         m_files.append(info);
