@@ -123,7 +123,7 @@ private:
     void populateTable();
     void updateEmptyState();
     void populateBroadcastTable(const QString& sourcePath);
-    QString getDestinationPath(const QString& memberId);
+    QString getDestinationPath(const QString& memberId, const QString& month = QString());
     void executeBulkRename(const QString& folderPath);
 
     // UI Components - Configuration

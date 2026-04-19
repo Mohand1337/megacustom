@@ -102,6 +102,7 @@ set(SOURCES
     src/widgets/DistributionPanel.cpp
     src/widgets/DownloaderPanel.cpp
     src/widgets/WatermarkPanel.cpp
+    src/widgets/ContentManagerPanel.cpp
     src/widgets/ElidedLabel.cpp
     src/widgets/BannerWidget.cpp
     src/widgets/CircularProgressBar.cpp
@@ -191,6 +192,7 @@ set(HEADERS
     src/widgets/DistributionPanel.h
     src/widgets/DownloaderPanel.h
     src/widgets/WatermarkPanel.h
+    src/widgets/ContentManagerPanel.h
     src/widgets/ElidedLabel.h
     src/widgets/BannerWidget.h
     src/widgets/CircularProgressBar.h

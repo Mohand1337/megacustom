@@ -552,10 +552,11 @@ void DistributionPanel::setupUI() {
     templateBtnLayout->setSpacing(4);
 
     m_monthCombo = new QComboBox();
+    m_monthCombo->addItem("Auto (from filename)");
     m_monthCombo->addItems({"January", "February", "March", "April", "May", "June",
                            "July", "August", "September", "October", "November", "December"});
-    m_monthCombo->setCurrentIndex(QDate::currentDate().month() - 1);
-    m_monthCombo->setToolTip("Month for {month} variable");
+    m_monthCombo->setCurrentIndex(QDate::currentDate().month()); // +1 offset for Auto item
+    m_monthCombo->setToolTip("Month for {month} variable. 'Auto' extracts month from each file's date prefix.");
     templateBtnLayout->addWidget(m_monthCombo);
 
     m_variableHelpBtn = new QPushButton("?");
@@ -1478,6 +1479,10 @@ void DistributionPanel::populateTable() {
 
             // COL_DESTINATION
             QString dest = info.matched ? getDestinationPath(info.memberId) : "";
+            if (m_monthCombo->currentText().startsWith("Auto") && !dest.isEmpty()) {
+                // Show that month will be auto-detected per file
+                dest.replace(QDate::currentDate().toString("MMMM"), "<auto>");
+            }
             QTableWidgetItem* destItem = new QTableWidgetItem(dest);
             destItem->setToolTip(dest);
             m_memberTable->setItem(row, COL_DESTINATION, destItem);
@@ -1502,7 +1507,17 @@ void DistributionPanel::updateEmptyState() {
     m_memberTable->setVisible(!empty);
 }
 
-QString DistributionPanel::getDestinationPath(const QString& memberId) {
+// Extract month name from filename date prefix (e.g., "03-25-2026..." → "March")
+static QString extractMonthFromFilename(const QString& filename) {
+    static QRegularExpression dateRe("^(\\d{2})-\\d{2}-\\d{4}");
+    auto match = dateRe.match(filename);
+    if (!match.hasMatch()) return QString();
+    int monthNum = match.captured(1).toInt();
+    if (monthNum < 1 || monthNum > 12) return QString();
+    return QDate(2000, monthNum, 1).toString("MMMM");
+}
+
+QString DistributionPanel::getDestinationPath(const QString& memberId, const QString& month) {
     QString templatePath = m_destTemplateEdit->text();
 
     // Try to find member in registry for full info
@@ -1521,8 +1536,24 @@ QString DistributionPanel::getDestinationPath(const QString& memberId) {
     // Use TemplateExpander for full variable support
     auto result = TemplateExpander::expandForMember(templatePath, memberInfo);
 
+    // Determine month to use
+    QString monthToUse = month;
+    if (monthToUse.isEmpty()) {
+        monthToUse = m_monthCombo->currentText();
+    }
+    if (monthToUse.startsWith("Auto")) {
+        monthToUse = QDate::currentDate().toString("MMMM"); // Fallback to current month
+    }
+
     if (result.isValid) {
-        return result.expandedPath;
+        // Override month in expanded path
+        QString expanded = result.expandedPath;
+        // TemplateExpander uses system month — replace with our month
+        QString sysMonth = QDate::currentDate().toString("MMMM");
+        if (sysMonth != monthToUse) {
+            expanded.replace(sysMonth, monthToUse);
+        }
+        return expanded;
     }
 
     // Fallback: simple replacement if expansion fails
@@ -1530,7 +1561,7 @@ QString DistributionPanel::getDestinationPath(const QString& memberId) {
     dest.replace("{member}", memberInfo.distributionFolder.isEmpty() ? memberId : memberInfo.distributionFolder);
     dest.replace("{member_id}", memberId);
     dest.replace("{member_name}", memberInfo.displayName.isEmpty() ? memberId : memberInfo.displayName);
-    dest.replace("{month}", m_monthCombo->currentText());
+    dest.replace("{month}", monthToUse);
     dest.replace("{year}", QString::number(QDate::currentDate().year()));
     return dest;
 }
@@ -1746,29 +1777,65 @@ void DistributionPanel::onStartDistribution() {
                 continue;
             }
 
-            FolderCopyTask task;
-            task.index = tableRow;
-            task.memberId = info.memberId;
-            task.copyFolderItself = copyFolderItself;
-
-            task.sourcePath = info.fullPath;
-            if (task.sourcePath.isEmpty()) {
+            if (info.fullPath.isEmpty()) {
                 skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
                 tableRow++;
                 continue;
             }
 
-            QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
-            QString cellDest = destItem ? destItem->text().trimmed() : "";
-            task.destPath = cellDest.isEmpty() ? getDestinationPath(info.memberId) : cellDest;
+            bool autoMonth = m_monthCombo->currentText().startsWith("Auto");
 
-            if (task.destPath.isEmpty()) {
-                skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
-                tableRow++;
-                continue;
+            if (autoMonth && m_megaApi) {
+                // Auto-month: scan source children and split by month
+                std::unique_ptr<mega::MegaNode> srcNode(
+                    m_megaApi->getNodeByPath(info.fullPath.toUtf8().constData()));
+                if (srcNode) {
+                    std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(srcNode.get()));
+                    if (children && children->size() > 0) {
+                        QMap<QString, QStringList> monthFiles;
+                        for (int c = 0; c < children->size(); ++c) {
+                            mega::MegaNode* child = children->get(c);
+                            if (!child) continue;
+                            QString name = QString::fromUtf8(child->getName());
+                            QString month = extractMonthFromFilename(name);
+                            if (month.isEmpty()) month = "Unknown";
+                            monthFiles[month].append(info.fullPath + "/" + name);
+                        }
+
+                        for (auto it = monthFiles.constBegin(); it != monthFiles.constEnd(); ++it) {
+                            FolderCopyTask task;
+                            task.index = tableRow;
+                            task.memberId = info.memberId;
+                            task.sourcePath = info.fullPath;
+                            task.isSmartRouteChild = true;
+                            task.individualFiles = it.value();
+                            task.contentTypeLabel = it.key();
+                            task.destPath = getDestinationPath(info.memberId, it.key());
+                            task.copyFolderItself = false;
+                            tasks.append(task);
+                        }
+                    }
+                }
+            } else {
+                // Standard: single destination for entire folder
+                FolderCopyTask task;
+                task.index = tableRow;
+                task.memberId = info.memberId;
+                task.copyFolderItself = copyFolderItself;
+                task.sourcePath = info.fullPath;
+
+                QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+                QString cellDest = destItem ? destItem->text().trimmed() : "";
+                task.destPath = cellDest.isEmpty() ? getDestinationPath(info.memberId) : cellDest;
+
+                if (task.destPath.isEmpty()) {
+                    skippedNoSource.append(info.memberId.isEmpty() ? QString("Row %1").arg(i + 1) : info.memberId);
+                    tableRow++;
+                    continue;
+                }
+
+                tasks.append(task);
             }
-
-            tasks.append(task);
             tableRow++;
         }
     }

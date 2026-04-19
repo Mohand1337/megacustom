@@ -40,6 +40,7 @@ class MemberRegistryPanel;
 class DistributionPanel;
 class DownloaderPanel;
 class WatermarkPanel;
+class ContentManagerPanel;
 class LogViewerPanel;
 class MegaSidebar;
 class TopToolbar;
@@ -384,6 +385,7 @@ private:
     DistributionPanel* m_distributionPanel;
     DownloaderPanel* m_downloaderPanel;
     WatermarkPanel* m_watermarkPanel;
+    ContentManagerPanel* m_contentManagerPanel;
     LogViewerPanel* m_logViewerPanel;
     SettingsPanel* m_settingsPanel;
 

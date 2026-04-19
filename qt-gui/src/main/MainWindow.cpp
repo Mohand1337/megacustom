@@ -11,6 +11,7 @@
 #include "widgets/DistributionPanel.h"
 #include "widgets/DownloaderPanel.h"
 #include "widgets/WatermarkPanel.h"
+#include "widgets/ContentManagerPanel.h"
 #include "widgets/LogViewerPanel.h"
 #include "widgets/MegaSidebar.h"
 #include "widgets/TopToolbar.h"
@@ -371,6 +372,13 @@ void MainWindow::setCloudCopierController(CloudCopierController* controller)
         m_watermarkPanel->setMegaApi(megaManager.getMegaApi());
         m_watermarkPanel->setMetricsStore(&MegaCustom::MetricsStore::instance());
     }
+
+    // Content Manager
+    if (m_contentManagerPanel) {
+        MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
+        m_contentManagerPanel->setMegaApi(megaManager.getMegaApi());
+        m_contentManagerPanel->setMemberRegistry(MegaCustom::MemberRegistry::instance());
+    }
 }
 
 void MainWindow::setDistributionController(DistributionController* controller)
@@ -663,7 +671,11 @@ void MainWindow::setupUI()
     m_contentStack->addWidget(m_memberRegistryPanel); // 5: MemberRegistry
     m_contentStack->addWidget(m_distributionPanel);   // 6: Distribution
     m_contentStack->addWidget(m_watermarkPanel);      // 7: Watermark
-    m_contentStack->addWidget(m_logViewerPanel);     // 8: LogViewer
+
+    m_contentManagerPanel = new ContentManagerPanel(this);
+    m_contentStack->addWidget(m_contentManagerPanel); // 8: ContentManager
+
+    m_contentStack->addWidget(m_logViewerPanel);     // 9: LogViewer
     m_settingsPanel = new SettingsPanel(this);
     m_settingsPanel->loadSettings();
     connect(m_settingsPanel, &SettingsPanel::settingsSaved, this, &MainWindow::applySettings);
@@ -1383,8 +1395,8 @@ void MainWindow::onNavigationItemClicked(int item)
 {
     // Map NavigationItem enum to content stack index
     // CloudDrive=0, FolderMapper=1, MultiUploader=2, CloudCopier=3, SmartSync=4,
-    // MemberRegistry=5, Distribution=6, Watermark=7, LogViewer=8, Settings=9,
-    // Transfers=10, Downloader=11
+    // MemberRegistry=5, Distribution=6, Watermark=7, ContentManager=8,
+    // LogViewer=9, Settings=10, Transfers=11, Downloader=12
     int stackIndex = item;
 
     // Switch content
@@ -1403,7 +1415,7 @@ void MainWindow::onNavigationItemClicked(int item)
     static const QStringList panelNames = {
         "Cloud Drive", "Folder Mapper", "Multi Uploader", "Cloud Copier",
         "Smart Sync", "Members", "Distribution", "Watermark",
-        "Activity Log", "Settings", "Transfers", "Downloader"
+        "Content Manager", "Activity Log", "Settings", "Transfers", "Downloader"
     };
     QString title = "MegaCustom";
     if (item >= 0 && item < panelNames.size())
@@ -1831,6 +1843,9 @@ void MainWindow::onAccountSwitched(const QString& accountId)
     }
     if (m_distributionPanel && activeApi) {
         m_distributionPanel->setMegaApi(activeApi);
+    }
+    if (m_contentManagerPanel && activeApi) {
+        m_contentManagerPanel->setMegaApi(activeApi);
     }
 
     // Clear stale search index from previous account

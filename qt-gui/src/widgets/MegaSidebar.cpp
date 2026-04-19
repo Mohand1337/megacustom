@@ -229,6 +229,14 @@ void MegaSidebar::setupToolsSection()
     connect(m_watermarkBtn, &QPushButton::clicked, this, &MegaSidebar::onWatermarkClicked);
     toolsLayout->addWidget(m_watermarkBtn);
 
+    m_contentManagerBtn = createNavButton("Content Manager", ":/icons/clipboard.svg");
+    m_contentManagerBtn->setObjectName("ContentManagerButton");
+    m_contentManagerBtn->setToolTip("Audit member content and organize files");
+    connect(m_contentManagerBtn, &QPushButton::clicked, this, [this]() {
+        emit navigationItemClicked(NavigationItem::ContentManager);
+    });
+    toolsLayout->addWidget(m_contentManagerBtn);
+
     m_logViewerBtn = createNavButton("Activity Log", ":/icons/file-text.svg");
     m_logViewerBtn->setObjectName("LogViewerButton");
     m_logViewerBtn->setToolTip("View activity logs and distribution history");
@@ -311,6 +319,7 @@ void MegaSidebar::updateButtonStyles()
     if (m_distributionBtn) m_distributionBtn->setChecked(false);
     if (m_downloaderBtn) m_downloaderBtn->setChecked(false);
     if (m_watermarkBtn) m_watermarkBtn->setChecked(false);
+    if (m_contentManagerBtn) m_contentManagerBtn->setChecked(false);
     if (m_logViewerBtn) m_logViewerBtn->setChecked(false);
     if (m_transfersBtn) m_transfersBtn->setChecked(false);
     if (m_settingsBtn) m_settingsBtn->setChecked(false);
@@ -343,6 +352,9 @@ void MegaSidebar::updateButtonStyles()
         break;
     case NavigationItem::Watermark:
         m_watermarkBtn->setChecked(true);
+        break;
+    case NavigationItem::ContentManager:
+        if (m_contentManagerBtn) m_contentManagerBtn->setChecked(true);
         break;
     case NavigationItem::LogViewer:
         if (m_logViewerBtn) m_logViewerBtn->setChecked(true);

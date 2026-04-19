@@ -37,6 +37,7 @@ public:
         MemberRegistry,
         Distribution,
         Watermark,
+        ContentManager,
         LogViewer,
         Settings,
         Transfers,
@@ -123,6 +124,7 @@ private:
     QPushButton* m_distributionBtn;
     QPushButton* m_downloaderBtn;
     QPushButton* m_watermarkBtn;
+    QPushButton* m_contentManagerBtn;
     QPushButton* m_logViewerBtn;
 
     // Bottom section
