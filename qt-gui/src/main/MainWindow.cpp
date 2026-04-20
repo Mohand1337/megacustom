@@ -536,6 +536,17 @@ void MainWindow::showInfo(const QString& title, const QString& message)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    static int closeAttempts = 0;
+    closeAttempts++;
+
+    // Force close on second attempt — don't let the app get stuck
+    if (closeAttempts >= 2) {
+        qDebug() << "Force closing after" << closeAttempts << "attempts";
+        saveSettings();
+        event->accept();
+        return;
+    }
+
     if (checkUnsavedChanges()) {
         saveSettings();
         event->accept();

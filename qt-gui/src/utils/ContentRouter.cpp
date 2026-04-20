@@ -230,24 +230,65 @@ QList<ContentRoute> ContentRouter::classifyChildren(
         }
     }
 
-    // Group root-level files into a single NHB_ROOT_FILES route
+    // Group root-level files — by month if Auto mode, else single route
     if (!rootFiles.isEmpty()) {
-        ContentRoute fileRoute;
-        fileRoute.sourcePath = memberFolderPath;  // Parent folder path
-        fileRoute.childName = QString("%1 root files").arg(rootFiles.size());
-        fileRoute.isFolder = false;
-        fileRoute.contentType = ContentType::NHB_ROOT_FILES;
-        fileRoute.contentTypeLabel = contentTypeLabel(ContentType::NHB_ROOT_FILES);
-        fileRoute.destinationPath = resolveDestination(ContentType::NHB_ROOT_FILES, member, month, fallbackDest);
-        fileRoute.memberId = member.id;
-        fileRoute.selected = true;
-        fileRoute.filePaths = rootFiles;
+        bool autoMonth = month.startsWith("Auto");
 
-        qDebug() << "ContentRouter: Grouped" << rootFiles.size()
-                 << "root files → NHB Files (" << rootFileNames.join(", ").left(100) << "...)";
+        if (autoMonth) {
+            // Extract month from each file's date prefix and split accordingly
+            static QRegularExpression dateRe("^(\\d{2})-\\d{2}-\\d{4}");
+            QMap<QString, QStringList> filesByMonth;
 
-        // Insert file group at the beginning for natural display order
-        routes.prepend(fileRoute);
+            for (int idx = 0; idx < rootFiles.size(); ++idx) {
+                QString monthKey = "Unknown";
+                auto m = dateRe.match(rootFileNames[idx]);
+                if (m.hasMatch()) {
+                    int n = m.captured(1).toInt();
+                    if (n >= 1 && n <= 12) {
+                        monthKey = QDate(2000, n, 1).toString("MMMM");
+                    }
+                }
+                filesByMonth[monthKey].append(rootFiles[idx]);
+            }
+
+            // Create one route per month
+            for (auto it = filesByMonth.constBegin(); it != filesByMonth.constEnd(); ++it) {
+                ContentRoute fileRoute;
+                fileRoute.sourcePath = memberFolderPath;
+                fileRoute.childName = QString("%1 files (%2)").arg(it.value().size()).arg(it.key());
+                fileRoute.isFolder = false;
+                fileRoute.contentType = ContentType::NHB_ROOT_FILES;
+                fileRoute.contentTypeLabel = QString("NHB Files \xe2\x80\x94 %1").arg(it.key());
+                fileRoute.destinationPath = resolveDestination(
+                    ContentType::NHB_ROOT_FILES, member, it.key(), fallbackDest);
+                fileRoute.memberId = member.id;
+                fileRoute.selected = true;
+                fileRoute.filePaths = it.value();
+
+                qDebug() << "ContentRouter: Grouped" << it.value().size()
+                         << "NHB files for" << it.key() << "→" << fileRoute.destinationPath;
+
+                routes.prepend(fileRoute);
+            }
+        } else {
+            // Single route with the specified month
+            ContentRoute fileRoute;
+            fileRoute.sourcePath = memberFolderPath;
+            fileRoute.childName = QString("%1 root files").arg(rootFiles.size());
+            fileRoute.isFolder = false;
+            fileRoute.contentType = ContentType::NHB_ROOT_FILES;
+            fileRoute.contentTypeLabel = contentTypeLabel(ContentType::NHB_ROOT_FILES);
+            fileRoute.destinationPath = resolveDestination(
+                ContentType::NHB_ROOT_FILES, member, month, fallbackDest);
+            fileRoute.memberId = member.id;
+            fileRoute.selected = true;
+            fileRoute.filePaths = rootFiles;
+
+            qDebug() << "ContentRouter: Grouped" << rootFiles.size()
+                     << "root files → NHB Files (" << rootFileNames.join(", ").left(100) << "...)";
+
+            routes.prepend(fileRoute);
+        }
     }
 
     return routes;

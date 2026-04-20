@@ -5,7 +5,15 @@
 #include "utils/CopyHelper.h"
 #include "utils/CloudPathValidator.h"
 #include "utils/ContentRouter.h"
+#include "utils/DpiScaler.h"
+#include "widgets/ButtonFactory.h"
+#include "widgets/SwitchButton.h"
 #include "dialogs/SmartRouteReviewDialog.h"
+#include "core/LogManager.h"
+#include <QMenu>
+#include <QScreen>
+#include <QGuiApplication>
+#include <QDialog>
 #include "controllers/FileController.h"
 #include "controllers/DistributionController.h"
 #include "features/CloudCopier.h"
@@ -102,6 +110,14 @@ public slots:
             }
 
             const FolderCopyTask& task = m_tasks[i];
+            QString opMode = m_moveMode ? "MOVE" : "COPY";
+            QString detail = QString("%1 %2 -> %3 [%4] files:%5")
+                .arg(opMode).arg(task.sourcePath).arg(task.destPath)
+                .arg(task.copyFolderItself ? "folder" : "contents")
+                .arg(task.individualFiles.size());
+            qDebug() << "Worker: Processing task" << i << ":" << detail;
+            LogManager::instance().logDistribution("task_start", detail.toStdString(),
+                "", task.memberId.toStdString());
             emit taskStarted(task.index, task.sourcePath, task.destPath);
             emit progress(i + 1, m_tasks.size(), task.memberId);
 
@@ -150,13 +166,23 @@ public slots:
 
             if (taskSuccess) {
                 success++;
+                qDebug() << "Worker: Task" << i << "SUCCESS";
+                LogManager::instance().logDistribution("task_success",
+                    (task.memberId + " <- " + task.sourcePath + " -> " + task.destPath).toStdString(),
+                    "", task.memberId.toStdString());
             } else {
                 failed++;
+                qDebug() << "Worker: Task" << i << "FAILED:" << errorMsg;
+                LogManager::instance().error(LogCategory::Distribution, "task_failed",
+                    (task.memberId + " | " + task.sourcePath + " -> " + task.destPath + " | " + errorMsg).toStdString());
             }
 
             emit taskCompleted(task.index, taskSuccess, errorMsg);
         }
 
+        qDebug() << "Worker: All tasks complete. Success:" << success << "Failed:" << failed;
+        LogManager::instance().logDistribution("all_completed",
+            ("Distribution complete. Success: " + std::to_string(success) + ", Failed: " + std::to_string(failed)));
         emit allCompleted(success, failed);
     }
 
@@ -281,6 +307,13 @@ void DistributionPanel::setFileController(FileController* controller) {
     if (m_fileController) {
         connect(m_fileController, &FileController::fileListReceived,
                 this, &DistributionPanel::onFileListReceived);
+        // Re-enable scan button on error (e.g., folder not found)
+        connect(m_fileController, &FileController::loadingFinished,
+                this, [this]() {
+            if (!m_scanBtn->isEnabled()) {
+                m_scanBtn->setEnabled(true);
+            }
+        });
     }
 }
 
@@ -391,32 +424,14 @@ void DistributionPanel::setDistributionController(DistributionController* contro
 }
 
 void DistributionPanel::setupUI() {
-    QVBoxLayout* outerLayout = new QVBoxLayout(this);
-    outerLayout->setContentsMargins(0, 0, 0, 0);
-    outerLayout->setSpacing(0);
+    auto& tm = ThemeManager::instance();
+    int s = DpiScaler::scale(1); // Base scale unit
 
-    QScrollArea* scrollArea = new QScrollArea();
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(s*12, s*8, s*12, s*8);
+    mainLayout->setSpacing(0);
 
-    QWidget* contentWidget = new QWidget();
-    QVBoxLayout* mainLayout = new QVBoxLayout(contentWidget);
-    mainLayout->setContentsMargins(20, 20, 20, 20);
-    mainLayout->setSpacing(16);
-
-    // Title
-    QLabel* titleLabel = new QLabel("Content Distribution");
-    titleLabel->setObjectName("PanelTitle");
-    mainLayout->addWidget(titleLabel);
-
-    QLabel* descLabel = new QLabel(
-        "Scan any MEGA folder, auto-detect member folders by ID/email/name, "
-        "and distribute content to member destinations.");
-    descLabel->setObjectName("PanelSubtitle");
-    descLabel->setWordWrap(true);
-    mainLayout->addWidget(descLabel);
-
-    // Upload mode banner (hidden by default, shown when receiving from Watermark)
+    // === Upload mode banner (hidden by default) ===
     m_uploadBanner = new QWidget();
     m_uploadBanner->setObjectName("UploadBanner");
     m_uploadBanner->setVisible(false);
@@ -432,7 +447,7 @@ void DistributionPanel::setupUI() {
         m_controllerActive = false;
         m_pendingMemberFileMap.clear();
         m_uploadBanner->setVisible(false);
-        m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+        m_modeIndicator->setText("Cloud Copy");
         m_modeIndicator->setProperty("mode", "");
         m_modeIndicator->style()->polish(m_modeIndicator);
         m_statusLabel->setText("Upload cancelled. Use Scan to detect folders.");
@@ -440,82 +455,95 @@ void DistributionPanel::setupUI() {
     bannerLayout->addWidget(m_uploadBannerCancelBtn);
     mainLayout->addWidget(m_uploadBanner);
 
-    // Mode indicator
-    m_modeIndicator = new QLabel("Mode: Cloud Copy (scan and distribute)");
-    m_modeIndicator->setObjectName("ModeIndicator");
-    mainLayout->addWidget(m_modeIndicator);
-
-    // Move mode warning banner (hidden by default)
+    // === Move warning banner (hidden) ===
     m_moveWarningBanner = new QLabel("WARNING: MOVE MODE \xe2\x80\x94 Source files will be DELETED after transfer");
     m_moveWarningBanner->setObjectName("WarningBanner");
     m_moveWarningBanner->setVisible(false);
     mainLayout->addWidget(m_moveWarningBanner);
 
-    // Source/Destination Config
-    QGroupBox* configGroup = new QGroupBox("Configuration");
-    QGridLayout* configLayout = new QGridLayout(configGroup);
-    configLayout->setSpacing(8);
+    // === Config Row 1: Source + Scan + Mode switches ===
+    QHBoxLayout* row1 = new QHBoxLayout();
+    row1->setSpacing(s*6);
 
-    configLayout->addWidget(new QLabel("Source Folder:"), 0, 0);
+    QLabel* srcLabel = new QLabel("Source:");
+    srcLabel->setStyleSheet(QString("font-weight: 600; color: %1;").arg(tm.textSecondary().name()));
+    row1->addWidget(srcLabel);
+
     m_wmPathEdit = new QLineEdit("/latest-wm");
-    m_wmPathEdit->setToolTip("MEGA cloud folder to scan for member subfolders. "
-                             "Default: /latest-wm/ — can be ANY folder.");
-    configLayout->addWidget(m_wmPathEdit, 0, 1);
+    m_wmPathEdit->setToolTip("MEGA cloud folder to scan for member subfolders");
+    row1->addWidget(m_wmPathEdit, 1);
 
     m_scanBtn = new QPushButton("Scan");
+    m_scanBtn->setObjectName("PanelPrimaryButton");
     m_scanBtn->setIcon(QIcon(":/icons/search.svg"));
-    m_scanBtn->setToolTip("Scan folder for subfolders and auto-detect members");
     connect(m_scanBtn, &QPushButton::clicked, this, &DistributionPanel::onScanWmFolder);
-    configLayout->addWidget(m_scanBtn, 0, 2);
+    row1->addWidget(m_scanBtn);
 
-    m_broadcastCheck = new QCheckBox("Broadcast — copy this folder to all selected members");
-    m_broadcastCheck->setToolTip("When checked, the source folder itself is copied to every member's destination.\n"
-                                 "When unchecked, subfolders are scanned and auto-matched to individual members.");
+    // Broadcast checkbox (compact)
+    m_broadcastCheck = new QCheckBox("Broadcast");
+    m_broadcastCheck->setToolTip("Copy source folder to all selected members");
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (checked) {
             m_smartRouteCheck->setChecked(false);
-            m_modeIndicator->setText(
-                QString("Mode: Broadcast (one source %1 all members)").arg(QChar(0x2192)));
+            m_modeIndicator->setText("Broadcast");
+            m_modeIndicator->setProperty("mode", "active");
         } else if (!m_smartRouteCheck->isChecked()) {
-            m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+            m_modeIndicator->setText("Cloud Copy");
+            m_modeIndicator->setProperty("mode", "");
         }
+        m_modeIndicator->style()->polish(m_modeIndicator);
     });
-    configLayout->addWidget(m_broadcastCheck, 1, 1);
+    row1->addWidget(m_broadcastCheck);
 
+    // Smart Route checkbox (compact)
     m_smartRouteCheck = new QCheckBox("Smart Route");
-    m_smartRouteCheck->setToolTip(
-        "Auto-detect content types (Hot Seats, Theory Calls, NHB files) within each\n"
-        "member folder and route to correct destinations using member archive paths.\n\n"
-        "Requires members to have archive paths configured in Member Registry.");
+    m_smartRouteCheck->setToolTip("Auto-detect content types and route to correct destinations");
     connect(m_smartRouteCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (checked) {
             m_broadcastCheck->setChecked(false);
-            m_modeIndicator->setText(
-                QString("Mode: Smart Route (auto-detect content %1 correct paths)").arg(QChar(0x2192)));
+            m_modeIndicator->setText("Smart Route");
+            m_modeIndicator->setProperty("mode", "warning");
         } else if (!m_broadcastCheck->isChecked()) {
-            m_modeIndicator->setText("Mode: Cloud Copy (scan and distribute)");
+            m_modeIndicator->setText("Cloud Copy");
+            m_modeIndicator->setProperty("mode", "");
         }
+        m_modeIndicator->style()->polish(m_modeIndicator);
     });
-    configLayout->addWidget(m_smartRouteCheck, 1, 2);
+    row1->addWidget(m_smartRouteCheck);
 
-    configLayout->addWidget(new QLabel("Quick Template:"), 2, 0);
+    // Mode badge (inline)
+    m_modeIndicator = new QLabel("Cloud Copy");
+    m_modeIndicator->setObjectName("ModeIndicator");
+    m_modeIndicator->setFixedHeight(s*24);
+    row1->addWidget(m_modeIndicator);
+
+    mainLayout->addLayout(row1);
+    mainLayout->addSpacing(s*4);
+
+    // === Config Row 2: Dest template + Month + Quick Template + Options gear ===
+    QHBoxLayout* row2 = new QHBoxLayout();
+    row2->setSpacing(s*6);
+
+    QLabel* destLabel = new QLabel("Dest:");
+    destLabel->setStyleSheet(QString("font-weight: 600; color: %1;").arg(tm.textSecondary().name()));
+    row2->addWidget(destLabel);
+
+    m_destTemplateEdit = new QLineEdit("{member}");
+    m_destTemplateEdit->setToolTip("Destination path template. Variables: {member}, {archive_root}, {nhb_calls}, {month}, etc.");
+    row2->addWidget(m_destTemplateEdit, 1);
+
+    // Quick template combo (compact)
     m_quickTemplateCombo = new QComboBox();
     m_quickTemplateCombo->addItem("Distribution Folder", "{member}");
     m_quickTemplateCombo->addItem("Hot Seats", "{archive_root}/{fast_forward}/{hot_seats}");
     m_quickTemplateCombo->addItem("Theory Calls", "{archive_root}/{fast_forward}/{theory_calls}");
     m_quickTemplateCombo->addItem("NHB Calls + Month", "{archive_root}/{nhb_calls}/{month}");
     m_quickTemplateCombo->addItem("Custom", "");
-    m_quickTemplateCombo->setToolTip("Quick preset for destination path template");
+    m_quickTemplateCombo->setFixedWidth(s*140);
+    m_quickTemplateCombo->setToolTip("Quick preset for destination template");
     connect(m_quickTemplateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &DistributionPanel::onQuickTemplateChanged);
-    configLayout->addWidget(m_quickTemplateCombo, 2, 1, 1, 2);
-
-    configLayout->addWidget(new QLabel("Dest Template:"), 3, 0);
-    m_destTemplateEdit = new QLineEdit("{member}");
-    m_destTemplateEdit->setToolTip("Destination path template. Variables: {member}, {member_id}, "
-                                   "{archive_root}, {nhb_calls}, {fast_forward}, {theory_calls}, "
-                                   "{hot_seats}, {year}, {month}, etc.");
-    configLayout->addWidget(m_destTemplateEdit, 3, 1);
+    row2->addWidget(m_quickTemplateCombo);
 
     // Real-time template validation
     connect(m_destTemplateEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
@@ -526,8 +554,6 @@ void DistributionPanel::setupUI() {
         m_destTemplateEdit->setToolTip(valid
             ? "Destination path template. Use {member}, {archive_root}, {hot_seats}, etc."
             : QString("Invalid template: %1").arg(error));
-
-        // Sync quick template combo — set to "Custom" if text doesn't match any preset
         bool foundPreset = false;
         for (int i = 0; i < m_quickTemplateCombo->count() - 1; ++i) {
             if (m_quickTemplateCombo->itemData(i).toString() == text) {
@@ -540,149 +566,76 @@ void DistributionPanel::setupUI() {
         }
         if (!foundPreset) {
             m_quickTemplateCombo->blockSignals(true);
-            m_quickTemplateCombo->setCurrentIndex(m_quickTemplateCombo->count() - 1); // Custom
+            m_quickTemplateCombo->setCurrentIndex(m_quickTemplateCombo->count() - 1);
             m_quickTemplateCombo->blockSignals(false);
         }
     });
 
-    // Template help, month, and button row
-    QWidget* templateBtnWidget = new QWidget();
-    QHBoxLayout* templateBtnLayout = new QHBoxLayout(templateBtnWidget);
-    templateBtnLayout->setContentsMargins(0, 0, 0, 0);
-    templateBtnLayout->setSpacing(4);
-
+    // Month combo
     m_monthCombo = new QComboBox();
     m_monthCombo->addItem("Auto (from filename)");
     m_monthCombo->addItems({"January", "February", "March", "April", "May", "June",
                            "July", "August", "September", "October", "November", "December"});
-    m_monthCombo->setCurrentIndex(QDate::currentDate().month()); // +1 offset for Auto item
-    m_monthCombo->setToolTip("Month for {month} variable. 'Auto' extracts month from each file's date prefix.");
-    templateBtnLayout->addWidget(m_monthCombo);
+    m_monthCombo->setCurrentIndex(QDate::currentDate().month());
+    m_monthCombo->setFixedWidth(s*120);
+    m_monthCombo->setToolTip("Month for {month} variable");
+    row2->addWidget(m_monthCombo);
 
-    m_variableHelpBtn = new QPushButton("?");
-    m_variableHelpBtn->setFixedSize(24, 24);
-    m_variableHelpBtn->setToolTip("Show available template variables");
-    connect(m_variableHelpBtn, &QPushButton::clicked, this, &DistributionPanel::onVariableHelpClicked);
-    templateBtnLayout->addWidget(m_variableHelpBtn);
+    // Options gear button — opens menu with all options + template management
+    QPushButton* optionsBtn = new QPushButton();
+    optionsBtn->setIcon(QIcon(":/icons/settings.svg"));
+    optionsBtn->setObjectName("PanelSecondaryButton");
+    optionsBtn->setToolTip("Distribution options & template management");
+    optionsBtn->setFixedSize(s*36, s*36);
+    connect(optionsBtn, &QPushButton::clicked, this, [this]() {
+        showDistributionSettingsDialog();
+    });
+    row2->addWidget(optionsBtn);
 
-    configLayout->addWidget(templateBtnWidget, 3, 2);
+    mainLayout->addLayout(row2);
+    mainLayout->addSpacing(s*6);
 
-    // Button row: Preview Paths + Generate Destinations
-    QHBoxLayout* previewRow = new QHBoxLayout();
-    m_previewPathsBtn = new QPushButton("Preview Paths");
-    m_previewPathsBtn->setObjectName("PanelSecondaryButton");
-    m_previewPathsBtn->setToolTip("Preview expanded destination paths for selected members");
-    connect(m_previewPathsBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewPathsClicked);
-    previewRow->addWidget(m_previewPathsBtn);
-
-    m_generateDestsBtn = new QPushButton("Generate Destinations");
-    m_generateDestsBtn->setObjectName("PanelSecondaryButton");
-    m_generateDestsBtn->setToolTip("Generate destination paths for all active members using current template");
-    connect(m_generateDestsBtn, &QPushButton::clicked, this, &DistributionPanel::onGenerateDestinations);
-    previewRow->addWidget(m_generateDestsBtn);
-
-    previewRow->addStretch();
-    configLayout->addLayout(previewRow, 4, 1, 1, 2);
-
-    // Row 5: Saved templates + Import/Export
-    QHBoxLayout* templateMgmtRow = new QHBoxLayout();
-
-    QLabel* savedLabel = new QLabel("Saved:");
-    templateMgmtRow->addWidget(savedLabel);
-
-    m_savedTemplateCombo = new QComboBox();
-    m_savedTemplateCombo->setMinimumWidth(180);
-    m_savedTemplateCombo->setToolTip("Load a previously saved template configuration");
-    connect(m_savedTemplateCombo, QOverload<int>::of(&QComboBox::activated),
-            this, &DistributionPanel::onLoadTemplate);
-    templateMgmtRow->addWidget(m_savedTemplateCombo);
-
-    m_saveTemplateBtn = new QPushButton("Save");
-    m_saveTemplateBtn->setObjectName("PanelSecondaryButton");
-    m_saveTemplateBtn->setToolTip("Save current template configuration");
-    connect(m_saveTemplateBtn, &QPushButton::clicked, this, &DistributionPanel::onSaveTemplate);
-    templateMgmtRow->addWidget(m_saveTemplateBtn);
-
-    m_deleteTemplateBtn = new QPushButton("Delete");
-    m_deleteTemplateBtn->setObjectName("PanelDangerButton");
-    m_deleteTemplateBtn->setToolTip("Delete selected saved template");
-    connect(m_deleteTemplateBtn, &QPushButton::clicked, this, &DistributionPanel::onDeleteTemplate);
-    templateMgmtRow->addWidget(m_deleteTemplateBtn);
-
-    templateMgmtRow->addSpacing(20);
-
-    m_importDestsBtn = new QPushButton("Import .txt");
-    m_importDestsBtn->setObjectName("PanelSecondaryButton");
-    m_importDestsBtn->setToolTip("Import destination paths from a text file (one path per line)");
-    connect(m_importDestsBtn, &QPushButton::clicked, this, &DistributionPanel::onImportDestinations);
-    templateMgmtRow->addWidget(m_importDestsBtn);
-
-    m_exportDestsBtn = new QPushButton("Export .txt");
-    m_exportDestsBtn->setObjectName("PanelSecondaryButton");
-    m_exportDestsBtn->setToolTip("Export current destination paths to a text file");
-    connect(m_exportDestsBtn, &QPushButton::clicked, this, &DistributionPanel::onExportDestinations);
-    templateMgmtRow->addWidget(m_exportDestsBtn);
-
-    templateMgmtRow->addStretch();
-    configLayout->addLayout(templateMgmtRow, 5, 0, 1, 3);
-
-    // Load saved templates from disk
-    loadSavedTemplates();
-
-    mainLayout->addWidget(configGroup);
-
-    // Options Group
-    QGroupBox* optionsGroup = new QGroupBox("Options");
-    QGridLayout* optionsLayout = new QGridLayout(optionsGroup);
-    optionsLayout->setSpacing(8);
-
-    m_removeWatermarkSuffixCheck = new QCheckBox("Remove '_watermarked' from filenames");
-    m_removeWatermarkSuffixCheck->setChecked(true);
-    m_removeWatermarkSuffixCheck->setToolTip("Rename files to remove '_watermarked' suffix after copying");
-    optionsLayout->addWidget(m_removeWatermarkSuffixCheck, 0, 0);
-
-    m_createDestFolderCheck = new QCheckBox("Create destination folder if missing");
-    m_createDestFolderCheck->setChecked(true);
-    m_createDestFolderCheck->setToolTip("Automatically create the destination folder if it doesn't exist");
-    optionsLayout->addWidget(m_createDestFolderCheck, 0, 1);
-
-    m_copyContentsOnlyCheck = new QCheckBox("Copy contents only");
-    m_copyContentsOnlyCheck->setChecked(true);
-    m_copyContentsOnlyCheck->setToolTip("If checked, copies only folder contents. If unchecked, copies the entire folder.");
-    optionsLayout->addWidget(m_copyContentsOnlyCheck, 1, 0);
-
-    m_skipExistingCheck = new QCheckBox("Skip existing files");
-    m_skipExistingCheck->setChecked(true);
-    m_skipExistingCheck->setToolTip("If checked, skips files/folders that already exist at destination. If unchecked, overwrites them.");
-    optionsLayout->addWidget(m_skipExistingCheck, 1, 1);
-
-    m_moveFilesCheck = new QCheckBox("Move files (delete source after distribution)");
-    m_moveFilesCheck->setChecked(false);
-    m_moveFilesCheck->setToolTip("If checked, files will be MOVED (source deleted after transfer).\n"
-                                 "This is a server-side operation - no bandwidth is used.\n\n"
-                                 "WARNING: Source files will be permanently deleted after successful transfer!");
-    m_moveFilesCheck->setProperty("error", true);  // Red text for warning via QSS
-    optionsLayout->addWidget(m_moveFilesCheck, 2, 0, 1, 2);  // Span both columns
+    // Hidden checkboxes — still need these as members for other code to read their state
+    m_copyContentsOnlyCheck = new QCheckBox(); m_copyContentsOnlyCheck->setChecked(true); m_copyContentsOnlyCheck->setVisible(false);
+    m_skipExistingCheck = new QCheckBox(); m_skipExistingCheck->setChecked(true); m_skipExistingCheck->setVisible(false);
+    m_createDestFolderCheck = new QCheckBox(); m_createDestFolderCheck->setChecked(true); m_createDestFolderCheck->setVisible(false);
+    m_removeWatermarkSuffixCheck = new QCheckBox(); m_removeWatermarkSuffixCheck->setChecked(true); m_removeWatermarkSuffixCheck->setVisible(false);
+    m_moveFilesCheck = new QCheckBox(); m_moveFilesCheck->setChecked(false); m_moveFilesCheck->setVisible(false);
     connect(m_moveFilesCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (checked) AnimationHelper::smoothShow(m_moveWarningBanner);
         else AnimationHelper::smoothHide(m_moveWarningBanner);
     });
 
-    mainLayout->addWidget(optionsGroup);
+    // Hidden widgets still needed by other code
+    m_variableHelpBtn = nullptr;
+    m_previewPathsBtn = nullptr;
+    m_generateDestsBtn = nullptr;
+    m_savedTemplateCombo = new QComboBox(); m_savedTemplateCombo->setVisible(false);
+    m_saveTemplateBtn = nullptr;
+    m_deleteTemplateBtn = nullptr;
+    m_importDestsBtn = nullptr;
+    m_exportDestsBtn = nullptr;
+    m_addRowBtn = nullptr;
+    m_pasteDestsBtn = nullptr;
+    m_clearAllBtn = nullptr;
+    loadSavedTemplates();
 
-    // Members Table Group
-    QGroupBox* tableGroup = new QGroupBox("Detected Folders");
-    QVBoxLayout* tableLayout = new QVBoxLayout(tableGroup);
+    // === Divider ===
+    QFrame* divider = new QFrame();
+    divider->setFrameShape(QFrame::HLine);
+    divider->setStyleSheet(QString("color: %1;").arg(tm.borderSubtle().name()));
+    divider->setFixedHeight(1);
+    mainLayout->addWidget(divider);
+    mainLayout->addSpacing(s*4);
 
-    // Empty state (shown when no folders are scanned)
+    // === Table (dominates) ===
     m_emptyState = new EmptyStateWidget(
         ":/icons/share.svg",
         "No folders detected",
-        "Set a source path and scan to detect folders for distribution to members.",
-        "Scan Folder",
-        this);
+        "Set a source path and scan to detect folders for distribution.",
+        "Scan Folder", this);
     connect(m_emptyState, &EmptyStateWidget::actionClicked, this, &DistributionPanel::onScanWmFolder);
-    tableLayout->addWidget(m_emptyState);
+    mainLayout->addWidget(m_emptyState);
 
     m_memberTable = new QTableWidget();
     m_memberTable->setObjectName("DistributionTable");
@@ -697,158 +650,109 @@ void DistributionPanel::setupUI() {
     m_memberTable->horizontalHeader()->setSectionResizeMode(COL_MATCH_TYPE, QHeaderView::Fixed);
     m_memberTable->horizontalHeader()->setSectionResizeMode(COL_DESTINATION, QHeaderView::Stretch);
     m_memberTable->horizontalHeader()->setSectionResizeMode(COL_STATUS, QHeaderView::Fixed);
-    m_memberTable->setColumnWidth(COL_CHECK, 30);
-    m_memberTable->setColumnWidth(COL_SOURCE_FOLDER, 200);
-    m_memberTable->setColumnWidth(COL_MATCHED_MEMBER, 200);
-    m_memberTable->setColumnWidth(COL_MATCH_TYPE, 90);
-    m_memberTable->setColumnWidth(COL_STATUS, 100);
+    m_memberTable->setColumnWidth(COL_CHECK, s*30);
+    m_memberTable->setColumnWidth(COL_SOURCE_FOLDER, s*180);
+    m_memberTable->setColumnWidth(COL_MATCHED_MEMBER, s*160);
+    m_memberTable->setColumnWidth(COL_MATCH_TYPE, s*90);
+    m_memberTable->setColumnWidth(COL_STATUS, s*40);
     CopyHelper::installTableCopyMenu(m_memberTable);
-    tableLayout->addWidget(m_memberTable, 1);
+    mainLayout->addWidget(m_memberTable, 1);
 
-    // Manual destination management row (below table)
-    QHBoxLayout* manualRow = new QHBoxLayout();
+    // === Action Bar (single row) ===
+    mainLayout->addSpacing(s*6);
+    QHBoxLayout* actionBar = new QHBoxLayout();
+    actionBar->setSpacing(s*6);
 
-    m_addRowBtn = new QPushButton("Add Row");
-    m_addRowBtn->setObjectName("PanelSecondaryButton");
-    m_addRowBtn->setToolTip("Add a blank row for manual member/destination entry");
-    connect(m_addRowBtn, &QPushButton::clicked, this, &DistributionPanel::onAddRow);
-    manualRow->addWidget(m_addRowBtn);
-
-    m_pasteDestsBtn = new QPushButton("Paste Destinations");
-    m_pasteDestsBtn->setObjectName("PanelSecondaryButton");
-    m_pasteDestsBtn->setToolTip("Paste member:destination pairs from clipboard or a multi-line dialog");
-    connect(m_pasteDestsBtn, &QPushButton::clicked, this, &DistributionPanel::onPasteDestinations);
-    manualRow->addWidget(m_pasteDestsBtn);
-
-    m_clearAllBtn = new QPushButton("Clear All");
-    m_clearAllBtn->setObjectName("PanelDangerButton");
-    m_clearAllBtn->setToolTip("Remove all rows from the table");
-    connect(m_clearAllBtn, &QPushButton::clicked, this, &DistributionPanel::onClearAllRows);
-    manualRow->addWidget(m_clearAllBtn);
-
-    manualRow->addStretch();
-    tableLayout->addLayout(manualRow);
-
-    mainLayout->addWidget(tableGroup, 1);
-
-    // Action Buttons - Row 1: Selection controls
-    QHBoxLayout* selectionLayout = new QHBoxLayout();
-
-    m_selectAllBtn = new QPushButton("Select All");
-    m_selectAllBtn->setToolTip("Select all members for distribution");
+    m_selectAllBtn = ButtonFactory::createText("All", this);
+    m_selectAllBtn->setToolTip("Select all");
     connect(m_selectAllBtn, &QPushButton::clicked, this, &DistributionPanel::onSelectAll);
+    actionBar->addWidget(m_selectAllBtn);
 
-    m_deselectAllBtn = new QPushButton("Deselect All");
-    m_deselectAllBtn->setToolTip("Deselect all members");
+    m_deselectAllBtn = ButtonFactory::createText("None", this);
+    m_deselectAllBtn->setToolTip("Deselect all");
     connect(m_deselectAllBtn, &QPushButton::clicked, this, &DistributionPanel::onDeselectAll);
+    actionBar->addWidget(m_deselectAllBtn);
 
     m_groupCombo = new QComboBox();
-    m_groupCombo->setMinimumWidth(180);
-    m_groupCombo->setToolTip("Select a member group to check its members");
-    m_groupCombo->addItem("-- Select Group --", "");
+    m_groupCombo->setMinimumWidth(s*140);
+    // Popup opens upward since the combo is near the screen bottom
+    m_groupCombo->view()->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_groupCombo->addItem("-- Group --", "");
     connect(m_groupCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) {
         QString groupName = m_groupCombo->itemData(index).toString();
         if (groupName.isEmpty()) return;
-
-        // Deselect all, then select group members
         onDeselectAll();
         QStringList groupMemberIds = m_registry->getGroupMemberIds(groupName);
-
         int tableRow = 0;
         for (int i = 0; i < m_wmFolders.size(); ++i) {
             if (groupMemberIds.contains(m_wmFolders[i].memberId)) {
                 m_wmFolders[i].selected = true;
-                // Use tableRow (accounts for smart route expansion) not i
                 QWidget* w = m_memberTable->cellWidget(tableRow, COL_CHECK);
                 if (w) {
                     QCheckBox* c = w->findChild<QCheckBox*>();
-                    if (c) c->setChecked(true);  // Header checkbox toggle propagates to children
+                    if (c) c->setChecked(true);
                 }
             }
-            // Advance by header + children for smart-routed, or 1 for legacy
             tableRow += m_wmFolders[i].smartRouted ? (1 + m_wmFolders[i].routes.size()) : 1;
         }
-
-        // Reset combo to prompt
         m_groupCombo->blockSignals(true);
         m_groupCombo->setCurrentIndex(0);
         m_groupCombo->blockSignals(false);
     });
+    actionBar->addWidget(m_groupCombo);
 
-    m_bulkRenameBtn = new QPushButton("Bulk Rename");
-    m_bulkRenameBtn->setObjectName("PanelSecondaryButton");
+    m_bulkRenameBtn = ButtonFactory::createText("Bulk Rename", this);
     m_bulkRenameBtn->setIcon(QIcon(":/icons/edit.svg"));
-    m_bulkRenameBtn->setToolTip("Remove '_watermarked' suffix from files in selected folders");
     connect(m_bulkRenameBtn, &QPushButton::clicked, this, &DistributionPanel::onBulkRename);
+    actionBar->addWidget(m_bulkRenameBtn);
 
-    selectionLayout->addWidget(m_selectAllBtn);
-    selectionLayout->addWidget(m_deselectAllBtn);
-    selectionLayout->addWidget(m_groupCombo);
-    selectionLayout->addStretch();
-    selectionLayout->addWidget(m_bulkRenameBtn);
+    actionBar->addStretch();
 
-    mainLayout->addLayout(selectionLayout);
-
-    // Action Buttons - Row 2: Execution controls
-    QHBoxLayout* actionsLayout = new QHBoxLayout();
-
-    m_previewBtn = new QPushButton("Preview");
-    m_previewBtn->setObjectName("PanelSecondaryButton");
+    m_previewBtn = ButtonFactory::createOutline("Preview", this);
     m_previewBtn->setIcon(QIcon(":/icons/eye.svg"));
-    m_previewBtn->setToolTip("Preview what will be copied");
     connect(m_previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewDistribution);
+    actionBar->addWidget(m_previewBtn);
 
-    m_startBtn = new QPushButton("Start Distribution");
-    m_startBtn->setObjectName("PanelPrimaryButton");
+    m_startBtn = ButtonFactory::createPrimary("Start Distribution", this);
     m_startBtn->setIcon(QIcon(":/icons/play.svg"));
-    m_startBtn->setToolTip("Start copying to all selected members");
     connect(m_startBtn, &QPushButton::clicked, this, &DistributionPanel::onStartDistribution);
+    actionBar->addWidget(m_startBtn);
 
     m_pauseBtn = new QPushButton("Pause");
     m_pauseBtn->setProperty("type", "warning");
     m_pauseBtn->setIcon(QIcon(":/icons/pause.svg"));
-    m_pauseBtn->setToolTip("Pause/Resume distribution");
     m_pauseBtn->setEnabled(false);
+    m_pauseBtn->setVisible(false);
     connect(m_pauseBtn, &QPushButton::clicked, this, &DistributionPanel::onPauseDistribution);
+    actionBar->addWidget(m_pauseBtn);
 
     m_stopBtn = new QPushButton("Stop");
     m_stopBtn->setObjectName("PanelDangerButton");
     m_stopBtn->setIcon(QIcon(":/icons/x.svg"));
-    m_stopBtn->setToolTip("Cancel distribution");
     m_stopBtn->setEnabled(false);
+    m_stopBtn->setVisible(false);
     connect(m_stopBtn, &QPushButton::clicked, this, &DistributionPanel::onStopDistribution);
+    actionBar->addWidget(m_stopBtn);
 
-    actionsLayout->addStretch();
-    actionsLayout->addWidget(m_previewBtn);
-    actionsLayout->addWidget(m_startBtn);
-    actionsLayout->addWidget(m_pauseBtn);
-    actionsLayout->addWidget(m_stopBtn);
+    mainLayout->addLayout(actionBar);
 
-    mainLayout->addLayout(actionsLayout);
-
-    // Progress
+    // === Progress & Status ===
     m_progressBar = new QProgressBar();
     m_progressBar->setVisible(false);
     mainLayout->addWidget(m_progressBar);
 
-    // Status
     QHBoxLayout* statusLayout = new QHBoxLayout();
-    m_statusLabel = new QLabel("Click 'Scan' to detect watermarked folders");
+    m_statusLabel = new QLabel("Set source path and click Scan");
     m_statusLabel->setProperty("type", "secondary");
     CopyHelper::makeSelectable(m_statusLabel);
     statusLayout->addWidget(m_statusLabel);
-
     m_statsLabel = new QLabel();
     m_statsLabel->setProperty("type", "secondary");
     CopyHelper::makeSelectable(m_statsLabel);
     statusLayout->addWidget(m_statsLabel);
     statusLayout->addStretch();
-
     mainLayout->addLayout(statusLayout);
-
-    scrollArea->setWidget(contentWidget);
-    outerLayout->addWidget(scrollArea);
 }
 
 void DistributionPanel::refresh() {
@@ -1919,6 +1823,17 @@ void DistributionPanel::onStartDistribution() {
     QString copyMode = copyFolderItself ? "entire folder" : "folder contents only";
     QString conflictMode = m_skipExistingCheck->isChecked() ? "skip existing" : "overwrite existing";
 
+    // Log all tasks for debugging
+    qDebug() << "Distribution: Building" << tasks.size() << "tasks (" << operationType << "," << copyMode << ")";
+    for (int t = 0; t < tasks.size(); ++t) {
+        const auto& task = tasks[t];
+        qDebug() << "  Task" << t << ":" << task.sourcePath << "->" << task.destPath
+                 << (task.isSmartRouteChild ? "[smart]" : "")
+                 << (task.copyFolderItself ? "[folder]" : "[contents]")
+                 << "files:" << task.individualFiles.size()
+                 << "label:" << task.contentTypeLabel;
+    }
+
     // Show extra warning for move mode
     if (moveMode) {
         QMessageBox::StandardButton reply = QMessageBox::warning(
@@ -2150,6 +2065,177 @@ void DistributionPanel::cleanupWorkerThread() {
         m_workerThread = nullptr;
         m_copyWorker = nullptr;
     }
+}
+
+// Helper: build a row with SwitchButton + title + description
+static QWidget* createSettingRow(const QString& title, const QString& description,
+                                  QCheckBox* backingCheck, bool dangerous = false) {
+    auto& tm = ThemeManager::instance();
+    auto* row = new QWidget();
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 8, 0, 8);
+    layout->setSpacing(12);
+
+    // Left: title + description (stacked)
+    auto* textCol = new QVBoxLayout();
+    textCol->setContentsMargins(0, 0, 0, 0);
+    textCol->setSpacing(2);
+
+    auto* titleLabel = new QLabel(title);
+    QColor titleColor = dangerous ? tm.supportError() : tm.textPrimary();
+    titleLabel->setStyleSheet(QString("font-weight: 600; font-size: 13px; color: %1;")
+        .arg(titleColor.name()));
+    textCol->addWidget(titleLabel);
+
+    if (!description.isEmpty()) {
+        auto* descLabel = new QLabel(description);
+        descLabel->setStyleSheet(QString("font-size: 11px; color: %1;")
+            .arg(tm.textSecondary().name()));
+        descLabel->setWordWrap(true);
+        textCol->addWidget(descLabel);
+    }
+
+    layout->addLayout(textCol, 1);
+
+    // Right: SwitchButton tied to backing QCheckBox
+    auto* toggle = new SwitchButton();
+    toggle->setChecked(backingCheck->isChecked());
+    QObject::connect(toggle, &SwitchButton::toggled, backingCheck, &QCheckBox::setChecked);
+    QObject::connect(backingCheck, &QCheckBox::toggled, toggle, &SwitchButton::setChecked);
+    layout->addWidget(toggle, 0, Qt::AlignVCenter);
+
+    return row;
+}
+
+// Helper: section header
+static QWidget* createSectionHeader(const QString& title) {
+    auto& tm = ThemeManager::instance();
+    auto* wrapper = new QWidget();
+    auto* layout = new QVBoxLayout(wrapper);
+    layout->setContentsMargins(0, 12, 0, 4);
+    layout->setSpacing(4);
+
+    auto* label = new QLabel(title.toUpper());
+    label->setStyleSheet(QString(
+        "font-size: 10px; font-weight: 700; letter-spacing: 1px; color: %1;")
+        .arg(tm.textSecondary().name()));
+    layout->addWidget(label);
+
+    auto* line = new QFrame();
+    line->setFrameShape(QFrame::HLine);
+    line->setStyleSheet(QString("color: %1; background-color: %1;")
+        .arg(tm.borderSubtle().name()));
+    line->setFixedHeight(1);
+    layout->addWidget(line);
+
+    return wrapper;
+}
+
+void DistributionPanel::showDistributionSettingsDialog() {
+    auto& tm = ThemeManager::instance();
+    auto* dialog = new QDialog(this);
+    dialog->setWindowTitle("Distribution Settings");
+    dialog->setMinimumWidth(DpiScaler::scale(480));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto* mainLayout = new QVBoxLayout(dialog);
+    mainLayout->setContentsMargins(20, 16, 20, 16);
+    mainLayout->setSpacing(0);
+
+    // --- Copy Behavior section ---
+    mainLayout->addWidget(createSectionHeader("Copy Behavior"));
+    mainLayout->addWidget(createSettingRow(
+        "Copy contents only",
+        "Copy files inside the source folder, not the folder itself.",
+        m_copyContentsOnlyCheck));
+    mainLayout->addWidget(createSettingRow(
+        "Skip existing files",
+        "Don't overwrite files that already exist at the destination.",
+        m_skipExistingCheck));
+    mainLayout->addWidget(createSettingRow(
+        "Create destination folder if missing",
+        "Automatically create destination paths on MEGA if they don't exist.",
+        m_createDestFolderCheck));
+
+    // --- File Names section ---
+    mainLayout->addWidget(createSectionHeader("File Names"));
+    mainLayout->addWidget(createSettingRow(
+        "Remove '_watermarked' suffix",
+        "Rename files to remove '_watermarked' from filenames after copying.",
+        m_removeWatermarkSuffixCheck));
+
+    // --- Danger Zone ---
+    mainLayout->addWidget(createSectionHeader("Danger Zone"));
+    mainLayout->addWidget(createSettingRow(
+        "Move files (delete source)",
+        "Server-side move — files will be PERMANENTLY deleted from source after transfer. No bandwidth used.",
+        m_moveFilesCheck, true));
+
+    // --- Templates ---
+    mainLayout->addWidget(createSectionHeader("Templates"));
+    {
+        auto* row = new QHBoxLayout();
+        row->setContentsMargins(0, 8, 0, 8);
+        row->setSpacing(6);
+        auto* saveBtn = ButtonFactory::createOutline("Save...", dialog);
+        connect(saveBtn, &QPushButton::clicked, this, &DistributionPanel::onSaveTemplate);
+        auto* loadBtn = ButtonFactory::createOutline("Load...", dialog);
+        connect(loadBtn, &QPushButton::clicked, this, &DistributionPanel::onLoadTemplate);
+        auto* deleteBtn = ButtonFactory::createOutline("Delete...", dialog);
+        connect(deleteBtn, &QPushButton::clicked, this, &DistributionPanel::onDeleteTemplate);
+        row->addWidget(saveBtn);
+        row->addWidget(loadBtn);
+        row->addWidget(deleteBtn);
+        row->addStretch();
+        mainLayout->addLayout(row);
+    }
+
+    // --- Import / Export ---
+    mainLayout->addWidget(createSectionHeader("Import / Export"));
+    {
+        auto* row = new QHBoxLayout();
+        row->setContentsMargins(0, 8, 0, 8);
+        row->setSpacing(6);
+        auto* importBtn = ButtonFactory::createOutline("Import .txt", dialog);
+        connect(importBtn, &QPushButton::clicked, this, &DistributionPanel::onImportDestinations);
+        auto* exportBtn = ButtonFactory::createOutline("Export .txt", dialog);
+        connect(exportBtn, &QPushButton::clicked, this, &DistributionPanel::onExportDestinations);
+        row->addWidget(importBtn);
+        row->addWidget(exportBtn);
+        row->addStretch();
+        mainLayout->addLayout(row);
+    }
+
+    // --- Tools ---
+    mainLayout->addWidget(createSectionHeader("Tools"));
+    {
+        auto* row = new QHBoxLayout();
+        row->setContentsMargins(0, 8, 0, 8);
+        row->setSpacing(6);
+        auto* previewBtn = ButtonFactory::createOutline("Preview Paths", dialog);
+        connect(previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewPathsClicked);
+        auto* genBtn = ButtonFactory::createOutline("Generate Destinations", dialog);
+        connect(genBtn, &QPushButton::clicked, this, &DistributionPanel::onGenerateDestinations);
+        auto* helpBtn = ButtonFactory::createOutline("Variable Help", dialog);
+        connect(helpBtn, &QPushButton::clicked, this, &DistributionPanel::onVariableHelpClicked);
+        row->addWidget(previewBtn);
+        row->addWidget(genBtn);
+        row->addWidget(helpBtn);
+        row->addStretch();
+        mainLayout->addLayout(row);
+    }
+
+    mainLayout->addSpacing(12);
+
+    // --- Close button ---
+    auto* buttonRow = new QHBoxLayout();
+    buttonRow->addStretch();
+    auto* closeBtn = ButtonFactory::createPrimary("Done", dialog);
+    connect(closeBtn, &QPushButton::clicked, dialog, &QDialog::accept);
+    buttonRow->addWidget(closeBtn);
+    mainLayout->addLayout(buttonRow);
+
+    dialog->exec();
 }
 
 void DistributionPanel::executeBulkRename(const QString& folderPath) {

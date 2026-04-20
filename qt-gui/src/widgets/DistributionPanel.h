@@ -125,6 +125,7 @@ private:
     void populateBroadcastTable(const QString& sourcePath);
     QString getDestinationPath(const QString& memberId, const QString& month = QString());
     void executeBulkRename(const QString& folderPath);
+    void showDistributionSettingsDialog();
 
     // UI Components - Configuration
     QLineEdit* m_wmPathEdit;
