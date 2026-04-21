@@ -353,15 +353,21 @@ private:
                 destFolder += item.relativeDir;
             }
 
+            // Use native separators on Windows — the MEGA SDK's Windows
+            // FileSystemAccess is picky about forward vs backward slashes
+            // on some code paths. On Linux toNativeSeparators is a no-op.
+            const QString nativeLocal = QDir::toNativeSeparators(item.localPath);
+
             std::string err;
             bool ok = megaApiUpload(m_megaApi,
-                                    item.localPath.toStdString(),
+                                    nativeLocal.toStdString(),
                                     destFolder.toStdString(),
                                     err);
             if (ok) {
                 success++;
                 if (m_moveMode) {
                     // Move mode = delete local file after successful upload
+                    // (QFile::remove accepts either separator on Windows)
                     if (!QFile::remove(item.localPath)) {
                         qWarning() << "processLocalUpload: Uploaded but could not delete local:"
                                    << item.localPath;
@@ -370,7 +376,7 @@ private:
             } else {
                 failed++;
                 failedNames.append(QFileInfo(item.localPath).fileName());
-                qWarning() << "processLocalUpload: failed" << item.localPath
+                qWarning() << "processLocalUpload: failed" << nativeLocal
                            << "->" << destFolder << ":" << QString::fromStdString(err);
                 if (errorOut.isEmpty()) errorOut = QString::fromStdString(err);
             }
