@@ -47,6 +47,9 @@ struct WmFolderInfo {
     // Smart routing: per-child routes (populated when Smart Route is on)
     QList<ContentRoute> routes;
     bool smartRouted = false;
+
+    // Source type — true when scanning a local filesystem folder
+    bool isLocalSource = false;
 };
 
 /**
@@ -82,6 +85,9 @@ public slots:
 
 private slots:
     void onScanWmFolder();
+    void onScanLocalFolder();
+    void onBrowseLocalFolder();
+    void onSourceTypeChanged(int index);
     void onBroadcastScan();
     void onSelectAll();
     void onDeselectAll();
@@ -128,6 +134,8 @@ private:
     void showDistributionSettingsDialog();
 
     // UI Components - Configuration
+    QComboBox* m_sourceTypeCombo = nullptr;  // "Cloud" or "Local"
+    QPushButton* m_browseLocalBtn = nullptr; // Only visible in Local mode
     QLineEdit* m_wmPathEdit;
     QPushButton* m_scanBtn;
     QCheckBox* m_broadcastCheck;

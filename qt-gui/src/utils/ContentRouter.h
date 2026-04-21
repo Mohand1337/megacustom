@@ -39,6 +39,10 @@ struct ContentRoute {
     int parentFolderIndex = -1;   // Index in m_wmFolders for grouping
     bool selected = true;
     QStringList filePaths;        // Individual file paths (for NHB_ROOT_FILES group)
+
+    // Local source support — true when route originated from a local filesystem scan
+    bool isLocalSource = false;
+    QStringList localFilePaths;   // Local filesystem paths (when isLocalSource)
 };
 
 /**
@@ -61,6 +65,17 @@ public:
      */
     QList<ContentRoute> classifyChildren(
         mega::MegaApi* megaApi,
+        const QString& memberFolderPath,
+        const MemberInfo& member,
+        const QString& month,
+        const QString& fallbackDest = QString()) const;
+
+    /**
+     * Scan a LOCAL filesystem folder's children and classify each one.
+     * Same logic as classifyChildren, but walks the local disk via QDir.
+     * Produced routes have isLocalSource = true.
+     */
+    QList<ContentRoute> classifyLocalChildren(
         const QString& memberFolderPath,
         const MemberInfo& member,
         const QString& month,

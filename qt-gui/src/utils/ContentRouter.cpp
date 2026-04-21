@@ -2,6 +2,9 @@
 #include "MemberRegistry.h"
 #include <megaapi.h>
 #include <QRegularExpression>
+#include <QDir>
+#include <QFileInfo>
+#include <QDate>
 #include <QDebug>
 #include <memory>
 
@@ -286,6 +289,116 @@ QList<ContentRoute> ContentRouter::classifyChildren(
 
             qDebug() << "ContentRouter: Grouped" << rootFiles.size()
                      << "root files → NHB Files (" << rootFileNames.join(", ").left(100) << "...)";
+
+            routes.prepend(fileRoute);
+        }
+    }
+
+    return routes;
+}
+
+// ==================== Classify Local Children ====================
+
+QList<ContentRoute> ContentRouter::classifyLocalChildren(
+    const QString& memberFolderPath,
+    const MemberInfo& member,
+    const QString& month,
+    const QString& fallbackDest) const
+{
+    QList<ContentRoute> routes;
+
+    QDir dir(memberFolderPath);
+    if (!dir.exists()) return routes;
+
+    QStringList rootFiles;
+    QStringList rootFileNames;
+
+    const QFileInfoList entries = dir.entryInfoList(
+        QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+
+    for (const QFileInfo& entry : entries) {
+        const QString childName = entry.fileName();
+        const QString childPath = entry.absoluteFilePath();
+
+        if (entry.isDir()) {
+            QString keyword;
+            ContentType type = classifyFolder(childName, member, &keyword);
+
+            ContentRoute route;
+            route.sourcePath = childPath;
+            route.childName = childName;
+            route.isFolder = true;
+            route.isLocalSource = true;
+            route.contentType = type;
+            route.contentTypeLabel = contentTypeLabel(type);
+            route.destinationPath = resolveDestination(type, member, month, fallbackDest);
+            route.memberId = member.id;
+            route.selected = true;
+
+            qDebug() << "ContentRouter[local]: Subfolder" << childName
+                     << "\xe2\x86\x92" << route.contentTypeLabel
+                     << (keyword.isEmpty() ? "" : QString("(matched: %1)").arg(keyword));
+
+            routes.append(route);
+        } else {
+            rootFiles.append(childPath);
+            rootFileNames.append(childName);
+        }
+    }
+
+    if (!rootFiles.isEmpty()) {
+        bool autoMonth = month.startsWith("Auto");
+
+        if (autoMonth) {
+            static QRegularExpression dateRe("^(\\d{2})-\\d{2}-\\d{4}");
+            QMap<QString, QStringList> filesByMonth;
+
+            for (int idx = 0; idx < rootFiles.size(); ++idx) {
+                QString monthKey = "Unknown";
+                auto m = dateRe.match(rootFileNames[idx]);
+                if (m.hasMatch()) {
+                    int n = m.captured(1).toInt();
+                    if (n >= 1 && n <= 12) {
+                        monthKey = QDate(2000, n, 1).toString("MMMM");
+                    }
+                }
+                filesByMonth[monthKey].append(rootFiles[idx]);
+            }
+
+            for (auto it = filesByMonth.constBegin(); it != filesByMonth.constEnd(); ++it) {
+                ContentRoute fileRoute;
+                fileRoute.sourcePath = memberFolderPath;
+                fileRoute.childName = QString("%1 files (%2)").arg(it.value().size()).arg(it.key());
+                fileRoute.isFolder = false;
+                fileRoute.isLocalSource = true;
+                fileRoute.contentType = ContentType::NHB_ROOT_FILES;
+                fileRoute.contentTypeLabel = QString("NHB Files \xe2\x80\x94 %1").arg(it.key());
+                fileRoute.destinationPath = resolveDestination(
+                    ContentType::NHB_ROOT_FILES, member, it.key(), fallbackDest);
+                fileRoute.memberId = member.id;
+                fileRoute.selected = true;
+                fileRoute.localFilePaths = it.value();
+
+                qDebug() << "ContentRouter[local]: Grouped" << it.value().size()
+                         << "NHB files for" << it.key() << "\xe2\x86\x92" << fileRoute.destinationPath;
+
+                routes.prepend(fileRoute);
+            }
+        } else {
+            ContentRoute fileRoute;
+            fileRoute.sourcePath = memberFolderPath;
+            fileRoute.childName = QString("%1 root files").arg(rootFiles.size());
+            fileRoute.isFolder = false;
+            fileRoute.isLocalSource = true;
+            fileRoute.contentType = ContentType::NHB_ROOT_FILES;
+            fileRoute.contentTypeLabel = contentTypeLabel(ContentType::NHB_ROOT_FILES);
+            fileRoute.destinationPath = resolveDestination(
+                ContentType::NHB_ROOT_FILES, member, month, fallbackDest);
+            fileRoute.memberId = member.id;
+            fileRoute.selected = true;
+            fileRoute.localFilePaths = rootFiles;
+
+            qDebug() << "ContentRouter[local]: Grouped" << rootFiles.size() << "root files";
 
             routes.prepend(fileRoute);
         }

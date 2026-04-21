@@ -5,6 +5,7 @@
 #include "utils/CopyHelper.h"
 #include "utils/CloudPathValidator.h"
 #include "utils/ContentRouter.h"
+#include "utils/MegaUploadUtils.h"
 #include "utils/DpiScaler.h"
 #include "widgets/ButtonFactory.h"
 #include "widgets/SwitchButton.h"
@@ -42,6 +43,8 @@
 #include <QTextEdit>
 #include <QFont>
 #include <QDir>
+#include <QDirIterator>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -61,6 +64,9 @@ struct FolderCopyTask {
     bool isSmartRouteChild = false;   // true = individual child item from smart routing
     QStringList individualFiles;      // for NHB_ROOT_FILES: list of file paths to copy
     QString contentTypeLabel;         // for status display
+
+    // Local source support — true when uploading from local filesystem
+    bool isLocalSource = false;
 };
 
 // ==================== FolderCopyWorker ====================
@@ -80,19 +86,31 @@ public:
 
 public slots:
     void process() {
-        if (!m_cloudCopier || !m_megaApi) {
-            emit error("CloudCopier or MegaApi not available");
+        // Detect whether this batch contains any cloud tasks — only require CloudCopier if so
+        bool anyCloudTask = false;
+        for (const auto& t : m_tasks) {
+            if (!t.isLocalSource) { anyCloudTask = true; break; }
+        }
+        if (!m_megaApi) {
+            emit error("MegaApi not available");
+            emit allCompleted(0, m_tasks.size());
+            return;
+        }
+        if (anyCloudTask && !m_cloudCopier) {
+            emit error("CloudCopier not available");
             emit allCompleted(0, m_tasks.size());
             return;
         }
 
-        // Set conflict resolution
-        m_cloudCopier->setDefaultConflictResolution(
-            m_skipExisting ? ConflictResolution::SKIP : ConflictResolution::OVERWRITE);
+        if (m_cloudCopier) {
+            // Set conflict resolution
+            m_cloudCopier->setDefaultConflictResolution(
+                m_skipExisting ? ConflictResolution::SKIP : ConflictResolution::OVERWRITE);
 
-        // Set operation mode (copy or move)
-        m_cloudCopier->setOperationMode(
-            m_moveMode ? OperationMode::MOVE : OperationMode::COPY);
+            // Set operation mode (copy or move)
+            m_cloudCopier->setOperationMode(
+                m_moveMode ? OperationMode::MOVE : OperationMode::COPY);
+        }
 
         int success = 0, failed = 0;
 
@@ -126,10 +144,20 @@ public slots:
 
             // Create destination folder if needed
             if (m_createDestFolder) {
-                m_cloudCopier->createDestinations({task.destPath.toStdString()});
+                if (task.isLocalSource) {
+                    // megaApiUpload ensures the folder exists, but do it upfront so
+                    // empty uploads still create the expected destination.
+                    std::unique_ptr<mega::MegaNode> created(
+                        ensureFolderExists(m_megaApi, task.destPath.toStdString()));
+                } else if (m_cloudCopier) {
+                    m_cloudCopier->createDestinations({task.destPath.toStdString()});
+                }
             }
 
-            if (task.isSmartRouteChild && !task.individualFiles.isEmpty()) {
+            if (task.isLocalSource) {
+                // Local → MEGA upload
+                taskSuccess = processLocalUpload(task, errorMsg);
+            } else if (task.isSmartRouteChild && !task.individualFiles.isEmpty()) {
                 // Smart route: copy individual files to destination
                 int fileSuccess = 0, fileFailed = 0;
                 QStringList failedNames;
@@ -258,6 +286,102 @@ private:
         delete children;
         delete sourceNode;
         return allSuccess;
+    }
+
+    bool processLocalUpload(const FolderCopyTask& task, QString& errorOut) {
+        if (!m_megaApi) {
+            errorOut = "MegaApi not available";
+            return false;
+        }
+
+        // Build the list of local files to upload, along with their relative subpath
+        // (relative to task.sourcePath) so we preserve folder structure when needed.
+        struct UploadItem {
+            QString localPath;
+            QString relativeDir;  // relative subfolder within sourcePath ("" = root)
+        };
+        QList<UploadItem> items;
+
+        if (task.isSmartRouteChild && !task.individualFiles.isEmpty()) {
+            // Smart route: specific files → flat upload to destPath
+            for (const QString& f : task.individualFiles) {
+                items.append({ f, QString() });
+            }
+        } else if (task.copyFolderItself) {
+            // Full recursive upload — preserve subfolder structure
+            QDir root(task.sourcePath);
+            QDirIterator it(task.sourcePath, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                QString filePath = it.next();
+                QString rel = root.relativeFilePath(QFileInfo(filePath).absolutePath());
+                if (rel == ".") rel.clear();
+                items.append({ filePath, rel });
+            }
+        } else {
+            // Copy contents only — direct children files (non-recursive)
+            QDir dir(task.sourcePath);
+            const QFileInfoList entries = dir.entryInfoList(QDir::Files);
+            for (const QFileInfo& fi : entries) {
+                items.append({ fi.absoluteFilePath(), QString() });
+            }
+        }
+
+        if (items.isEmpty()) {
+            errorOut = "No files to upload";
+            return false;
+        }
+
+        int success = 0, failed = 0;
+        QStringList failedNames;
+
+        for (const UploadItem& item : items) {
+            // Check for cancellation
+            {
+                QMutexLocker locker(&m_mutex);
+                if (m_cancelled) {
+                    errorOut = "Operation cancelled";
+                    return false;
+                }
+                while (m_paused && !m_cancelled) {
+                    m_pauseCondition.wait(&m_mutex, 100);
+                }
+            }
+
+            QString destFolder = task.destPath;
+            if (!item.relativeDir.isEmpty()) {
+                if (!destFolder.endsWith('/')) destFolder += '/';
+                destFolder += item.relativeDir;
+            }
+
+            std::string err;
+            bool ok = megaApiUpload(m_megaApi,
+                                    item.localPath.toStdString(),
+                                    destFolder.toStdString(),
+                                    err);
+            if (ok) {
+                success++;
+                if (m_moveMode) {
+                    // Move mode = delete local file after successful upload
+                    if (!QFile::remove(item.localPath)) {
+                        qWarning() << "processLocalUpload: Uploaded but could not delete local:"
+                                   << item.localPath;
+                    }
+                }
+            } else {
+                failed++;
+                failedNames.append(QFileInfo(item.localPath).fileName());
+                qWarning() << "processLocalUpload: failed" << item.localPath
+                           << "->" << destFolder << ":" << QString::fromStdString(err);
+                if (errorOut.isEmpty()) errorOut = QString::fromStdString(err);
+            }
+        }
+
+        if (failed > 0) {
+            errorOut = QString("%1/%2 files failed: %3")
+                .arg(failed).arg(items.size())
+                .arg(failedNames.join(", ").left(200));
+        }
+        return (failed == 0);
     }
 
     QList<FolderCopyTask> m_tasks;
@@ -469,9 +593,29 @@ void DistributionPanel::setupUI() {
     srcLabel->setStyleSheet(QString("font-weight: 600; color: %1;").arg(tm.textSecondary().name()));
     row1->addWidget(srcLabel);
 
+    // Source type combo: Cloud (MEGA) vs Local (filesystem)
+    m_sourceTypeCombo = new QComboBox();
+    m_sourceTypeCombo->addItem("Cloud", "cloud");
+    m_sourceTypeCombo->addItem("Local", "local");
+    m_sourceTypeCombo->setFixedWidth(s*85);
+    m_sourceTypeCombo->setToolTip("Source type: Cloud = MEGA folder, Local = filesystem folder");
+    connect(m_sourceTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &DistributionPanel::onSourceTypeChanged);
+    row1->addWidget(m_sourceTypeCombo);
+
     m_wmPathEdit = new QLineEdit("/latest-wm");
     m_wmPathEdit->setToolTip("MEGA cloud folder to scan for member subfolders");
     row1->addWidget(m_wmPathEdit, 1);
+
+    // Browse button — only visible in Local mode
+    m_browseLocalBtn = new QPushButton();
+    m_browseLocalBtn->setIcon(QIcon(":/icons/folder.svg"));
+    m_browseLocalBtn->setObjectName("PanelSecondaryButton");
+    m_browseLocalBtn->setToolTip("Browse for a local folder");
+    m_browseLocalBtn->setFixedSize(s*36, s*36);
+    m_browseLocalBtn->setVisible(false);
+    connect(m_browseLocalBtn, &QPushButton::clicked, this, &DistributionPanel::onBrowseLocalFolder);
+    row1->addWidget(m_browseLocalBtn);
 
     m_scanBtn = new QPushButton("Scan");
     m_scanBtn->setObjectName("PanelPrimaryButton");
@@ -890,6 +1034,14 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
 }
 
 void DistributionPanel::onScanWmFolder() {
+    // Dispatch to local scan if Local mode is selected
+    const bool isLocal = m_sourceTypeCombo &&
+        m_sourceTypeCombo->currentData().toString() == "local";
+    if (isLocal) {
+        onScanLocalFolder();
+        return;
+    }
+
     if (!m_fileController) {
         m_statusLabel->setText("Error: Not connected to MEGA");
         return;
@@ -921,6 +1073,170 @@ void DistributionPanel::onScanWmFolder() {
     // Request folder listing via FileController
     // The result will come back via onFileListReceived slot
     m_fileController->refreshRemote(wmPath);
+}
+
+void DistributionPanel::onSourceTypeChanged(int /*index*/) {
+    if (!m_sourceTypeCombo) return;
+    const bool isLocal = m_sourceTypeCombo->currentData().toString() == "local";
+    if (m_browseLocalBtn) m_browseLocalBtn->setVisible(isLocal);
+    if (m_wmPathEdit) {
+        if (isLocal) {
+            m_wmPathEdit->setPlaceholderText("/path/to/local/folder");
+            m_wmPathEdit->setToolTip("Local filesystem folder to scan for member subfolders");
+            // Clear the cloud default so the user sees Local placeholder
+            if (m_wmPathEdit->text() == "/latest-wm") m_wmPathEdit->clear();
+        } else {
+            m_wmPathEdit->setPlaceholderText("/mega/cloud/path");
+            m_wmPathEdit->setToolTip("MEGA cloud folder to scan for member subfolders");
+            if (m_wmPathEdit->text().isEmpty()) m_wmPathEdit->setText("/latest-wm");
+        }
+    }
+}
+
+void DistributionPanel::onBrowseLocalFolder() {
+    QString startDir = m_wmPathEdit->text();
+    if (startDir.isEmpty() || !QDir(startDir).exists()) {
+        startDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    }
+    QString dir = QFileDialog::getExistingDirectory(
+        this, "Select Local Source Folder", startDir);
+    if (!dir.isEmpty()) {
+        m_wmPathEdit->setText(dir);
+    }
+}
+
+void DistributionPanel::onScanLocalFolder() {
+    m_controllerActive = false;
+    m_modeIndicator->setText("Mode: Local Upload");
+    m_modeIndicator->setProperty("mode", "active");
+    m_modeIndicator->style()->polish(m_modeIndicator);
+    m_startBtn->setEnabled(true);
+
+    m_registry->load();
+    qDebug() << "DistributionPanel[local]: Reloaded member registry, count:"
+             << m_registry->getAllMembers().size();
+
+    const QString localPath = m_wmPathEdit->text().trimmed();
+    if (localPath.isEmpty()) {
+        m_statusLabel->setText("Enter a local folder path");
+        return;
+    }
+
+    QDir dir(localPath);
+    if (!dir.exists()) {
+        m_statusLabel->setText("Local path not found: " + localPath);
+        return;
+    }
+
+    m_wmFolders.clear();
+    m_memberTable->setRowCount(0);
+    m_statusLabel->setText("Scanning local folder " + localPath + "...");
+
+    // Broadcast mode for Local: single local source → all active members
+    if (m_broadcastCheck->isChecked()) {
+        QList<MemberInfo> allMembers = m_registry->getAllMembers();
+        for (const MemberInfo& member : allMembers) {
+            if (!member.active) continue;
+            WmFolderInfo info;
+            info.folderName = QFileInfo(localPath).fileName();
+            if (info.folderName.isEmpty()) info.folderName = localPath;
+            info.fullPath = localPath;
+            info.memberId = member.id;
+            info.matchType = "broadcast";
+            info.matchConfidence = 5;
+            info.matched = true;
+            info.selected = true;
+            info.isLocalSource = true;
+            m_wmFolders.append(info);
+        }
+        populateTable();
+        m_statusLabel->setText(QString("Broadcast (local): %1 members ready. Source: %2")
+            .arg(m_wmFolders.size()).arg(localPath));
+        m_statsLabel->setText(QString("Members: %1 | Source: %2")
+            .arg(m_wmFolders.size()).arg(localPath));
+        return;
+    }
+
+    // Walk local folder — each subfolder = one potential member
+    QRegularExpression tsRe("^(.+)_(\\d{8}_\\d{6})$");
+    const QFileInfoList entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+
+    for (const QFileInfo& entry : entries) {
+        const QString folderName = entry.fileName();
+
+        WmFolderInfo info;
+        info.folderName = folderName;
+        info.fullPath = entry.absoluteFilePath();
+        info.isLocalSource = true;
+
+        QRegularExpressionMatch tsMatch = tsRe.match(folderName);
+        if (tsMatch.hasMatch()) {
+            info.timestamp = tsMatch.captured(2);
+        }
+
+        auto match = m_registry->matchFolderToMember(folderName);
+        if (match.confidence > 0) {
+            info.memberId = match.matchedMemberId;
+            info.matchType = match.matchType;
+            info.matchConfidence = match.confidence;
+            info.matched = true;
+        } else {
+            info.memberId = folderName;
+            info.matchType = "none";
+            info.matchConfidence = 0;
+            info.matched = false;
+        }
+        info.selected = info.matched;
+        m_wmFolders.append(info);
+
+        qDebug() << "  [local] Found folder:" << info.folderName
+                 << "member:" << info.memberId
+                 << "match:" << info.matchType;
+    }
+
+    // Smart routing pass — uses classifyLocalChildren() for local sources
+    int smartRouted = 0;
+    if (m_smartRouteCheck->isChecked()) {
+        QString month = m_monthCombo->currentText();
+        for (WmFolderInfo& info : m_wmFolders) {
+            if (!info.matched) continue;
+            MemberInfo member = m_registry->getMember(info.memberId);
+            if (member.paths.archiveRoot.isEmpty()) {
+                qDebug() << "ContentRouter[local]: Skipping" << info.memberId
+                         << "— no archive root configured";
+                continue;
+            }
+            QString fallbackDest = getDestinationPath(info.memberId);
+            info.routes = m_contentRouter->classifyLocalChildren(
+                info.fullPath, member, month, fallbackDest);
+            info.smartRouted = !info.routes.isEmpty();
+            if (info.smartRouted) smartRouted++;
+            qDebug() << "ContentRouter[local]:" << info.memberId
+                     << "\xe2\x86\x92" << info.routes.size() << "routes";
+        }
+    }
+
+    if (smartRouted > 0) {
+        SmartRouteReviewDialog reviewDialog(this);
+        reviewDialog.setRoutes(m_wmFolders, m_registry);
+        if (reviewDialog.exec() == QDialog::Accepted) {
+            m_wmFolders = reviewDialog.getReviewedFolders();
+        }
+    }
+
+    int matched = 0, unmatched = 0;
+    for (const WmFolderInfo& info : m_wmFolders) {
+        if (info.matched) matched++;
+        else unmatched++;
+    }
+    QString statsText = QString("Found: %1 local folders (%2 matched, %3 unmatched)")
+        .arg(m_wmFolders.size()).arg(matched).arg(unmatched);
+    if (smartRouted > 0) statsText += QString(" \xe2\x80\x94 %1 smart-routed").arg(smartRouted);
+    m_statsLabel->setText(statsText);
+    m_statusLabel->setText("Local scan complete");
+
+    populateTable();
+    updateEmptyState();
 }
 
 void DistributionPanel::onBroadcastScan() {
@@ -1542,29 +1858,44 @@ void DistributionPanel::onPreviewDistribution() {
                     .arg(info.memberId.isEmpty() ? "(unmatched)" : info.memberId)
                     .arg(dest));
                 skippedCount++;
-            } else if (autoMonth && m_megaApi) {
+            } else if (autoMonth) {
                 // Auto-month: scan children and show per-month breakdown
-                std::unique_ptr<mega::MegaNode> srcNode(
-                    m_megaApi->getNodeByPath(source.toUtf8().constData()));
-                if (srcNode) {
-                    std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(srcNode.get()));
-                    if (children && children->size() > 0) {
-                        QMap<QString, int> monthCounts;
-                        for (int c = 0; c < children->size(); ++c) {
-                            mega::MegaNode* child = children->get(c);
-                            if (!child) continue;
-                            QString name = QString::fromUtf8(child->getName());
-                            QString month = extractMonthFromFilename(name);
-                            if (month.isEmpty()) month = "Unknown";
-                            monthCounts[month]++;
+                QMap<QString, int> monthCounts;
+                if (info.isLocalSource) {
+                    QDir srcDir(source);
+                    const QFileInfoList entries = srcDir.entryInfoList(QDir::Files);
+                    for (const QFileInfo& fi : entries) {
+                        QString month = extractMonthFromFilename(fi.fileName());
+                        if (month.isEmpty()) month = "Unknown";
+                        monthCounts[month]++;
+                    }
+                } else if (m_megaApi) {
+                    std::unique_ptr<mega::MegaNode> srcNode(
+                        m_megaApi->getNodeByPath(source.toUtf8().constData()));
+                    if (srcNode) {
+                        std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(srcNode.get()));
+                        if (children) {
+                            for (int c = 0; c < children->size(); ++c) {
+                                mega::MegaNode* child = children->get(c);
+                                if (!child || child->isFolder()) continue;
+                                QString name = QString::fromUtf8(child->getName());
+                                QString month = extractMonthFromFilename(name);
+                                if (month.isEmpty()) month = "Unknown";
+                                monthCounts[month]++;
+                            }
                         }
-                        QString arrow = QString::fromUtf8(" \xe2\x86\x92 ");
-                        preview.append(QString("--- %1 ---").arg(info.memberId));
-                        for (auto it = monthCounts.constBegin(); it != monthCounts.constEnd(); ++it) {
-                            QString dest = getDestinationPath(info.memberId, it.key());
-                            preview.append(QString("  %1 (%2 files)%3%4")
-                                .arg(it.key()).arg(it.value()).arg(arrow).arg(dest));
-                        }
+                    }
+                }
+                if (!monthCounts.isEmpty()) {
+                    QString arrow = QString::fromUtf8(" \xe2\x86\x92 ");
+                    QString header = info.isLocalSource
+                        ? QString("--- %1 (Local) ---").arg(info.memberId)
+                        : QString("--- %1 ---").arg(info.memberId);
+                    preview.append(header);
+                    for (auto it = monthCounts.constBegin(); it != monthCounts.constEnd(); ++it) {
+                        QString dest = getDestinationPath(info.memberId, it.key());
+                        preview.append(QString("  %1 (%2 files)%3%4")
+                            .arg(it.key()).arg(it.value()).arg(arrow).arg(dest));
                     }
                 }
             } else if (copyFolder) {
@@ -1638,8 +1969,18 @@ void DistributionPanel::onStartDistribution() {
         return;
     }
 
-    if (!m_cloudCopier) {
+    // Check for a local-only batch: only CloudCopier is optional in that case
+    bool allLocal = !m_wmFolders.isEmpty();
+    for (const WmFolderInfo& info : m_wmFolders) {
+        if (info.selected && !info.isLocalSource) { allLocal = false; break; }
+    }
+
+    if (!allLocal && !m_cloudCopier) {
         QMessageBox::warning(this, "Error", "CloudCopier not available. Make sure you're logged in.");
+        return;
+    }
+    if (!m_megaApi) {
+        QMessageBox::warning(this, "Error", "MEGA API not available. Make sure you're logged in.");
         return;
     }
 
@@ -1690,6 +2031,7 @@ void DistributionPanel::onStartDistribution() {
                     task.destPath = dest;
                     task.isSmartRouteChild = true;
                     task.contentTypeLabel = route.contentTypeLabel;
+                    task.isLocalSource = route.isLocalSource || info.isLocalSource;
 
                     if (route.isFolder) {
                         // Subfolder → respect "copy contents only" checkbox
@@ -1698,7 +2040,9 @@ void DistributionPanel::onStartDistribution() {
                     } else {
                         // Root files → copy individual files
                         task.sourcePath = route.sourcePath;
-                        task.individualFiles = route.filePaths;
+                        task.individualFiles = task.isLocalSource
+                            ? route.localFilePaths
+                            : route.filePaths;
                         task.copyFolderItself = false;
                     }
 
@@ -1721,36 +2065,48 @@ void DistributionPanel::onStartDistribution() {
 
             bool autoMonth = m_monthCombo->currentText().startsWith("Auto");
 
-            if (autoMonth && m_megaApi) {
+            if (autoMonth) {
                 // Auto-month: scan source children and split by month
-                std::unique_ptr<mega::MegaNode> srcNode(
-                    m_megaApi->getNodeByPath(info.fullPath.toUtf8().constData()));
-                if (srcNode) {
-                    std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(srcNode.get()));
-                    if (children && children->size() > 0) {
-                        QMap<QString, QStringList> monthFiles;
-                        for (int c = 0; c < children->size(); ++c) {
-                            mega::MegaNode* child = children->get(c);
-                            if (!child) continue;
-                            QString name = QString::fromUtf8(child->getName());
-                            QString month = extractMonthFromFilename(name);
-                            if (month.isEmpty()) month = "Unknown";
-                            monthFiles[month].append(info.fullPath + "/" + name);
-                        }
+                QMap<QString, QStringList> monthFiles;
 
-                        for (auto it = monthFiles.constBegin(); it != monthFiles.constEnd(); ++it) {
-                            FolderCopyTask task;
-                            task.index = tableRow;
-                            task.memberId = info.memberId;
-                            task.sourcePath = info.fullPath;
-                            task.isSmartRouteChild = true;
-                            task.individualFiles = it.value();
-                            task.contentTypeLabel = it.key();
-                            task.destPath = getDestinationPath(info.memberId, it.key());
-                            task.copyFolderItself = false;
-                            tasks.append(task);
+                if (info.isLocalSource) {
+                    QDir srcDir(info.fullPath);
+                    const QFileInfoList entries = srcDir.entryInfoList(QDir::Files);
+                    for (const QFileInfo& fi : entries) {
+                        QString month = extractMonthFromFilename(fi.fileName());
+                        if (month.isEmpty()) month = "Unknown";
+                        monthFiles[month].append(fi.absoluteFilePath());
+                    }
+                } else if (m_megaApi) {
+                    std::unique_ptr<mega::MegaNode> srcNode(
+                        m_megaApi->getNodeByPath(info.fullPath.toUtf8().constData()));
+                    if (srcNode) {
+                        std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(srcNode.get()));
+                        if (children) {
+                            for (int c = 0; c < children->size(); ++c) {
+                                mega::MegaNode* child = children->get(c);
+                                if (!child || child->isFolder()) continue;
+                                QString name = QString::fromUtf8(child->getName());
+                                QString month = extractMonthFromFilename(name);
+                                if (month.isEmpty()) month = "Unknown";
+                                monthFiles[month].append(info.fullPath + "/" + name);
+                            }
                         }
                     }
+                }
+
+                for (auto it = monthFiles.constBegin(); it != monthFiles.constEnd(); ++it) {
+                    FolderCopyTask task;
+                    task.index = tableRow;
+                    task.memberId = info.memberId;
+                    task.sourcePath = info.fullPath;
+                    task.isSmartRouteChild = true;
+                    task.individualFiles = it.value();
+                    task.contentTypeLabel = it.key();
+                    task.destPath = getDestinationPath(info.memberId, it.key());
+                    task.copyFolderItself = false;
+                    task.isLocalSource = info.isLocalSource;
+                    tasks.append(task);
                 }
             } else {
                 // Standard: single destination for entire folder
@@ -1759,6 +2115,7 @@ void DistributionPanel::onStartDistribution() {
                 task.memberId = info.memberId;
                 task.copyFolderItself = copyFolderItself;
                 task.sourcePath = info.fullPath;
+                task.isLocalSource = info.isLocalSource;
 
                 QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
                 QString cellDest = destItem ? destItem->text().trimmed() : "";
@@ -1789,6 +2146,7 @@ void DistributionPanel::onStartDistribution() {
     }
 
     // Pre-flight destination path validation
+    // (Destinations are MEGA paths regardless of source type, so we still validate.)
     if (m_megaApi) {
         QStringList destPaths;
         for (const auto& task : tasks) {
