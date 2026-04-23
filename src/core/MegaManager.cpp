@@ -5,6 +5,7 @@
 
 #include "core/MegaManager.h"
 #include "core/ConfigManager.h"
+#include "MegaWrapper.h"
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -24,44 +25,6 @@ void secureErase(std::string& str) {
     str.shrink_to_fit();  // Release memory back to allocator
 }
 } // anonymous namespace
-
-// Include real Mega SDK headers
-// Define MEGA_SDK_AVAILABLE when the SDK library is built and linked
-#ifdef MEGA_SDK_AVAILABLE
-#include "megaapi.h"
-#else
-// Temporary minimal definitions until SDK is built
-namespace mega {
-    class MegaApi {
-    public:
-        MegaApi(const char*, const char*, const char*) {}
-        bool isLoggedIn() { return false; }
-        void setLogLevel(int) {}
-        const char* getMyEmail() { return ""; }
-    };
-    class MegaListener {
-    public:
-        virtual ~MegaListener() {}
-    };
-    class MegaRequest {
-    public:
-        int getType() const { return 0; }
-    };
-    class MegaTransfer {
-    public:
-        int getType() const { return 0; }
-        long long getTotalBytes() const { return 0; }
-        long long getTransferredBytes() const { return 0; }
-    };
-    class MegaError {
-    public:
-        static const int API_OK = 0;
-        int getErrorCode() const { return 0; }
-        const char* getErrorString() const { return ""; }
-    };
-    class MegaNode {};
-}
-#endif
 
 namespace MegaCustom {
 

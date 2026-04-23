@@ -1,7 +1,7 @@
 #ifndef MEGACUSTOM_MEGA_NODE_PTR_H
 #define MEGACUSTOM_MEGA_NODE_PTR_H
 
-#include <megaapi.h>
+#include "MegaWrapper.h"
 #include <utility>
 
 namespace MegaCustom {

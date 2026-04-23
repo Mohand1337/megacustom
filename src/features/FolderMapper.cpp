@@ -1,5 +1,5 @@
 #include "features/FolderMapper.h"
-#include "megaapi.h"
+#include "MegaWrapper.h"
 #ifdef USE_NLOHMANN_JSON
 #include <nlohmann/json.hpp>
 #else

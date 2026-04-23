@@ -5,7 +5,7 @@
 
 #include "features/CloudCopier.h"
 #include "core/PathValidator.h"
-#include <megaapi.h>
+#include "MegaWrapper.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>

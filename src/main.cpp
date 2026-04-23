@@ -14,6 +14,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <cstring>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -39,7 +42,7 @@
 #include "integrations/MemberDatabase.h"
 #include "integrations/WordPressSync.h"
 #include "core/LogManager.h"
-#include "megaapi.h"  // Need full SDK header for MegaNode
+#include "MegaWrapper.h"  // Need full SDK header for MegaNode
 // #include "ui/CLIParser.h"
 #include <mutex>
 #include <condition_variable>
@@ -106,7 +109,6 @@ std::string getSessionFilePath() {
             homeDir = "C:\\Temp";
         }
     }
-    std::string configDir = homeDir + "\\.megacustom";
 #else
     // Unix: Use HOME or passwd entry
     const char* home = getenv("HOME");
@@ -115,20 +117,33 @@ std::string getSessionFilePath() {
         home = pw ? pw->pw_dir : "/tmp";
     }
     homeDir = home;
-    std::string configDir = homeDir + "/.megacustom";
 #endif
 
-    // Create directory if it doesn't exist
-    mkdir(configDir.c_str(), 0700);
+    fs::path configDir = fs::path(homeDir) / ".megacustom";
 
-    return configDir + "/session.dat";
+    // Create directory if it doesn't exist
+    std::error_code ec;
+    fs::create_directories(configDir, ec);
+    if (ec) {
+        std::cerr << "Warning: Failed to create config directory: " << ec.message() << "\n";
+    } else {
+#ifndef _WIN32
+        fs::permissions(configDir, fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec, ec);
+#endif
+    }
+
+    return (configDir / "session.dat").string();
 }
 
 /**
  * Get encryption key for session (derived from machine ID + user)
  */
 std::string getSessionEncryptionKey() {
-    // In production, use a more secure method
+    // WARNING: This key generation method is WEAK and INSECURE for production use.
+    // It relies on predictable machine identifiers.
+    // TODO: Integrate with OS-level keychain (e.g., Windows Credential Manager, libsecret)
+    // or request a master password from the user.
+
     // For now, use a combination of hostname and username
     char hostname[256] = {0};
     std::string username;

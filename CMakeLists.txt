@@ -19,8 +19,14 @@ option(USE_SYSTEM_MEGA "Use system-installed Mega SDK" OFF)
 # Find required packages
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(CURL REQUIRED)
+find_package(CURL QUIET)
 find_package(ZLIB REQUIRED)
+
+if(CURL_FOUND)
+    add_compile_definitions(USE_CURL)
+else()
+    message(WARNING "CURL not found. WordPress sync features will be disabled.")
+endif()
 
 # VCPKG integration (if available)
 if(DEFINED ENV{VCPKG_ROOT})
@@ -30,12 +36,19 @@ endif()
 
 # Find or build Mega SDK
 if(USE_SYSTEM_MEGA)
-    find_package(mega REQUIRED)
+    find_package(mega QUIET)
+    if(mega_FOUND)
+        add_compile_definitions(MEGA_SDK_AVAILABLE)
+    else()
+        message(WARNING "System Mega SDK not found. Using mocks.")
+    endif()
 else()
     # We'll build Mega SDK as part of this project
     set(MEGA_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sdk")
-    if(NOT EXISTS ${MEGA_SDK_DIR})
-        message(STATUS "Mega SDK not found. Please clone it to third_party/sdk")
+    if(EXISTS "${MEGA_SDK_DIR}/include/megaapi.h")
+        add_compile_definitions(MEGA_SDK_AVAILABLE)
+    else()
+        message(STATUS "Mega SDK not found at ${MEGA_SDK_DIR}. Using mocks.")
     endif()
 endif()
 
@@ -94,9 +107,12 @@ if(ALL_LIB_SOURCES)
         ${CMAKE_THREAD_LIBS_INIT}
         OpenSSL::SSL
         OpenSSL::Crypto
-        CURL::libcurl
         ZLIB::ZLIB
     )
+
+    if(CURL_FOUND)
+        target_link_libraries(mega_custom_core CURL::libcurl)
+    endif()
 
     if(nlohmann_json_FOUND)
         target_link_libraries(mega_custom_core nlohmann_json::nlohmann_json)
@@ -104,6 +120,10 @@ if(ALL_LIB_SOURCES)
 
     if(PCRE2_FOUND)
         target_link_libraries(mega_custom_core pcre2-8)
+    endif()
+
+    if(mega_FOUND)
+         target_link_libraries(mega_custom_core mega::mega)
     endif()
 endif()
 
@@ -124,9 +144,12 @@ else()
         ${CMAKE_THREAD_LIBS_INIT}
         OpenSSL::SSL
         OpenSSL::Crypto
-        CURL::libcurl
         ZLIB::ZLIB
     )
+
+    if(CURL_FOUND)
+        target_link_libraries(megacustom CURL::libcurl)
+    endif()
 
     if(nlohmann_json_FOUND)
         target_link_libraries(megacustom nlohmann_json::nlohmann_json)
@@ -134,6 +157,10 @@ else()
 
     if(PCRE2_FOUND)
         target_link_libraries(megacustom pcre2-8)
+    endif()
+
+    if(mega_FOUND)
+         target_link_libraries(megacustom mega::mega)
     endif()
 
     target_include_directories(megacustom PRIVATE
@@ -163,7 +190,7 @@ if(BUILD_GUI)
 endif()
 
 # Tests
-if(BUILD_TESTS)
+if(BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     enable_testing()
     add_subdirectory(tests)
 endif()
