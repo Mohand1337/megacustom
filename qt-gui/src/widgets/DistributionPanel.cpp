@@ -832,6 +832,21 @@ void DistributionPanel::setupUI() {
             this, [this](int index) {
         QString groupName = m_groupCombo->itemData(index).toString();
         if (groupName.isEmpty()) return;
+
+        // Broadcast mode: re-scan to populate ONLY the group's members.
+        // Keep the group selected so the user can see the active filter.
+        if (m_broadcastCheck->isChecked()) {
+            QString sourcePath = m_wmPathEdit->text().trimmed();
+            if (sourcePath.isEmpty()) {
+                m_statusLabel->setText(
+                    QString("Group filter set to '%1'. Enter source path then click Scan or Start.")
+                        .arg(groupName));
+                return;
+            }
+            onScanWmFolder();
+            return;
+        }
+
         onDeselectAll();
         QStringList groupMemberIds = m_registry->getGroupMemberIds(groupName);
         int tableRow = 0;
@@ -1138,11 +1153,21 @@ void DistributionPanel::onScanLocalFolder() {
     m_memberTable->setRowCount(0);
     m_statusLabel->setText("Scanning local folder " + localPath + "...");
 
-    // Broadcast mode for Local: single local source → all active members
+    // Broadcast mode for Local: single local source → all active members (or group)
     if (m_broadcastCheck->isChecked()) {
+        QString groupFilter;
+        if (m_groupCombo) {
+            groupFilter = m_groupCombo->itemData(m_groupCombo->currentIndex()).toString();
+        }
+        QStringList allowedMemberIds;
+        if (!groupFilter.isEmpty()) {
+            allowedMemberIds = m_registry->getGroupMemberIds(groupFilter);
+        }
+
         QList<MemberInfo> allMembers = m_registry->getAllMembers();
         for (const MemberInfo& member : allMembers) {
             if (!member.active) continue;
+            if (!allowedMemberIds.isEmpty() && !allowedMemberIds.contains(member.id)) continue;
             WmFolderInfo info;
             info.folderName = QFileInfo(localPath).fileName();
             if (info.folderName.isEmpty()) info.folderName = localPath;
@@ -1156,8 +1181,11 @@ void DistributionPanel::onScanLocalFolder() {
             m_wmFolders.append(info);
         }
         populateTable();
-        m_statusLabel->setText(QString("Broadcast (local): %1 members ready. Source: %2")
-            .arg(m_wmFolders.size()).arg(localPath));
+        QString groupSuffix = groupFilter.isEmpty()
+            ? QString()
+            : QString(" (group: %1)").arg(groupFilter);
+        m_statusLabel->setText(QString("Broadcast (local)%1: %2 members ready. Source: %3")
+            .arg(groupSuffix).arg(m_wmFolders.size()).arg(localPath));
         m_statsLabel->setText(QString("Members: %1 | Source: %2")
             .arg(m_wmFolders.size()).arg(localPath));
         return;
@@ -1281,9 +1309,19 @@ void DistributionPanel::onBroadcastScan() {
 void DistributionPanel::populateBroadcastTable(const QString& sourcePath) {
     m_wmFolders.clear();
 
+    QString groupFilter;
+    if (m_groupCombo) {
+        groupFilter = m_groupCombo->itemData(m_groupCombo->currentIndex()).toString();
+    }
+    QStringList allowedMemberIds;
+    if (!groupFilter.isEmpty()) {
+        allowedMemberIds = m_registry->getGroupMemberIds(groupFilter);
+    }
+
     QList<MemberInfo> allMembers = m_registry->getAllMembers();
     for (const MemberInfo& member : allMembers) {
         if (!member.active) continue;
+        if (!allowedMemberIds.isEmpty() && !allowedMemberIds.contains(member.id)) continue;
 
         WmFolderInfo info;
         info.folderName = sourcePath.section('/', -1);
@@ -1298,8 +1336,11 @@ void DistributionPanel::populateBroadcastTable(const QString& sourcePath) {
 
     populateTable();
 
-    m_statusLabel->setText(QString("Broadcast mode: %1 members ready. Source: %2")
-        .arg(m_wmFolders.size()).arg(sourcePath));
+    QString groupSuffix = groupFilter.isEmpty()
+        ? QString()
+        : QString(" (group: %1)").arg(groupFilter);
+    m_statusLabel->setText(QString("Broadcast mode%1: %2 members ready. Source: %3")
+        .arg(groupSuffix).arg(m_wmFolders.size()).arg(sourcePath));
     m_statsLabel->setText(QString("Members: %1 | Source: %2").arg(m_wmFolders.size()).arg(sourcePath));
 }
 
@@ -1949,6 +1990,23 @@ void DistributionPanel::onPreviewDistribution() {
 
 void DistributionPanel::onStartDistribution() {
     if (m_isRunning) return;
+
+    // Broadcast shortcut: when the user enables Broadcast and clicks Start without
+    // first clicking Scan, auto-populate from the source path. Honors any group
+    // filter currently selected in the Group combo.
+    if (!m_controllerActive && m_broadcastCheck && m_broadcastCheck->isChecked()
+        && m_wmFolders.isEmpty()) {
+        if (m_wmPathEdit->text().trimmed().isEmpty()) {
+            QMessageBox::warning(this, "Error",
+                "Enter a source path before starting a broadcast.");
+            return;
+        }
+        onScanWmFolder();
+        if (m_wmFolders.isEmpty()) {
+            // Scan reported its own status/error; nothing more to do.
+            return;
+        }
+    }
 
     // Controller-active mode: upload pending member files via DistributionController
     if (m_controllerActive && m_distController && !m_pendingMemberFileMap.isEmpty()) {

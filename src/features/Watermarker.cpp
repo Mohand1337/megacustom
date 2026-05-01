@@ -77,9 +77,44 @@ std::string getExecutableDir() {
 #endif
 }
 
+// Construct a std::filesystem::path from a UTF-8 std::string.
+//
+// Why: Qt's QString::toStdString() returns UTF-8, but on Windows the
+// default fs::path(std::string) constructor decodes the bytes using the
+// active code page (CP1252 etc.), which mangles non-ASCII characters such
+// as the curly apostrophe U+2019 ("'"). Files like
+// "...What's New in Meta Ads..." would then fail fs::exists() even though
+// the file is on disk. Routing through fs::u8path treats the bytes as
+// UTF-8, matching how Qt produced them.
+std::filesystem::path toFsPath(const std::string& utf8) {
+#ifdef _WIN32
+    return std::filesystem::u8path(utf8);
+#else
+    return std::filesystem::path(utf8);
+#endif
+}
+
+// Convert a std::filesystem::path back to a UTF-8 std::string.
+// On Windows we need u8string() so non-ASCII chars survive the trip back;
+// path::string() would re-encode in the active code page. The std::u8string
+// branch covers a future bump to C++20 where u8string() returns std::u8string
+// instead of std::string.
+std::string fromFsPath(const std::filesystem::path& p) {
+#ifdef _WIN32
+    auto s = p.u8string();
+    #if defined(__cpp_char8_t)
+        return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+    #else
+        return s;
+    #endif
+#else
+    return p.string();
+#endif
+}
+
 // Check if a file exists (use std::filesystem for Unicode path support on Windows)
 bool fileExists(const std::string& path) {
-    return std::filesystem::exists(std::filesystem::path(path));
+    return std::filesystem::exists(toFsPath(path));
 }
 } // anonymous namespace for getHomeDirectory
 
@@ -390,11 +425,12 @@ bool Watermarker::isAudioFile(const std::string& path) {
 }
 
 int64_t Watermarker::getFileSize(const std::string& path) {
-    struct stat st;
-    if (stat(path.c_str(), &st) == 0) {
-        return st.st_size;
-    }
-    return 0;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto fsPath = toFsPath(path);
+    if (!fs::exists(fsPath, ec)) return 0;
+    auto sz = fs::file_size(fsPath, ec);
+    return ec ? 0 : static_cast<int64_t>(sz);
 }
 
 // ==================== FFmpeg Filter Building ====================
@@ -706,7 +742,7 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
 
     // Check input file exists (use std::filesystem for Unicode path support)
     namespace fs = std::filesystem;
-    fs::path inputFs(input);
+    fs::path inputFs = toFsPath(input);
     if (!fs::exists(inputFs)) {
         result.error = "Input file not found: " + input;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
@@ -729,9 +765,10 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         endTime - startTime).count();
 
-    if (exitCode == 0 && fs::exists(output)) {
+    fs::path outputFs = toFsPath(output);
+    if (exitCode == 0 && fs::exists(outputFs)) {
         result.success = true;
-        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(output));
+        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
         reportProgress(input, 1, 1, 100.0, "complete");
         LogManager::instance().logWatermark("video_complete",
             "Video watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
@@ -770,7 +807,7 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
 
     std::string scriptPath = getPdfScriptPath();
     namespace fs = std::filesystem;
-    if (!fs::exists(scriptPath)) {
+    if (!fs::exists(toFsPath(scriptPath))) {
         result.error = "PDF watermark script not found at: " + scriptPath;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "script_not_found", result.error);
@@ -778,7 +815,7 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     }
 
     // Check input file exists (use std::filesystem for Unicode path support)
-    fs::path inputFs(input);
+    fs::path inputFs = toFsPath(input);
     if (!fs::exists(inputFs)) {
         result.error = "Input file not found: " + input;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
@@ -841,9 +878,10 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         endTime - startTime).count();
 
-    if (exitCode == 0 && fs::exists(output)) {
+    fs::path outputFs = toFsPath(output);
+    if (exitCode == 0 && fs::exists(outputFs)) {
         result.success = true;
-        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(output));
+        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
         LogManager::instance().logWatermark("pdf_complete",
             "PDF watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
     } else {
@@ -874,15 +912,15 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
 
     namespace fs = std::filesystem;
 
-    fs::path inputFs(inputPath);
+    fs::path inputFs = toFsPath(inputPath);
     fs::path filename = inputFs.filename();
 
     // Determine base output directory
     fs::path basePath;
     if (!outputDir.empty()) {
-        basePath = fs::path(outputDir);
+        basePath = toFsPath(outputDir);
     } else if (!rootDir.empty()) {
-        basePath = fs::path(rootDir);
+        basePath = toFsPath(rootDir);
     } else {
         basePath = inputFs.parent_path();
     }
@@ -891,7 +929,7 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
     fs::path relativeSub;
     if (!rootDir.empty()) {
         fs::path inputParent = inputFs.parent_path();
-        fs::path rootFs(rootDir);
+        fs::path rootFs = toFsPath(rootDir);
         if (inputParent != rootFs) {
             // Use lexically_relative for safe relative path computation
             relativeSub = inputParent.lexically_relative(rootFs);
@@ -903,12 +941,12 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
     }
 
     // Build: basePath / memberId / relativeSub / filename
-    fs::path memberDir = basePath / memberId / relativeSub;
+    fs::path memberDir = basePath / toFsPath(memberId) / relativeSub;
     fs::create_directories(memberDir);
 
     // Check for existing file and add numbered suffix if needed
-    std::string candidate = (memberDir / filename).string();
-    if (fs::exists(candidate)) {
+    fs::path candidatePath = memberDir / filename;
+    if (fs::exists(candidatePath)) {
         std::string fnStr = filename.string();
         size_t lastDot = fnStr.find_last_of('.');
         std::string baseName = (lastDot == std::string::npos) ?
@@ -916,13 +954,13 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
         std::string ext = (lastDot == std::string::npos) ?
             "" : fnStr.substr(lastDot);
         for (int n = 1; n < 1000; ++n) {
-            candidate = (memberDir / (baseName + " (" + std::to_string(n) + ")" + ext)).string();
-            if (!fs::exists(candidate)) {
+            candidatePath = memberDir / (baseName + " (" + std::to_string(n) + ")" + ext);
+            if (!fs::exists(candidatePath)) {
                 break;
             }
         }
     }
-    return candidate;
+    return fromFsPath(candidatePath);
 }
 
 std::string Watermarker::generateOutputPath(const std::string& inputPath,
@@ -930,7 +968,7 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
                                              const std::string& rootDir) const {
     namespace fs = std::filesystem;
 
-    fs::path inputFs(inputPath);
+    fs::path inputFs = toFsPath(inputPath);
     std::string filename = inputFs.filename().string();
 
     // Find extension
@@ -942,11 +980,11 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
 
     // Build output path
     fs::path sourceDir = inputFs.parent_path();
-    fs::path outDir = outputDir.empty() ? sourceDir : fs::path(outputDir);
+    fs::path outDir = outputDir.empty() ? sourceDir : toFsPath(outputDir);
 
     // Preserve subfolder structure when rootDir is provided
     if (!rootDir.empty() && !outputDir.empty()) {
-        fs::path rootFs(rootDir);
+        fs::path rootFs = toFsPath(rootDir);
         fs::path inputParent = inputFs.parent_path();
         if (inputParent != rootFs) {
             fs::path relativeSub = inputParent.lexically_relative(rootFs);
@@ -966,16 +1004,16 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
     }
 
     // Check if output file already exists; if so, append (1), (2), etc.
-    std::string candidate = (outDir / (baseName + suffix + ext)).string();
-    if (fs::exists(candidate)) {
+    fs::path candidatePath = outDir / (baseName + suffix + ext);
+    if (fs::exists(candidatePath)) {
         for (int n = 1; n < 1000; ++n) {
-            candidate = (outDir / (baseName + suffix + " (" + std::to_string(n) + ")" + ext)).string();
-            if (!fs::exists(candidate)) {
+            candidatePath = outDir / (baseName + suffix + " (" + std::to_string(n) + ")" + ext);
+            if (!fs::exists(candidatePath)) {
                 break;
             }
         }
     }
-    return candidate;
+    return fromFsPath(candidatePath);
 }
 
 // ==================== Progress Reporting ====================
@@ -1128,9 +1166,11 @@ WatermarkResult Watermarker::watermarkFile(const std::string& inputPath,
         result.inputFile = inputPath;
         namespace fs = std::filesystem;
         std::string outPath = outputPath.empty() ? generateOutputPath(inputPath, "") : outputPath;
+        fs::path inputFs = toFsPath(inputPath);
+        fs::path outFs = toFsPath(outPath);
         try {
-            fs::create_directories(fs::path(outPath).parent_path());
-            fs::copy_file(inputPath, outPath, fs::copy_options::overwrite_existing);
+            fs::create_directories(outFs.parent_path());
+            fs::copy_file(inputFs, outFs, fs::copy_options::overwrite_existing);
             result.success = true;
             result.outputFile = outPath;
             LogManager::instance().logWatermark("passthrough_copy",
