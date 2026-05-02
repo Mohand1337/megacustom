@@ -112,6 +112,36 @@ std::string fromFsPath(const std::filesystem::path& p) {
 #endif
 }
 
+// Open a process pipe for a command whose bytes are UTF-8.
+//
+// _popen on Windows decodes the command line via the active code page
+// (CP1252 on most installs), which mangles UTF-8 characters such as the
+// curly apostrophe U+2019 in file paths into mojibake (Whatâ€™s) before
+// cmd.exe ever sees them. ffmpeg and the PDF Python script then try to
+// open a path that no longer matches what is on disk and fail with
+// "No such file or directory" / "Input file not found".
+//
+// Routing through _wpopen lets us hand cmd.exe a UTF-16 command line
+// directly, so non-ASCII paths survive intact. _pclose accepts a stream
+// from either flavor, so the rest of the read loop is unchanged.
+FILE* utf8Popen(const std::string& cmd, const char* mode) {
+#ifdef _WIN32
+    auto toWide = [](const char* src) -> std::wstring {
+        if (!src || !*src) return std::wstring();
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, src, -1, nullptr, 0);
+        if (wlen <= 1) return std::wstring();
+        std::wstring out(static_cast<size_t>(wlen - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, src, -1, out.data(), wlen);
+        return out;
+    };
+    std::wstring wcmd = toWide(cmd.c_str());
+    std::wstring wmode = toWide(mode);
+    return _wpopen(wcmd.c_str(), wmode.c_str());
+#else
+    return popen(cmd.c_str(), mode);
+#endif
+}
+
 // Check if a file exists (use std::filesystem for Unicode path support on Windows)
 bool fileExists(const std::string& path) {
     return std::filesystem::exists(toFsPath(path));
@@ -601,7 +631,7 @@ int Watermarker::runProcess(const std::vector<std::string>& args,
     std::string cmd = cmdStream.str();
 #endif
 
-    FILE* pipe = popen(cmd.c_str(), "r");
+    FILE* pipe = utf8Popen(cmd, "r");
     if (!pipe) {
         stderr_output = "Failed to execute command";
         return -1;
@@ -639,7 +669,7 @@ double Watermarker::getVideoDuration(const std::string& inputPath) {
     cmd += " 2>/dev/null";
 #endif
 
-    FILE* pipe = popen(cmd.c_str(), "r");
+    FILE* pipe = utf8Popen(cmd, "r");
     if (!pipe) {
         return 0.0;
     }
@@ -672,7 +702,7 @@ int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
     std::string cmd = cmdStream.str();
 #endif
 
-    FILE* pipe = popen(cmd.c_str(), "r");
+    FILE* pipe = utf8Popen(cmd, "r");
     if (!pipe) {
         output = "Failed to execute command";
         return -1;
