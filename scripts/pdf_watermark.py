@@ -18,6 +18,19 @@ import sys
 import random
 from io import BytesIO
 
+# Force UTF-8 for stdout/stderr so we can print paths/text containing
+# non-ASCII characters (curly apostrophe etc.) without hitting Windows'
+# default cp1252 charmap codec, which raises:
+#   'charmap' codec can't encode characters in position N: character maps to <undefined>
+# reconfigure() is available on Python 3.7+; reassigning errors='replace'
+# is also a safety net so the watermark still completes if something exotic
+# slips in.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, Exception):
+    pass
+
 try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter
