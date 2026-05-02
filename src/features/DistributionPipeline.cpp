@@ -57,6 +57,20 @@ std::string getHomeDirectory() {
     return home ? std::string(home) : "/tmp";
 #endif
 }
+
+// Construct a std::filesystem::path from a UTF-8 std::string. Mirrors the
+// helper in Watermarker.cpp — on Windows the default fs::path(std::string)
+// constructor decodes via the active code page (CP1252), mangling UTF-8
+// characters such as the curly apostrophe U+2019 into mojibake before
+// fs::exists / fs::copy_file ever look at the disk. Routing through
+// fs::u8path treats the bytes as UTF-8.
+std::filesystem::path toFsPath(const std::string& utf8) {
+#ifdef _WIN32
+    return std::filesystem::u8path(utf8);
+#else
+    return std::filesystem::path(utf8);
+#endif
+}
 } // anonymous namespace
 
 namespace fs = std::filesystem;
@@ -143,15 +157,18 @@ std::map<std::string, std::string> DistributionPipeline::validateSourceFiles(
     std::map<std::string, std::string> results;
 
     for (const auto& file : sourceFiles) {
-        // Check if file exists
-        struct stat st;
-        if (stat(file.c_str(), &st) != 0) {
+        // Check if file exists. stat() on Windows decodes the path via the
+        // active code page, so it fails for UTF-8 paths with non-ASCII
+        // characters even when the file is on disk. fs::exists with
+        // u8path-derived paths handles Unicode correctly.
+        std::error_code ec;
+        if (!fs::exists(toFsPath(file), ec) || ec) {
             results[file] = "File not found";
             continue;
         }
 
         // Check if it's a regular file
-        if (!S_ISREG(st.st_mode)) {
+        if (!fs::is_regular_file(toFsPath(file), ec) || ec) {
             results[file] = "Not a regular file";
             continue;
         }
@@ -302,7 +319,7 @@ bool DistributionPipeline::watermarkForMember(
         return false;
     }
     try {
-        fs::create_directories(tempDir);
+        fs::create_directories(toFsPath(tempDir));
     } catch (const fs::filesystem_error& e) {
         error = "Failed to create temp directory: " + std::string(e.what());
         return false;
@@ -324,7 +341,8 @@ bool DistributionPipeline::watermarkForMember(
                     result.error = "Invalid file path";
                 } else {
                     try {
-                        fs::copy_file(sourceFile, outputPath, fs::copy_options::overwrite_existing);
+                        fs::copy_file(toFsPath(sourceFile), toFsPath(outputPath),
+                                      fs::copy_options::overwrite_existing);
                         result.success = true;
                         result.outputFile = outputPath;
                     } catch (const fs::filesystem_error& e) {
@@ -468,10 +486,12 @@ MemberDistributionStatus DistributionPipeline::processOneMember(
         int64_t watermarkTimeMs = 0;
         int64_t fileSizeBytes = 0;
 
-        // Get file size
-        struct stat st;
-        if (stat(sourceFile.c_str(), &st) == 0) {
-            fileSizeBytes = st.st_size;
+        // Get file size. stat() decodes via Windows active code page, so use
+        // fs::file_size with a u8path-derived path for UTF-8 path support.
+        {
+            std::error_code ec;
+            auto sz = fs::file_size(toFsPath(sourceFile), ec);
+            if (!ec) fileSizeBytes = static_cast<int64_t>(sz);
         }
 
         // Watermark
@@ -646,7 +666,7 @@ DistributionResult DistributionPipeline::distribute(
         return result;
     }
     try {
-        fs::create_directories(m_config.tempDirectory);
+        fs::create_directories(toFsPath(m_config.tempDirectory));
     } catch (const fs::filesystem_error& e) {
         result.errors.push_back("Failed to create temp directory: " + std::string(e.what()));
         result.success = false;

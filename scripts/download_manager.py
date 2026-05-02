@@ -26,6 +26,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import mimetypes
 
+# Force UTF-8 for stdout/stderr so we can print URLs/filenames containing
+# non-ASCII characters (curly apostrophe etc.) without hitting Windows'
+# default cp1252 charmap codec, which raises:
+#   'charmap' codec can't encode characters in position N: character maps to <undefined>
+# Same fix as scripts/pdf_watermark.py.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, Exception):
+    pass
+
 # Global flag for JSON progress output
 JSON_PROGRESS = False
 
