@@ -551,8 +551,11 @@ void MultiUploaderController::startFileUpload(UploadTask& task) {
         processNextTask();
     });
 
-    // Start the upload with listener
-    api->startUpload(localPath.toUtf8().constData(),
+    // Start the upload with listener.
+    // toNativeSeparators avoids "Read error" from MEGA SDK's Windows
+    // FileSystemAccess on forward-slash / mixed-slash paths. No-op on Linux.
+    const QString nativeLocal = QDir::toNativeSeparators(localPath);
+    api->startUpload(nativeLocal.toUtf8().constData(),
                     parentNode.get(),
                     nullptr,  // filename (use original)
                     0,        // mtime (use file's mtime)

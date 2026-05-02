@@ -11,6 +11,7 @@
 
 #include <megaapi.h>
 #include <QDebug>
+#include <algorithm>
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
@@ -19,6 +20,24 @@
 #include <vector>
 
 namespace MegaCustom {
+
+// Convert a local file path to native separators before handing it to the
+// MEGA SDK. The Windows FileSystemAccess fails to open files when the path
+// uses forward slashes (Qt's default) or mixes them with backslashes
+// (a common case where part of the path comes from QString and part from
+// std::filesystem::path) — surfaces as "Upload failed: Read error".
+// No-op on non-Windows.
+//
+// Idempotent — safe to call on already-native paths.
+inline std::string toNativeUploadPath(const std::string& path) {
+#ifdef _WIN32
+    std::string out = path;
+    std::replace(out.begin(), out.end(), '/', '\\');
+    return out;
+#else
+    return path;
+#endif
+}
 
 // ==================== Synchronous Listeners ====================
 
@@ -215,9 +234,10 @@ inline bool megaApiUpload(mega::MegaApi* api, const std::string& localPath,
         return false;
     }
 
-    // Upload file
+    // Upload file (path normalized for Windows FileSystemAccess)
+    const std::string nativeLocal = toNativeUploadPath(localPath);
     SyncTransferListener listener;
-    api->startUpload(localPath.c_str(),
+    api->startUpload(nativeLocal.c_str(),
                      destNode.get(),
                      nullptr,   // filename (use original)
                      0,         // mtime

@@ -901,8 +901,13 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
         int64_t mtimeSeconds = std::chrono::system_clock::to_time_t(
             std::chrono::system_clock::time_point(sctp.time_since_epoch()));
 
-        // Start upload with full API signature
-        m_megaApi->startUpload(f.localPath.c_str(), parentNode, filename.c_str(),
+        // Start upload with full API signature. Convert to native separators
+        // on Windows to avoid MEGA SDK FileSystemAccess "Read error".
+        std::string nativeLocal = f.localPath;
+#ifdef _WIN32
+        std::replace(nativeLocal.begin(), nativeLocal.end(), '/', '\\');
+#endif
+        m_megaApi->startUpload(nativeLocal.c_str(), parentNode, filename.c_str(),
                                mtimeSeconds, nullptr, false, false, nullptr, nullptr);
 
         // Simple wait for upload (in production, use proper listener)

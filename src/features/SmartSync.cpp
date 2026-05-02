@@ -764,8 +764,13 @@ void SmartSync::executeSyncPlan(const SyncPlan& plan, SyncInstance* instance) {
         mega::MegaNode* parentNode = ensureRemotePath(remoteDir);
 
         if (parentNode) {
-            // Start upload
-            m_megaApi->startUpload(localPath.c_str(), parentNode, nullptr, 0, nullptr,
+            // Start upload. Convert to native separators on Windows to avoid
+            // MEGA SDK FileSystemAccess "Read error" on forward-slash paths.
+            std::string nativeLocal = localPath;
+#ifdef _WIN32
+            std::replace(nativeLocal.begin(), nativeLocal.end(), '/', '\\');
+#endif
+            m_megaApi->startUpload(nativeLocal.c_str(), parentNode, nullptr, 0, nullptr,
                                  false, false, nullptr, m_listener.get());
 
             instance->progress.completedOperations++;

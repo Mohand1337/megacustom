@@ -555,7 +555,13 @@ void MultiUploader::executeUploadTask(UploadTaskImpl* task) {
         auto startTime = std::chrono::steady_clock::now();
 
         int handle = m_listener->getNextHandle();
-        m_megaApi->startUpload(filePath.c_str(), destNode, uploadName.c_str(),
+        // Convert to native separators on Windows to avoid MEGA SDK
+        // FileSystemAccess "Read error" on forward-slash paths.
+        std::string nativeLocal = filePath;
+#ifdef _WIN32
+        std::replace(nativeLocal.begin(), nativeLocal.end(), '/', '\\');
+#endif
+        m_megaApi->startUpload(nativeLocal.c_str(), destNode, uploadName.c_str(),
                                0, nullptr, false, false, nullptr, m_listener.get());
 
         // Wait for completion - use CV with timeout for progress updates

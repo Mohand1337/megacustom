@@ -252,8 +252,10 @@ void TransferController::uploadFile(const QString& localPath, const QString& rem
         });
     });
 
-    // Start upload with listener
-    m_d->megaApi->startUpload(localPath.toUtf8().constData(),
+    // Start upload with listener. Native separators avoid MEGA SDK's
+    // Windows "Read error" on forward-slash paths. No-op on Linux.
+    const QString nativeLocal = QDir::toNativeSeparators(localPath);
+    m_d->megaApi->startUpload(nativeLocal.toUtf8().constData(),
                              parentNode.get(),
                              nullptr,  // filename
                              0,        // mtime
@@ -328,7 +330,8 @@ void TransferController::uploadFolder(const QString& localPath, const QString& r
             }
 
             if (parentNode) {
-                m_d->megaApi->startUpload(filePath.toUtf8().constData(),
+                const QString nativeLocal = QDir::toNativeSeparators(filePath);
+                m_d->megaApi->startUpload(nativeLocal.toUtf8().constData(),
                                          parentNode.get(),
                                          nullptr, 0, nullptr, false, false, nullptr, nullptr);
                 completed++;

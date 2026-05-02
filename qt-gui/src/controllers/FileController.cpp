@@ -231,8 +231,10 @@ void FileController::createRemoteFile(const QString& name) {
         return;
     }
 
+    // Native separators avoid MEGA SDK's Windows "Read error". No-op on Linux.
+    const QString nativeLocal = QDir::toNativeSeparators(tempPath);
     megaApi->startUpload(
-        tempPath.toUtf8().constData(),
+        nativeLocal.toUtf8().constData(),
         parentNode.get(),
         name.toUtf8().constData(),
         0,

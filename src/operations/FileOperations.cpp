@@ -1,5 +1,6 @@
 #include "operations/FileOperations.h"
 #include "megaapi.h"
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -247,9 +248,14 @@ TransferResult FileOperations::uploadFile(const std::string& localPath,
     // Determine final filename
     std::string uploadName = config.customName.value_or(fs::path(localPath).filename().string());
 
-    // Start upload
+    // Start upload. Convert to native separators on Windows to avoid MEGA
+    // SDK FileSystemAccess "Read error" on forward-slash paths.
     // Parameters: localPath, parent, fileName, mtime, appData, isSourceTemp, startFirst, cancelToken, listener
-    m_megaApi->startUpload(localPath.c_str(), parentNode, uploadName.c_str(),
+    std::string nativeLocal = localPath;
+#ifdef _WIN32
+    std::replace(nativeLocal.begin(), nativeLocal.end(), '/', '\\');
+#endif
+    m_megaApi->startUpload(nativeLocal.c_str(), parentNode, uploadName.c_str(),
                           0, nullptr, false, false, nullptr, m_listener.get());
 
     // Wait for completion

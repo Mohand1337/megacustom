@@ -390,7 +390,9 @@ void SmartSyncController::performSync(SyncProfile& profile) {
                     api->getNodeByPath(remoteDir.toUtf8().constData()));
 
                 if (parentNode) {
-                    api->startUpload(action.localPath.toUtf8().constData(),
+                    // Native separators avoid MEGA SDK's Windows "Read error".
+                    const QString nativeLocal = QDir::toNativeSeparators(action.localPath);
+                    api->startUpload(nativeLocal.toUtf8().constData(),
                                    parentNode.get(), nullptr, 0, nullptr, false, false, nullptr);
                     filesUploaded++;
                     bytesTransferred += action.localSize;
