@@ -228,7 +228,16 @@ void WatermarkWorker::process() {
                         std::string error;
                         qint64 fileSize = QFileInfo(memberOutputFiles[f]).size();
 
-                        bool ok = megaApiUpload(api, memberOutputFiles[f].toStdString(),
+                        // MEGA SDK's Windows FileSystemAccess fails with
+                        // "Read error" on mixed forward/backward slashes —
+                        // buildMemberOutputPath emits backslashes via fs::path
+                        // while the parent dir keeps Qt's forward slashes, so
+                        // normalize before handing it to startUpload. No-op on
+                        // Linux. Same fix as commit 8b24daa for DistributionPanel.
+                        const QString nativeLocal =
+                            QDir::toNativeSeparators(memberOutputFiles[f]);
+
+                        bool ok = megaApiUpload(api, nativeLocal.toStdString(),
                                                 uploadDest.toStdString(), error);
 
                         qint64 uploadMs = uploadTimer.elapsed();
