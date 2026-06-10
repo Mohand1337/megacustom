@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QFileSystemModel>
 #include <QStandardItemModel>
+#include <QItemSelectionModel>
 #include <QMenu>
 #include <QAction>
 #include <QDragEnterEvent>
@@ -26,10 +27,20 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QDebug>
-#include <QThread>
-#include <QCoreApplication>
 
 namespace MegaCustom {
+
+namespace {
+
+QString childPath(const QString& basePath, const QString& childName)
+{
+    if (basePath.isEmpty() || basePath == "/") {
+        return "/" + childName;
+    }
+    return basePath.endsWith('/') ? basePath + childName : basePath + "/" + childName;
+}
+
+} // namespace
 
 FileExplorer::FileExplorer(ExplorerType type, QWidget* parent)
     : QWidget(parent)
@@ -105,15 +116,27 @@ QString FileExplorer::currentPath() const
 
 void FileExplorer::navigateTo(const QString& path)
 {
+    navigateToInternal(path, true);
+}
+
+void FileExplorer::navigateToInternal(const QString& path, bool addHistoryEntry)
+{
     if (path == m_currentPath) {
         return;
     }
 
-    m_currentPath = path;
-    addToHistory(path);
+    QString targetPath = path;
+    if (m_type == Remote && targetPath.isEmpty()) {
+        targetPath = "/";
+    }
+
+    m_currentPath = targetPath;
+    if (addHistoryEntry) {
+        addToHistory(targetPath);
+    }
 
     if (m_type == Local && m_localModel) {
-        QModelIndex index = m_localModel->index(path);
+        QModelIndex index = m_localModel->index(targetPath);
 
         // Don't change root - keep full hierarchy visible
         // Instead, expand path to target and select it
@@ -134,7 +157,7 @@ void FileExplorer::navigateTo(const QString& path)
         m_fileCount = 0;
         m_folderCount = 0;
         m_totalSize = 0;
-        QDir dir(path);
+        QDir dir(targetPath);
         QFileInfoList entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
         for (const QFileInfo& info : entries) {
             if (info.isDir()) {
@@ -146,12 +169,12 @@ void FileExplorer::navigateTo(const QString& path)
         }
     } else if (m_type == Remote && m_fileController) {
         // Request file list for the new path from MEGA
-        m_fileController->refreshRemote(path);
+        m_fileController->refreshRemote(targetPath);
     }
 
     updateStatus();
 
-    emit pathChanged(path);
+    emit pathChanged(targetPath);
 }
 
 QStringList FileExplorer::selectedFiles() const
@@ -162,26 +185,31 @@ QStringList FileExplorer::selectedFiles() const
         return files;
     }
 
-    QModelIndexList indexes = m_treeView->selectionModel()->selectedIndexes();
+    QModelIndexList indexes = m_treeView->selectionModel()->selectedRows(0);
+    if (indexes.isEmpty()) {
+        const QModelIndexList selectedIndexes = m_treeView->selectionModel()->selectedIndexes();
+        for (const QModelIndex& index : selectedIndexes) {
+            if (index.column() == 0) {
+                indexes << index;
+            }
+        }
+    }
 
     for (const QModelIndex& index : indexes) {
         if (index.column() == 0) { // Only process first column
             if (m_type == Local && m_localModel) {
                 files << m_localModel->filePath(index);
             } else if (m_remoteModel) {
-                // For remote files, construct the full path from current path + filename
-                QString fileName = index.data(Qt::DisplayRole).toString();
-                QString fullPath;
-                if (m_currentPath == "/" || m_currentPath.isEmpty()) {
-                    fullPath = "/" + fileName;
-                } else {
-                    fullPath = m_currentPath + "/" + fileName;
+                QString fullPath = index.data(Qt::UserRole).toString();
+                if (fullPath.isEmpty()) {
+                    fullPath = childPath(m_currentPath, index.data(Qt::DisplayRole).toString());
                 }
                 files << fullPath;
             }
         }
     }
 
+    files.removeDuplicates();
     return files;
 }
 
@@ -233,12 +261,20 @@ void FileExplorer::clearSearchFilter()
 
 void FileExplorer::clear()
 {
-    m_currentPath.clear();
+    m_currentPath = (m_type == Remote) ? "/" : QString();
     m_history.clear();
     m_historyIndex = -1;
+    m_searchFilter.clear();
+    m_fileCount = 0;
+    m_folderCount = 0;
+    m_totalSize = 0;
+    m_waitingForRenameRefresh = false;
+    m_pendingSelectAfterRefresh.clear();
 
     if (m_localModel) {
         m_localModel->setRootPath("");
+    } else if (m_remoteModel) {
+        m_remoteModel->removeRows(0, m_remoteModel->rowCount());
     }
 
     updateNavigationButtons();
@@ -268,6 +304,9 @@ void FileExplorer::refresh()
         }
     } else if (m_fileController) {
         // Request refresh from controller for remote
+        if (m_currentPath.isEmpty()) {
+            m_currentPath = "/";
+        }
         m_fileController->refreshRemote(m_currentPath);
     }
 
@@ -279,8 +318,7 @@ void FileExplorer::goBack()
     if (m_historyIndex > 0) {
         m_historyIndex--;
         QString path = m_history[m_historyIndex];
-        m_currentPath = path;
-        navigateTo(path);
+        navigateToInternal(path, false);
     }
 }
 
@@ -289,8 +327,7 @@ void FileExplorer::goForward()
     if (m_historyIndex < m_history.size() - 1) {
         m_historyIndex++;
         QString path = m_history[m_historyIndex];
-        m_currentPath = path;
-        navigateTo(path);
+        navigateToInternal(path, false);
     }
 }
 
@@ -324,7 +361,7 @@ void FileExplorer::createNewFolder()
     );
 
     if (ok && !folderName.isEmpty()) {
-        QString newPath = m_currentPath + "/" + folderName;
+        QString newPath = childPath(m_currentPath, folderName);
 
         if (m_type == Local) {
             QDir dir(m_currentPath);
@@ -353,7 +390,7 @@ void FileExplorer::createNewFile()
 
     if (ok && !fileName.isEmpty()) {
         if (m_type == Local) {
-            QString newPath = m_currentPath + "/" + fileName;
+            QString newPath = childPath(m_currentPath, fileName);
             QFile file(newPath);
             if (file.open(QIODevice::WriteOnly)) {
                 file.close();
@@ -442,19 +479,6 @@ void FileExplorer::renameSelected()
             // Use a flag to track we're waiting for refresh after rename
             m_waitingForRenameRefresh = true;
             refresh();
-
-            // Wait for the refresh to complete (with timeout)
-            // This ensures the model is updated before user can select files
-            int waited = 0;
-            while (m_waitingForRenameRefresh && waited < 5000) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-                QThread::msleep(50);
-                waited += 50;
-            }
-            m_waitingForRenameRefresh = false;
-
-            // Select the renamed file
-            selectFileByName(newName);
         }
     }
 }
@@ -503,6 +527,7 @@ void FileExplorer::setupUI()
     m_treeView->setObjectName("FileListView");
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     m_treeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setDragDropMode(QAbstractItemView::DragDrop);
     m_treeView->setHeaderHidden(false);  // Show column headers: Name, Size, Modified
     m_treeView->setRootIsDecorated(true);  // Enable tree expansion arrows for folder navigation
@@ -680,6 +705,8 @@ void FileExplorer::initializeModel()
         m_localModel->setFilter(filters);
 
         m_treeView->setModel(m_localModel);
+        connect(m_treeView->selectionModel(), &QItemSelectionModel::selectionChanged,
+                this, &FileExplorer::onSelectionChanged);
 
         // Set root to home directory to show reasonable starting hierarchy
         QModelIndex homeIndex = m_localModel->index(QDir::homePath());
@@ -697,6 +724,8 @@ void FileExplorer::initializeModel()
         m_remoteModel->setHorizontalHeaderLabels({"Name", "Size", "Modified"});
 
         m_treeView->setModel(m_remoteModel);
+        connect(m_treeView->selectionModel(), &QItemSelectionModel::selectionChanged,
+                this, &FileExplorer::onSelectionChanged);
 
         // Resize columns
         m_treeView->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -734,7 +763,18 @@ void FileExplorer::onItemDoubleClicked(const QModelIndex& index)
 
 void FileExplorer::onCustomContextMenu(const QPoint& pos)
 {
-    QPoint globalPos = mapToGlobal(pos);
+    QModelIndex clickedIndex = m_treeView->indexAt(pos);
+    if (clickedIndex.isValid() && m_treeView->selectionModel()) {
+        QModelIndex rowIndex = clickedIndex.sibling(clickedIndex.row(), 0);
+        if (!m_treeView->selectionModel()->isSelected(rowIndex)) {
+            m_treeView->selectionModel()->clearSelection();
+            m_treeView->selectionModel()->select(rowIndex,
+                QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            m_treeView->setCurrentIndex(rowIndex);
+        }
+    }
+
+    QPoint globalPos = m_treeView->viewport()->mapToGlobal(pos);
 
     // Update action states
     bool hasSelection = !selectedFiles().isEmpty();
@@ -772,6 +812,9 @@ void FileExplorer::updateStatus()
         status += QString(", %1").arg(formatFileSize(m_totalSize));
     }
     m_statusLabel->setText(status);
+    auto& tm = ThemeManager::instance();
+    m_statusLabel->setStyleSheet(QString("QLabel { padding: 5px; background-color: %1; color: %2; }")
+        .arg(tm.surface2().name(), tm.textPrimary().name()));
 
     // Toggle visibility between tree view and empty state
     bool isEmpty = (totalItems == 0) && !m_isLoading;
@@ -941,8 +984,14 @@ void FileExplorer::onRemoteFileListReceived(const QVariantList& files)
     updateStatus();
     qDebug() << "FileExplorer: Model updated with" << m_remoteModel->rowCount() << "rows";
 
-    // Clear rename wait flag - model is now up to date
-    m_waitingForRenameRefresh = false;
+    if (m_waitingForRenameRefresh && !m_pendingSelectAfterRefresh.isEmpty()) {
+        QString pendingName = m_pendingSelectAfterRefresh;
+        m_pendingSelectAfterRefresh.clear();
+        m_waitingForRenameRefresh = false;
+        selectFileByName(pendingName);
+    } else {
+        m_waitingForRenameRefresh = false;
+    }
 }
 
 void FileExplorer::onLoadingStarted(const QString& path)
@@ -999,6 +1048,8 @@ void FileExplorer::onLoadingError(const QString& error)
         .arg(errorColor.name()));
 
     qDebug() << "FileExplorer: Loading error -" << error;
+    m_waitingForRenameRefresh = false;
+    m_pendingSelectAfterRefresh.clear();
 }
 
 void FileExplorer::showSearchResults(const QVariantList& results)

@@ -51,8 +51,7 @@ void AccountSwitcherWidget::setupUI()
     setupDropdownSection();
 
     // Initially hide dropdown
-    m_dropdownFrame->setMaximumHeight(0);
-    m_dropdownFrame->setVisible(false);
+    m_dropdownFrame->hide();
 }
 
 void AccountSwitcherWidget::setupHeaderSection()
@@ -113,7 +112,7 @@ void AccountSwitcherWidget::setupHeaderSection()
 
 void AccountSwitcherWidget::setupDropdownSection()
 {
-    m_dropdownFrame = new QFrame(this);
+    m_dropdownFrame = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
     m_dropdownFrame->setObjectName("AccountDropdown");
 
     QVBoxLayout* dropdownLayout = new QVBoxLayout(m_dropdownFrame);
@@ -166,8 +165,6 @@ void AccountSwitcherWidget::setupDropdownSection()
 
     dropdownLayout->addLayout(buttonsRow);
 
-    m_mainLayout->addWidget(m_dropdownFrame);
-
     // Setup animation
     m_dropdownAnimation = new QPropertyAnimation(m_dropdownFrame, "maximumHeight", this);
     m_dropdownAnimation->setDuration(200);
@@ -181,6 +178,7 @@ void AccountSwitcherWidget::connectSignals()
 
     // Make entire header frame clickable
     m_headerFrame->installEventFilter(this);
+    m_dropdownFrame->installEventFilter(this);
 
     // Search
     connect(m_searchBox, &QLineEdit::textChanged, this, &AccountSwitcherWidget::onSearchTextChanged);
@@ -313,6 +311,10 @@ bool AccountSwitcherWidget::eventFilter(QObject* obj, QEvent* event)
             toggleExpanded();
             return true;
         }
+    } else if (obj == m_dropdownFrame && event->type() == QEvent::Hide && m_expanded) {
+        m_expanded = false;
+        m_expandButton->setText("▼");
+        emit expandedChanged(false);
     }
     return QWidget::eventFilter(obj, event);
 }
@@ -427,10 +429,6 @@ void AccountSwitcherWidget::updateActiveAccountDisplay()
 void AccountSwitcherWidget::animateDropdown(bool show)
 {
     if (show) {
-        // Make dropdown a popup that floats above the layout
-        m_dropdownFrame->setParent(nullptr);
-        m_dropdownFrame->setWindowFlags(Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
-
         // Calculate dropdown height dynamically based on content
         int numAccounts = AccountManager::instance().allAccounts().size();
         int itemHeight = 48;       // Each account item is 48px
@@ -442,6 +440,7 @@ void AccountSwitcherWidget::animateDropdown(bool show)
 
         // Position below the header frame - use widget's coordinates for proper alignment
         QPoint globalPos = this->mapToGlobal(QPoint(0, m_headerFrame->height()));
+        m_dropdownFrame->setMaximumHeight(QWIDGETSIZE_MAX);
         m_dropdownFrame->setGeometry(globalPos.x(), globalPos.y(), this->width(), targetHeight);
         m_dropdownFrame->show();
         m_dropdownFrame->raise();

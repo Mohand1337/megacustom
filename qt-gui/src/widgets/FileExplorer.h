@@ -343,6 +343,12 @@ private slots:
 
 private:
     /**
+     * Navigate to a path. Back/forward navigation uses this without adding
+     * another history entry.
+     */
+    void navigateToInternal(const QString& path, bool addHistoryEntry);
+
+    /**
      * Set up the UI
      */
     void setupUI();

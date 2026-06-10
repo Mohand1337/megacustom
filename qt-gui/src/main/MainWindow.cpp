@@ -1168,14 +1168,23 @@ void MainWindow::createStatusBar()
 void MainWindow::updateActions()
 {
     // Update action states based on login status
+    bool hasSelection = m_remoteExplorer && m_remoteExplorer->hasSelection();
+    bool canUseSelection = m_isLoggedIn && hasSelection;
+
     m_loginAction->setEnabled(!m_isLoggedIn);
     m_logoutAction->setEnabled(m_isLoggedIn);
     m_uploadFileAction->setEnabled(m_isLoggedIn);
     m_uploadFolderAction->setEnabled(m_isLoggedIn);
-    m_downloadAction->setEnabled(m_isLoggedIn);
+    m_downloadAction->setEnabled(canUseSelection);
     m_newFolderAction->setEnabled(m_isLoggedIn);
-    m_deleteAction->setEnabled(m_isLoggedIn);
-    m_renameAction->setEnabled(m_isLoggedIn);
+    m_deleteAction->setEnabled(canUseSelection);
+    m_renameAction->setEnabled(canUseSelection);
+
+    if (m_topToolbar) {
+        m_topToolbar->setActionsEnabled(m_isLoggedIn);
+        m_topToolbar->setDownloadEnabled(canUseSelection);
+        m_topToolbar->setDeleteEnabled(canUseSelection);
+    }
 }
 
 void MainWindow::connectSignals()
@@ -1192,6 +1201,11 @@ void MainWindow::connectSignals()
                     if (m_topToolbar) {
                         m_topToolbar->setCurrentPath(path);
                     }
+                    updateActions();
+                });
+        connect(m_remoteExplorer, &FileExplorer::selectionChanged,
+                this, [this](const QStringList&) {
+                    updateActions();
                 });
 
         // Cross-account transfer signals
@@ -1541,6 +1555,7 @@ void MainWindow::onLoginStatusChanged(bool loggedIn)
     if (m_topToolbar) {
         m_topToolbar->setActionsEnabled(loggedIn);
     }
+    updateActions();
 
     if (loggedIn) {
         // Update user label

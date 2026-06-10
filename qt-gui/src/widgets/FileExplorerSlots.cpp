@@ -12,9 +12,6 @@ void FileExplorer::onSelectionChanged(const QItemSelection& selected, const QIte
     Q_UNUSED(selected);
     Q_UNUSED(deselected);
 
-    // Update status when selection changes
-    updateStatus();
-
     // Emit signal with selected files
     QStringList selectedPaths = selectedFiles();
     emit selectionChanged(selectedPaths);

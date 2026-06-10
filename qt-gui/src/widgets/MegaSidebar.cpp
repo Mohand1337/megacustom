@@ -233,6 +233,7 @@ void MegaSidebar::setupToolsSection()
     m_contentManagerBtn->setObjectName("ContentManagerButton");
     m_contentManagerBtn->setToolTip("Audit member content and organize files");
     connect(m_contentManagerBtn, &QPushButton::clicked, this, [this]() {
+        setActiveItem(NavigationItem::ContentManager);
         emit navigationItemClicked(NavigationItem::ContentManager);
     });
     toolsLayout->addWidget(m_contentManagerBtn);
@@ -392,6 +393,7 @@ void MegaSidebar::setLoggedIn(bool loggedIn)
     m_cloudCopierBtn->setEnabled(loggedIn);
     m_smartSyncBtn->setEnabled(loggedIn);
     m_distributionBtn->setEnabled(loggedIn);
+    if (m_contentManagerBtn) m_contentManagerBtn->setEnabled(loggedIn);
     m_transfersBtn->setEnabled(loggedIn);
 }
 

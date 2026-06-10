@@ -27,10 +27,10 @@ inline qreal ratio() {
 /**
  * Scale a single integer value
  * @param baseSize Size in logical pixels
- * @return Size in device pixels
+ * @return Size in logical pixels
  */
 inline int scale(int baseSize) {
-    return qRound(baseSize * ratio());
+    return baseSize;
 }
 
 /**
@@ -55,10 +55,10 @@ inline QSize scale(const QSize& size) {
 /**
  * Scale a float value
  * @param baseSize Size in logical pixels
- * @return Size in device pixels
+ * @return Size in logical pixels
  */
 inline qreal scaleF(qreal baseSize) {
-    return baseSize * ratio();
+    return baseSize;
 }
 
 } // namespace DpiScaler

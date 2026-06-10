@@ -349,7 +349,7 @@ void QuickPeekPanel::onItemContextMenu(const QPoint& pos)
     QAction* downloadAction = menu.addAction(QIcon(":/icons/download.svg"), "Download");
     connect(downloadAction, &QAction::triggered, this, &QuickPeekPanel::onDownload);
 
-    menu.exec(m_treeWidget->mapToGlobal(pos));
+    menu.exec(m_treeWidget->viewport()->mapToGlobal(pos));
 }
 
 void QuickPeekPanel::onSwitchToAccount()

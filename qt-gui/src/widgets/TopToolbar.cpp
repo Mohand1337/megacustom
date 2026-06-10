@@ -136,6 +136,7 @@ void TopToolbar::setActionsEnabled(bool enabled)
     m_uploadBtn->setEnabled(enabled);
     m_downloadBtn->setEnabled(enabled);
     m_newFolderBtn->setEnabled(enabled);
+    m_createFileBtn->setEnabled(enabled);
     m_deleteBtn->setEnabled(enabled);
     m_refreshBtn->setEnabled(enabled);
 }

@@ -2,8 +2,6 @@
 #include "ModernMenu.h"
 #include "../styles/ThemeManager.h"
 #include <QGraphicsDropShadowEffect>
-#include <QPainter>
-#include <QPainterPath>
 #include <QShowEvent>
 #include <QLabel>
 #include <QWidgetAction>
@@ -229,36 +227,6 @@ void ModernMenu::showEvent(QShowEvent* event)
         setContentsMargins(m_shadowRadius / 2, m_shadowRadius / 4,
                           m_shadowRadius / 2, m_shadowRadius / 2);
     }
-}
-
-void ModernMenu::paintEvent(QPaintEvent* event)
-{
-    Q_UNUSED(event);
-
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-
-    // Get colors from theme
-    auto& theme = ThemeManager::instance();
-    QColor bgColor = theme.surfacePrimary();
-    QColor borderColor = theme.borderStrong();
-
-    // Calculate the drawing rect (accounting for shadow padding)
-    QRect drawRect = rect();
-    if (m_shadowEnabled) {
-        int padding = m_shadowRadius / 2;
-        drawRect.adjust(padding, padding / 2, -padding, -padding);
-    }
-
-    // Draw rounded background
-    QPainterPath path;
-    path.addRoundedRect(drawRect, m_borderRadius, m_borderRadius);
-
-    painter.fillPath(path, bgColor);
-
-    // Draw border
-    painter.setPen(QPen(borderColor, 1));
-    painter.drawPath(path);
 }
 
 } // namespace MegaCustom
