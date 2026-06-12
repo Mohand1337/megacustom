@@ -194,6 +194,11 @@ signals:
      */
     void crossAccountMoveRequested(const QStringList& sourcePaths, const QString& targetAccountId);
 
+    /**
+     * Emitted after a bulk rename batch has been submitted.
+     */
+    void bulkRenameCompleted();
+
 public slots:
     /**
      * Go back in history

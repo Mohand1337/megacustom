@@ -382,6 +382,12 @@ void SearchResultsPanel::setSearchIndex(CloudSearchIndex* index)
     if (m_searchIndex) {
         connect(m_searchIndex, &CloudSearchIndex::indexingFinished,
                 this, &SearchResultsPanel::updateStatusBar);
+        connect(m_searchIndex, &CloudSearchIndex::indexingFinished,
+                this, [this]() {
+                    if (!m_currentQuery.isEmpty()) {
+                        executeSearch();
+                    }
+                });
     }
 
     updateStatusBar();
@@ -510,8 +516,6 @@ void SearchResultsPanel::onBulkRename()
         QString("Rename requests sent for %1 %2.")
             .arg(requestedCount)
             .arg(requestedCount == 1 ? "item" : "items"));
-
-    QTimer::singleShot(500, this, &SearchResultsPanel::executeSearch);
 }
 
 void SearchResultsPanel::populateResults(const QVector<SearchResult>& results)

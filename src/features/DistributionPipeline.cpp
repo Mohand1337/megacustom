@@ -85,6 +85,29 @@ bool isDiskSpaceErrorText(const std::string& error) {
         || lower.find("device full") != std::string::npos;
 }
 
+std::filesystem::path nearestExistingPath(std::filesystem::path path) {
+    std::error_code ec;
+    if (path.empty()) {
+        path = std::filesystem::current_path(ec);
+        return ec ? std::filesystem::path(".") : path;
+    }
+
+    path = std::filesystem::absolute(path, ec);
+    if (ec) {
+        return std::filesystem::path(".");
+    }
+
+    while (!path.empty() && !std::filesystem::exists(path, ec)) {
+        const auto parent = path.parent_path();
+        if (parent == path) {
+            break;
+        }
+        path = parent;
+    }
+
+    return path.empty() ? std::filesystem::path(".") : path;
+}
+
 bool hasDiskSpaceForSource(const std::string& tempDirectory,
                            const std::string& sourceFile,
                            std::string& error) {
@@ -94,7 +117,7 @@ bool hasDiskSpaceForSource(const std::string& tempDirectory,
         return true;
     }
 
-    const auto space = std::filesystem::space(toFsPath(tempDirectory), ec);
+    const auto space = std::filesystem::space(nearestExistingPath(toFsPath(tempDirectory)), ec);
     if (ec) {
         return true;
     }
@@ -417,7 +440,8 @@ bool DistributionPipeline::watermarkForMember(
                 wmConfig.primaryText = memberId;
             }
             watermarker.setConfig(wmConfig);
-            std::string outPath = watermarker.buildMemberOutputPath(sourceFile, tempDir, memberId);
+            std::string outPath = watermarker.buildMemberOutputPath(
+                sourceFile, m_config.tempDirectory, memberId);
             result = watermarker.watermarkFile(sourceFile, outPath);
             if (result.success) {
                 outputPath = result.outputFile;

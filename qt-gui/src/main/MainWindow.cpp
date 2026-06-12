@@ -96,6 +96,7 @@ MainWindow::MainWindow(QWidget* parent)
     , m_searchPanel(nullptr)
     , m_searchIndex(nullptr)
     , m_advancedSearchPanel(nullptr)
+    , m_postRenameRefreshTimer(nullptr)
     , m_crossAccountLogPanel(nullptr)
     , m_crossAccountTransferManager(nullptr)
     , m_transferLogStore(nullptr)
@@ -103,6 +104,24 @@ MainWindow::MainWindow(QWidget* parent)
     , m_isLoggedIn(false)
     , m_loginDialogShowing(false)
 {
+    m_postRenameRefreshTimer = new QTimer(this);
+    m_postRenameRefreshTimer->setSingleShot(true);
+    connect(m_postRenameRefreshTimer, &QTimer::timeout, this, [this]() {
+        if (!m_isLoggedIn) {
+            return;
+        }
+        if (m_searchIndex && m_searchIndex->isBuilding()) {
+            m_postRenameRefreshTimer->start(1000);
+            return;
+        }
+        if (m_remoteExplorer) {
+            m_remoteExplorer->refresh();
+        }
+        if (m_fileController && m_searchIndex) {
+            m_fileController->buildSearchIndex(m_searchIndex);
+        }
+    });
+
     setupUI();
     createActions();
     createMenus();
@@ -877,6 +896,11 @@ void MainWindow::setupUI()
                 m_fileController->renameRemote(path, newName);
             }
         });
+
+        connect(m_advancedSearchPanel, &AdvancedSearchPanel::bulkRenameRequested,
+                this, [this](const QStringList&) {
+                    schedulePostRenameRefresh();
+                });
     }
 
     // Setup account keyboard shortcuts
@@ -1213,6 +1237,8 @@ void MainWindow::connectSignals()
                 this, &MainWindow::onCrossAccountCopy);
         connect(m_remoteExplorer, &FileExplorer::crossAccountMoveRequested,
                 this, &MainWindow::onCrossAccountMove);
+        connect(m_remoteExplorer, &FileExplorer::bulkRenameCompleted,
+                this, &MainWindow::schedulePostRenameRefresh);
     }
 
     // ========================================
@@ -1251,7 +1277,19 @@ void MainWindow::connectSignals()
             }
         });
 
+        connect(m_searchPanel, &SearchResultsPanel::bulkRenameRequested,
+                this, [this](const QStringList&) {
+                    schedulePostRenameRefresh();
+                });
+
         // Note: SearchResultsPanel handles keyboard via keyPressEvent when it has focus
+    }
+}
+
+void MainWindow::schedulePostRenameRefresh()
+{
+    if (m_postRenameRefreshTimer) {
+        m_postRenameRefreshTimer->start(1500);
     }
 }
 

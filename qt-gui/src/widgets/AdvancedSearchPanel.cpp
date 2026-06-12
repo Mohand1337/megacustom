@@ -608,6 +608,12 @@ void AdvancedSearchPanel::setSearchIndex(CloudSearchIndex* index)
                 this, &AdvancedSearchPanel::updateIndexStatus);
         connect(m_searchIndex, &CloudSearchIndex::indexingFinished,
                 this, &AdvancedSearchPanel::updateIndexStatus);
+        connect(m_searchIndex, &CloudSearchIndex::indexingFinished,
+                this, [this]() {
+                    if (m_searchEdit && !m_searchEdit->text().trimmed().isEmpty()) {
+                        executeSearch();
+                    }
+                });
         connect(m_searchIndex, &CloudSearchIndex::indexingProgress,
                 this, &AdvancedSearchPanel::updateIndexStatus);
     }
@@ -1000,9 +1006,6 @@ void AdvancedSearchPanel::onBulkRename()
                     "Check the file explorer to verify results.")
             .arg(successCount)
             .arg(successCount == 1 ? "item" : "items"));
-
-        // Refresh search results after rename
-        QTimer::singleShot(500, this, &AdvancedSearchPanel::executeSearch);
     }
 }
 

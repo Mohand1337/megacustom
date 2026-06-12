@@ -16,6 +16,7 @@ class QAction;
 class QCloseEvent;
 class QTabWidget;
 class QStackedWidget;
+class QTimer;
 QT_END_NAMESPACE
 
 namespace MegaCustom {
@@ -365,6 +366,11 @@ private:
      */
     bool checkUnsavedChanges();
 
+    /**
+     * Refresh remote UI and rebuild the cloud search index after rename batches.
+     */
+    void schedulePostRenameRefresh();
+
 private:
     // Controllers
     AuthController* m_authController;
@@ -399,6 +405,7 @@ private:
     SearchResultsPanel* m_searchPanel;
     CloudSearchIndex* m_searchIndex;
     AdvancedSearchPanel* m_advancedSearchPanel;
+    QTimer* m_postRenameRefreshTimer;
 
     // Cross-account components
     CrossAccountLogPanel* m_crossAccountLogPanel;

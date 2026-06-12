@@ -605,6 +605,9 @@ void FileExplorer::bulkRenameSelected()
     }
 
     refresh();
+    if (requestedCount > 0) {
+        emit bulkRenameCompleted();
+    }
 
     if (failedCount > 0) {
         QMessageBox::warning(this, "Bulk Rename",
