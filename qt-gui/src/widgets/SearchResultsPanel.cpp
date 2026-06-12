@@ -1,5 +1,6 @@
 #include "SearchResultsPanel.h"
 #include "IconProvider.h"
+#include "dialogs/BulkNameEditorDialog.h"
 #include "styles/ThemeManager.h"
 #include <algorithm>
 #include <QPainter>
@@ -8,6 +9,7 @@
 #include <QKeyEvent>
 #include <QDebug>
 #include <QStyle>
+#include <QMessageBox>
 
 namespace MegaCustom {
 
@@ -359,15 +361,7 @@ void SearchResultsPanel::setupUI()
     m_bulkRenameBtn = new QPushButton("Bulk Rename...", this);
     m_bulkRenameBtn->setFocusPolicy(Qt::NoFocus);  // Don't steal focus from search field
     m_bulkRenameBtn->setVisible(false); // Show when results available
-    connect(m_bulkRenameBtn, &QPushButton::clicked, [this]() {
-        QStringList handles;
-        for (int i = 0; i < m_model->rowCount(); ++i) {
-            handles.append(m_model->item(i)->data(SearchResultDelegate::HandleRole).toString());
-        }
-        if (!handles.isEmpty()) {
-            emit bulkRenameRequested(handles);
-        }
-    });
+    connect(m_bulkRenameBtn, &QPushButton::clicked, this, &SearchResultsPanel::onBulkRename);
     statusLayout->addWidget(m_bulkRenameBtn);
 
     m_mainLayout->addWidget(m_statusBar);
@@ -436,6 +430,88 @@ void SearchResultsPanel::executeSearch()
                            .arg(timer.elapsed()));
 
     m_bulkRenameBtn->setVisible(!results.isEmpty());
+}
+
+void SearchResultsPanel::onBulkRename()
+{
+    QStringList paths;
+    QStringList names;
+    QList<bool> isFolders;
+    QStringList handles;
+
+    for (int i = 0; i < m_model->rowCount(); ++i) {
+        QStandardItem* item = m_model->item(i);
+        if (!item) {
+            continue;
+        }
+
+        const QString path = item->data(SearchResultDelegate::PathRole).toString();
+        const QString name = item->data(SearchResultDelegate::NameRole).toString();
+        if (path.isEmpty() || name.isEmpty()) {
+            continue;
+        }
+
+        paths << path;
+        names << name;
+        isFolders << item->data(SearchResultDelegate::IsFolderRole).toBool();
+        handles << item->data(SearchResultDelegate::HandleRole).toString();
+    }
+
+    if (paths.size() < 2) {
+        QMessageBox::information(this, "Bulk Rename",
+            "Please keep at least 2 search results visible to use bulk rename.");
+        return;
+    }
+
+    BulkNameEditorDialog dialog(this);
+    dialog.setItems(paths, names, isFolders);
+
+    if (dialog.exec() != QDialog::Accepted || !dialog.hasChanges()) {
+        return;
+    }
+
+    const QList<RenameResult> results = dialog.getRenameResults();
+    QString summary;
+    int changeCount = 0;
+    for (const RenameResult& result : results) {
+        if (result.willChange) {
+            summary += QString("%1 → %2\n").arg(result.originalName, result.newName);
+            changeCount++;
+        }
+    }
+
+    if (changeCount == 0) {
+        QMessageBox::information(this, "Bulk Rename", "No changes to apply.");
+        return;
+    }
+
+    auto confirm = QMessageBox::question(this, "Confirm Bulk Rename",
+        QString("Rename %1 search %2?\n\n%3")
+            .arg(changeCount)
+            .arg(changeCount == 1 ? "result" : "results")
+            .arg(summary.left(500) + (summary.length() > 500 ? "\n..." : "")),
+        QMessageBox::Yes | QMessageBox::No);
+
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
+
+    int requestedCount = 0;
+    for (const RenameResult& result : results) {
+        if (result.willChange) {
+            emit renameRequested(result.originalPath, result.newName);
+            requestedCount++;
+        }
+    }
+
+    emit bulkRenameRequested(handles);
+
+    QMessageBox::information(this, "Bulk Rename",
+        QString("Rename requests sent for %1 %2.")
+            .arg(requestedCount)
+            .arg(requestedCount == 1 ? "item" : "items"));
+
+    QTimer::singleShot(500, this, &SearchResultsPanel::executeSearch);
 }
 
 void SearchResultsPanel::populateResults(const QVector<SearchResult>& results)

@@ -1243,6 +1243,14 @@ void MainWindow::connectSignals()
         connect(m_searchPanel, &SearchResultsPanel::resultActivated,
                 this, &MainWindow::onSearchResultActivated);
 
+        connect(m_searchPanel, &SearchResultsPanel::renameRequested,
+                this, [this](const QString& path, const QString& newName) {
+            if (m_fileController) {
+                qDebug() << "MainWindow: Rename request from SearchResultsPanel:" << path << "->" << newName;
+                m_fileController->renameRemote(path, newName);
+            }
+        });
+
         // Note: SearchResultsPanel handles keyboard via keyPressEvent when it has focus
     }
 }

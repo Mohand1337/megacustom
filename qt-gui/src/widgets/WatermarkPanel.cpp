@@ -118,6 +118,84 @@ static void applyMemberTemplates(Watermarker& watermarker, const WatermarkConfig
     watermarker.setConfig(localConfig);
 }
 
+static QString existingStoragePath(const QString& path) {
+    if (path.isEmpty()) {
+        return QDir::currentPath();
+    }
+
+    QFileInfo info(path);
+    if (info.exists()) {
+        return info.isDir() ? info.absoluteFilePath() : info.absolutePath();
+    }
+
+    QDir dir(path);
+    while (!dir.exists()) {
+        const QString before = dir.absolutePath();
+        if (!dir.cdUp() || dir.absolutePath() == before) {
+            break;
+        }
+    }
+    return dir.exists() ? dir.absolutePath() : QFileInfo(path).absolutePath();
+}
+
+qint64 WatermarkWorker::estimateOutputBytes(const QString& inputPath) const {
+    const QFileInfo info(inputPath);
+    const qint64 inputSize = info.size();
+    if (m_metricsStore) {
+        const qint64 predicted = m_metricsStore->predictOutputSize(
+            info.suffix().toLower(), inputSize);
+        if (predicted > 0) {
+            return predicted;
+        }
+    }
+
+    const qint64 estimated = static_cast<qint64>(inputSize * 1.2);
+    return qMax(inputSize, estimated);
+}
+
+bool WatermarkWorker::ensureDiskSpaceForNextOutput(const QString& inputPath,
+                                                   const QString& outputBaseDir) {
+    const QString checkPath = existingStoragePath(
+        outputBaseDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : outputBaseDir);
+    QStorageInfo storage(checkPath);
+    storage.refresh();
+    if (!storage.isValid() || !storage.isReady()) {
+        return true;
+    }
+
+    const qint64 reserveBytes = 64LL * 1024LL * 1024LL;
+    const qint64 needed = estimateOutputBytes(inputPath) + reserveBytes;
+    const qint64 available = storage.bytesAvailable();
+    if (available >= needed) {
+        return true;
+    }
+
+    emit diskSpaceWarning(available, needed);
+    m_cancelled = true;
+    return false;
+}
+
+void WatermarkWorker::pauseForDiskSpace(const QString& inputPath,
+                                        const QString& outputBaseDir) {
+    const QString checkPath = existingStoragePath(
+        outputBaseDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : outputBaseDir);
+    QStorageInfo storage(checkPath);
+    storage.refresh();
+    emit diskSpaceWarning(storage.isValid() ? storage.bytesAvailable() : 0,
+                          estimateOutputBytes(inputPath));
+    m_cancelled = true;
+}
+
+bool WatermarkWorker::isDiskSpaceError(const WatermarkResult& result) const {
+    const QString error = QString::fromStdString(result.error).toLower();
+    return error.contains("no space left")
+        || error.contains("enospc")
+        || error.contains("not enough space")
+        || error.contains("disk full")
+        || error.contains("insufficient disk")
+        || error.contains("device full");
+}
+
 void WatermarkWorker::process() {
     emit started();
 
@@ -162,6 +240,16 @@ void WatermarkWorker::process() {
                 applyMemberTemplates(watermarker, baseConfig, memberId,
                                      m_rawPrimaryTemplate, m_rawSecondaryTemplate);
 
+                const QString outputBaseDir = m_outputDir.isEmpty()
+                    ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                    : m_outputDir;
+                if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
+                    failCount++;
+                    emit fileCompleted(idx, false, QString(), "Paused: insufficient disk space");
+                    idx++;
+                    break;
+                }
+
                 // Build member output path and watermark directly
                 std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
                 WatermarkResult result;
@@ -173,12 +261,14 @@ void WatermarkWorker::process() {
                     result = watermarker.watermarkAudio(inputStd, outPath);
                 } else {
                     // Passthrough: copy file as-is (e.g., .vtt, .docx, .txt)
-                    if (QFile::copy(inputPath, QString::fromStdString(outPath))) {
+                    QFile sourceFile(inputPath);
+                    if (sourceFile.copy(QString::fromStdString(outPath))) {
                         result.success = true;
                         result.outputFile = outPath;
                     } else {
                         result.success = false;
-                        result.error = "Failed to copy passthrough file";
+                        result.error = QString("Failed to copy passthrough file: %1")
+                                           .arg(sourceFile.errorString()).toStdString();
                     }
                 }
 
@@ -205,6 +295,11 @@ void WatermarkWorker::process() {
                                   QString::fromStdString(result.outputFile),
                                   QString::fromStdString(result.error));
                 idx++;
+
+                if (!result.success && isDiskSpaceError(result)) {
+                    pauseForDiskSpace(inputPath, outputBaseDir);
+                    break;
+                }
             }
 
             // === Auto-upload & cleanup after this member's batch ===
@@ -282,6 +377,7 @@ void WatermarkWorker::process() {
                         qint64 needed = static_cast<qint64>(totalInputSize * 1.2);
                         if (available < needed) {
                             emit diskSpaceWarning(available, needed);
+                            m_cancelled = true;
                         }
                     }
                 } else {
@@ -318,6 +414,15 @@ void WatermarkWorker::process() {
             applyMemberTemplates(watermarker, baseConfig, m_memberId,
                                  m_rawPrimaryTemplate, m_rawSecondaryTemplate);
 
+            const QString outputBaseDir = m_outputDir.isEmpty()
+                ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                : m_outputDir;
+            if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
+                failCount++;
+                emit fileCompleted(i, false, QString(), "Paused: insufficient disk space");
+                break;
+            }
+
             std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, m_memberId.toStdString(), m_rootDir.toStdString());
             if (Watermarker::isVideoFile(inputStd)) {
                 result = watermarker.watermarkVideo(inputStd, outPath);
@@ -327,16 +432,27 @@ void WatermarkWorker::process() {
                 result = watermarker.watermarkAudio(inputStd, outPath);
             } else {
                 // Passthrough: copy file as-is (e.g., .vtt, .docx, .txt)
-                if (QFile::copy(inputPath, QString::fromStdString(outPath))) {
+                QFile sourceFile(inputPath);
+                if (sourceFile.copy(QString::fromStdString(outPath))) {
                     result.success = true;
                     result.outputFile = outPath;
                 } else {
                     result.success = false;
-                    result.error = "Failed to copy passthrough file";
+                    result.error = QString("Failed to copy passthrough file: %1")
+                                       .arg(sourceFile.errorString()).toStdString();
                 }
             }
         } else {
             // Global mode: text already expanded in config
+            const QString outputBaseDir = outputDir.empty()
+                ? QFileInfo(inputPath).absolutePath()
+                : QString::fromStdString(outputDir);
+            if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
+                failCount++;
+                emit fileCompleted(i, false, QString(), "Paused: insufficient disk space");
+                break;
+            }
+
             std::string outputPath = "";
             if (!outputDir.empty()) {
                 outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
@@ -353,6 +469,14 @@ void WatermarkWorker::process() {
         emit fileCompleted(i, result.success,
                           QString::fromStdString(result.outputFile),
                           QString::fromStdString(result.error));
+
+        if (!result.success && isDiskSpaceError(result)) {
+            const QString outputBaseDir = outputDir.empty()
+                ? QFileInfo(inputPath).absolutePath()
+                : QString::fromStdString(outputDir);
+            pauseForDiskSpace(inputPath, outputBaseDir);
+            break;
+        }
     }
 
     emit finished(successCount, failCount);
@@ -614,7 +738,7 @@ void WatermarkPanel::setupUI() {
 
     m_groupQuickSelectCombo = new QComboBox();
     m_groupQuickSelectCombo->setMinimumWidth(150);
-    m_groupQuickSelectCombo->setToolTip("Add all members from a group (additive)");
+    m_groupQuickSelectCombo->setToolTip("Check each member from a group so individual members can be removed");
     m_groupQuickSelectCombo->addItem("-- Add Group --", "");
     connect(m_groupQuickSelectCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &WatermarkPanel::onGroupQuickSelect);
@@ -1456,6 +1580,8 @@ void WatermarkPanel::onStartWatermark() {
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
     m_worker->moveToThread(m_workerThread);
+    m_pausedForDiskSpace = false;
+    m_diskSpacePauseMessage.clear();
 
     m_worker->setFiles(filePaths);
     m_worker->setOutputDir(outputDir);
@@ -1482,6 +1608,9 @@ void WatermarkPanel::onStartWatermark() {
     connect(m_worker, &WatermarkWorker::finished, this, &WatermarkPanel::onWorkerFinished);
     connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
             [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
+                if (m_pausedForDiskSpace) {
+                    return;
+                }
                 if (!memberFileMap.isEmpty()) {
                     if (m_autoUploadCheck->isChecked()) {
                         // Auto-upload handled everything — files already uploaded & deleted
@@ -1525,8 +1654,11 @@ void WatermarkPanel::onStartWatermark() {
     connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
         [this](qint64 available, qint64 needed) {
             qWarning() << "Low disk space! Available:" << available << "Needed:" << needed;
-            m_statusLabel->setText(QString("Warning: Low disk (%1 free)")
-                .arg(formatFileSize(available)));
+            m_pausedForDiskSpace = true;
+            m_diskSpacePauseMessage = QString("Paused: disk is full (%1 free, %2 needed). Free space and start again.")
+                .arg(formatFileSize(available))
+                .arg(formatFileSize(needed));
+            m_statusLabel->setText(m_diskSpacePauseMessage);
         });
     connect(m_worker, &WatermarkWorker::memberAutoUploadSkipped, this,
         [this](const QString& memberId, const QString& reason) {
@@ -1638,6 +1770,39 @@ void WatermarkPanel::onModeChanged(int index) {
 }
 
 void WatermarkPanel::onMemberSelectionChanged() {
+    bool expandedGroupSelection = false;
+    QListWidgetItem* firstExpandedMember = nullptr;
+
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        const QString data = item->data(Qt::UserRole).toString();
+        if (item->checkState() != Qt::Checked || !data.startsWith("GROUP:")) {
+            continue;
+        }
+
+        item->setCheckState(Qt::Unchecked);
+        const QStringList groupIds = m_registry->getGroupMemberIds(data.mid(6));
+        for (int j = 0; j < m_memberListWidget->count(); ++j) {
+            QListWidgetItem* memberItem = m_memberListWidget->item(j);
+            if (groupIds.contains(memberItem->data(Qt::UserRole).toString())) {
+                memberItem->setCheckState(Qt::Checked);
+                if (!firstExpandedMember) {
+                    firstExpandedMember = memberItem;
+                }
+            }
+        }
+        expandedGroupSelection = true;
+    }
+    m_memberListWidget->blockSignals(false);
+
+    if (expandedGroupSelection && !m_memberSearchEdit->text().isEmpty()) {
+        m_memberSearchEdit->clear();
+    }
+    if (expandedGroupSelection && firstExpandedMember) {
+        m_memberListWidget->scrollToItem(firstExpandedMember, QAbstractItemView::PositionAtCenter);
+    }
+
     QStringList selected = getSelectedMemberIds();
     m_selectionSummaryLabel->setText(
         QString("%1 selected").arg(selected.size()));
@@ -1649,7 +1814,8 @@ void WatermarkPanel::onSelectAllMembers() {
     m_memberListWidget->blockSignals(true);
     for (int i = 0; i < m_memberListWidget->count(); ++i) {
         QListWidgetItem* item = m_memberListWidget->item(i);
-        if (!item->isHidden()) {
+        const QString data = item->data(Qt::UserRole).toString();
+        if (!item->isHidden() && !data.startsWith("GROUP:")) {
             item->setCheckState(Qt::Checked);
         }
     }
@@ -1672,19 +1838,29 @@ void WatermarkPanel::onGroupQuickSelect(int index) {
 
     // Additive: check the group item and its individual members
     QStringList groupMemberIds = m_registry->getGroupMemberIds(groupName);
+    if (!m_memberSearchEdit->text().isEmpty()) {
+        m_memberSearchEdit->clear();
+    }
 
     m_memberListWidget->blockSignals(true);
+    QListWidgetItem* firstMemberItem = nullptr;
     for (int i = 0; i < m_memberListWidget->count(); ++i) {
         QListWidgetItem* item = m_memberListWidget->item(i);
         QString data = item->data(Qt::UserRole).toString();
         if (data == "GROUP:" + groupName) {
-            item->setCheckState(Qt::Checked);
+            item->setCheckState(Qt::Unchecked);
         }
         if (groupMemberIds.contains(data)) {
             item->setCheckState(Qt::Checked);
+            if (!firstMemberItem) {
+                firstMemberItem = item;
+            }
         }
     }
     m_memberListWidget->blockSignals(false);
+    if (firstMemberItem) {
+        m_memberListWidget->scrollToItem(firstMemberItem, QAbstractItemView::PositionAtCenter);
+    }
 
     // Reset combo to prompt
     m_groupQuickSelectCombo->blockSignals(true);
@@ -1692,6 +1868,7 @@ void WatermarkPanel::onGroupQuickSelect(int index) {
     m_groupQuickSelectCombo->blockSignals(false);
 
     onMemberSelectionChanged();
+    m_statusLabel->setText(QString("Added group: %1 (%2 members)").arg(groupName).arg(groupMemberIds.size()));
 }
 
 void WatermarkPanel::onMemberSearchChanged() {
@@ -1780,10 +1957,21 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     m_isRunning = false;
     updateButtonStates();
 
+    emit watermarkCompleted(successCount, failCount);
+
+    if (m_pausedForDiskSpace) {
+        const QString message = m_diskSpacePauseMessage.isEmpty()
+            ? "Paused: disk is full. Free space and start again."
+            : m_diskSpacePauseMessage;
+        m_statusLabel->setText(message);
+        QMessageBox::warning(this, "Watermarking Paused",
+            QString("%1\n\nNo more files or member folders will be created until you restart the job.")
+                .arg(message));
+        return;
+    }
+
     AnimationHelper::animateProgress(m_progressBar, 100);
     m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(successCount).arg(failCount));
-
-    emit watermarkCompleted(successCount, failCount);
 
     if (failCount == 0) {
         QMessageBox::information(this, "Complete",

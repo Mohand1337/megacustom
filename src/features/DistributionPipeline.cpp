@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <sys/stat.h>
 #include <random>
+#include <cctype>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -70,6 +71,45 @@ std::filesystem::path toFsPath(const std::string& utf8) {
 #else
     return std::filesystem::path(utf8);
 #endif
+}
+
+bool isDiskSpaceErrorText(const std::string& error) {
+    std::string lower = error;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lower.find("no space left") != std::string::npos
+        || lower.find("enospc") != std::string::npos
+        || lower.find("not enough space") != std::string::npos
+        || lower.find("disk full") != std::string::npos
+        || lower.find("insufficient disk") != std::string::npos
+        || lower.find("device full") != std::string::npos;
+}
+
+bool hasDiskSpaceForSource(const std::string& tempDirectory,
+                           const std::string& sourceFile,
+                           std::string& error) {
+    std::error_code ec;
+    const auto sourceSize = std::filesystem::file_size(toFsPath(sourceFile), ec);
+    if (ec) {
+        return true;
+    }
+
+    const auto space = std::filesystem::space(toFsPath(tempDirectory), ec);
+    if (ec) {
+        return true;
+    }
+
+    const uintmax_t reserveBytes = 64ULL * 1024ULL * 1024ULL;
+    const uintmax_t needed = sourceSize + (sourceSize / 5) + reserveBytes;
+    if (space.available >= needed) {
+        return true;
+    }
+
+    std::ostringstream msg;
+    msg << "Paused: insufficient disk space in temp directory. Available "
+        << space.available << " bytes, need " << needed << " bytes";
+    error = msg.str();
+    return false;
 }
 } // anonymous namespace
 
@@ -313,6 +353,10 @@ bool DistributionPipeline::watermarkForMember(
     // Set temp output directory
     std::string tempDir = m_config.tempDirectory + "/" + memberId;
 
+    if (!hasDiskSpaceForSource(m_config.tempDirectory, sourceFile, error)) {
+        return false;
+    }
+
     // Create temp directory if needed (safe, no shell injection)
     if (!PathValidator::isValidPath(tempDir)) {
         error = "Invalid temp directory path";
@@ -507,6 +551,15 @@ MemberDistributionStatus DistributionPipeline::processOneMember(
         } else {
             fileStatus.error = error;
             status.filesFailed++;
+            if (isDiskSpaceErrorText(error)) {
+                status.state = MemberDistributionStatus::State::Failed;
+                status.lastError = error;
+                m_cancelled = true;
+                LogManager::instance().logDistribution("distribution_paused_disk_full",
+                    "Paused distribution because temp storage is full: " + error,
+                    m_currentProgress.jobId, memberId);
+                return status;
+            }
             continue;  // Skip upload for this file
         }
 
@@ -726,6 +779,15 @@ DistributionResult DistributionPipeline::distribute(
         result.filesWatermarked += memberStatus.filesWatermarked;
         result.filesUploaded += memberStatus.filesUploaded;
         result.filesFailed += memberStatus.filesFailed;
+
+        if (memberStatus.state == MemberDistributionStatus::State::Failed
+            && !memberStatus.lastError.empty()) {
+            result.errors.push_back(memberId + ": " + memberStatus.lastError);
+            if (isDiskSpaceErrorText(memberStatus.lastError)) {
+                result.errors.push_back("Paused due to insufficient local disk space");
+                break;
+            }
+        }
 
         filesProcessed += static_cast<int>(sourceFiles.size());
         memberIndex++;

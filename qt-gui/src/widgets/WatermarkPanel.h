@@ -84,6 +84,11 @@ signals:
     void diskSpaceWarning(qint64 available, qint64 needed);
 
 private:
+    qint64 estimateOutputBytes(const QString& inputPath) const;
+    bool ensureDiskSpaceForNextOutput(const QString& inputPath, const QString& outputBaseDir);
+    void pauseForDiskSpace(const QString& inputPath, const QString& outputBaseDir);
+    bool isDiskSpaceError(const WatermarkResult& result) const;
+
     QStringList m_files;
     QString m_outputDir;
     QString m_memberId;
@@ -235,6 +240,8 @@ private:
     QList<WatermarkFileInfo> m_files;
     MemberRegistry* m_registry;
     bool m_isRunning = false;
+    bool m_pausedForDiskSpace = false;
+    QString m_diskSpacePauseMessage;
     QString m_sourceRootDir;  // Root folder from "Add Folder" for subfolder structure
 
     // Stored member file map from last multi-member watermark (for manual send to distribution)

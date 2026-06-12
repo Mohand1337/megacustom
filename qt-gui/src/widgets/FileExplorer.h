@@ -236,6 +236,11 @@ public slots:
     void renameSelected();
 
     /**
+     * Bulk rename selected items
+     */
+    void bulkRenameSelected();
+
+    /**
      * Copy selected items
      */
     void copySelected();
@@ -416,6 +421,7 @@ private:
     QAction* m_pasteAction;
     QAction* m_deleteAction;
     QAction* m_renameAction;
+    QAction* m_bulkRenameAction;
     QAction* m_newFolderAction;
     QAction* m_propertiesAction;
     ModernMenu* m_copyToAccountMenu;

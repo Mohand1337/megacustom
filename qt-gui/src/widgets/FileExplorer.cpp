@@ -3,6 +3,7 @@
 #include "ModernMenu.h"
 #include "ButtonFactory.h"
 #include "controllers/FileController.h"
+#include "dialogs/BulkNameEditorDialog.h"
 #include "accounts/AccountManager.h"
 #include "styles/ThemeManager.h"
 
@@ -27,6 +28,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QDebug>
+#include <QSet>
 
 namespace MegaCustom {
 
@@ -483,6 +485,142 @@ void FileExplorer::renameSelected()
     }
 }
 
+void FileExplorer::bulkRenameSelected()
+{
+    if (!m_treeView || !m_treeView->selectionModel()) {
+        return;
+    }
+
+    QStringList paths;
+    QStringList names;
+    QList<bool> isFolders;
+    QSet<QString> seenPaths;
+
+    QModelIndexList indexes = m_treeView->selectionModel()->selectedRows(0);
+    if (indexes.isEmpty()) {
+        const QModelIndexList selectedIndexes = m_treeView->selectionModel()->selectedIndexes();
+        for (const QModelIndex& index : selectedIndexes) {
+            if (index.column() == 0) {
+                indexes << index;
+            }
+        }
+    }
+
+    for (const QModelIndex& index : indexes) {
+        if (!index.isValid() || index.column() != 0) {
+            continue;
+        }
+
+        QString path;
+        QString name;
+        bool isFolder = false;
+
+        if (m_type == Local && m_localModel) {
+            QFileInfo info = m_localModel->fileInfo(index);
+            path = info.absoluteFilePath();
+            name = info.fileName();
+            isFolder = info.isDir();
+        } else if (m_remoteModel) {
+            path = index.data(Qt::UserRole).toString();
+            if (path.isEmpty()) {
+                path = childPath(m_currentPath, index.data(Qt::DisplayRole).toString());
+            }
+            name = QFileInfo(path).fileName();
+            if (name.isEmpty()) {
+                name = index.data(Qt::DisplayRole).toString();
+            }
+            isFolder = index.data(Qt::UserRole + 1).toBool();
+        }
+
+        if (path.isEmpty() || seenPaths.contains(path)) {
+            continue;
+        }
+
+        seenPaths.insert(path);
+        paths << path;
+        names << name;
+        isFolders << isFolder;
+    }
+
+    if (paths.size() < 2) {
+        QMessageBox::information(this, "Bulk Rename",
+            "Please select at least 2 items to use bulk rename.");
+        return;
+    }
+
+    BulkNameEditorDialog dialog(this);
+    dialog.setItems(paths, names, isFolders);
+
+    if (dialog.exec() != QDialog::Accepted || !dialog.hasChanges()) {
+        return;
+    }
+
+    const QList<RenameResult> results = dialog.getRenameResults();
+    QString summary;
+    int changeCount = 0;
+    for (const RenameResult& result : results) {
+        if (result.willChange) {
+            summary += QString("%1 → %2\n").arg(result.originalName, result.newName);
+            changeCount++;
+        }
+    }
+
+    if (changeCount == 0) {
+        QMessageBox::information(this, "Bulk Rename", "No changes to apply.");
+        return;
+    }
+
+    auto confirm = QMessageBox::question(this, "Confirm Bulk Rename",
+        QString("Rename %1 %2?\n\n%3")
+            .arg(changeCount)
+            .arg(changeCount == 1 ? "item" : "items")
+            .arg(summary.left(500) + (summary.length() > 500 ? "\n..." : "")),
+        QMessageBox::Yes | QMessageBox::No);
+
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
+
+    int requestedCount = 0;
+    int failedCount = 0;
+    for (const RenameResult& result : results) {
+        if (!result.willChange) {
+            continue;
+        }
+
+        if (m_type == Local) {
+            QFileInfo info(result.originalPath);
+            QDir parentDir(info.absolutePath());
+            if (parentDir.rename(info.fileName(), result.newName)) {
+                requestedCount++;
+            } else {
+                failedCount++;
+            }
+        } else if (m_fileController) {
+            m_fileController->renameRemote(result.originalPath, result.newName);
+            requestedCount++;
+        } else {
+            failedCount++;
+        }
+    }
+
+    refresh();
+
+    if (failedCount > 0) {
+        QMessageBox::warning(this, "Bulk Rename",
+            QString("Rename requested for %1 %2, %3 failed locally.")
+                .arg(requestedCount)
+                .arg(requestedCount == 1 ? "item" : "items")
+                .arg(failedCount));
+    } else {
+        QMessageBox::information(this, "Bulk Rename",
+            QString("Rename %1 for %2 %3.")
+                .arg(m_type == Remote ? "requests sent" : "complete")
+                .arg(requestedCount)
+                .arg(requestedCount == 1 ? "item" : "items"));
+    }
+}
+
 void FileExplorer::dragEnterEvent(QDragEnterEvent* event)
 {
     if (event->mimeData()->hasUrls()) {
@@ -633,6 +771,9 @@ void FileExplorer::createContextMenu()
     m_renameAction = m_contextMenu->addAction(QIcon(":/icons/rename.png"), "Rename");
     connect(m_renameAction, &QAction::triggered, this, &FileExplorer::renameSelected);
 
+    m_bulkRenameAction = m_contextMenu->addAction(QIcon(":/icons/rename.png"), "Bulk Rename...");
+    connect(m_bulkRenameAction, &QAction::triggered, this, &FileExplorer::bulkRenameSelected);
+
     m_contextMenu->addSeparator();
 
     m_newFolderAction = m_contextMenu->addAction(QIcon(":/icons/folder_new.png"), "New Folder");
@@ -782,6 +923,7 @@ void FileExplorer::onCustomContextMenu(const QPoint& pos)
     m_cutAction->setEnabled(hasSelection);
     m_deleteAction->setEnabled(hasSelection);
     m_renameAction->setEnabled(hasSelection && selectedFiles().size() == 1);
+    m_bulkRenameAction->setEnabled(hasSelection && selectedFiles().size() >= 2);
     m_pasteAction->setEnabled(!m_clipboard.isEmpty());
 
     // Update cross-account menus

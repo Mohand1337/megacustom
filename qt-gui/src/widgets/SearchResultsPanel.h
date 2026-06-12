@@ -94,6 +94,9 @@ signals:
     // Bulk rename requested for selected items
     void bulkRenameRequested(const QStringList& handles);
 
+    // Rename requested from the quick search bulk-rename flow
+    void renameRequested(const QString& path, const QString& newName);
+
     // Panel visibility changed
     void visibilityChanged(bool visible);
 
@@ -105,6 +108,7 @@ protected:
 
 private slots:
     void executeSearch();
+    void onBulkRename();
     void onItemActivated(const QModelIndex& index);
     void onSortFieldChanged(int index);
     void onSortOrderToggled();
