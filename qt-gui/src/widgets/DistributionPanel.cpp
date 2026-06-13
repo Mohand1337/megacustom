@@ -1254,6 +1254,7 @@ void DistributionPanel::onScanLocalFolder() {
     int smartRouted = 0;
     if (m_smartRouteCheck->isChecked()) {
         QString month = m_monthCombo->currentText();
+        const ContentType fallbackCourseType = routeCourseTypeFromTemplate();
         for (WmFolderInfo& info : m_wmFolders) {
             if (!info.matched) continue;
             MemberInfo member = m_registry->getMember(info.memberId);
@@ -1264,7 +1265,7 @@ void DistributionPanel::onScanLocalFolder() {
             }
             QString fallbackDest = getDestinationPath(info.memberId);
             info.routes = m_contentRouter->classifyLocalChildren(
-                info.fullPath, member, month, fallbackDest);
+                info.fullPath, member, month, fallbackDest, fallbackCourseType);
             info.smartRouted = !info.routes.isEmpty();
             if (info.smartRouted) smartRouted++;
             qDebug() << "ContentRouter[local]:" << info.memberId
@@ -1438,6 +1439,7 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
     int smartRouted = 0;
     if (m_smartRouteCheck->isChecked() && m_megaApi) {
         QString month = m_monthCombo->currentText();
+        const ContentType fallbackCourseType = routeCourseTypeFromTemplate();
         for (WmFolderInfo& info : m_wmFolders) {
             if (!info.matched) continue;
 
@@ -1450,7 +1452,7 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
 
             QString fallbackDest = getDestinationPath(info.memberId);
             info.routes = m_contentRouter->classifyChildren(
-                m_megaApi, info.fullPath, member, month, fallbackDest);
+                m_megaApi, info.fullPath, member, month, fallbackDest, fallbackCourseType);
             info.smartRouted = !info.routes.isEmpty();
             if (info.smartRouted) smartRouted++;
 
@@ -1950,6 +1952,32 @@ QString DistributionPanel::autoDetectDistributionIntent() {
     }
 
     return label;
+}
+
+ContentType DistributionPanel::routeCourseTypeFromTemplate() const {
+    if (!m_destTemplateEdit) return ContentType::UNKNOWN;
+
+    const QString tmpl = m_destTemplateEdit->text().trimmed().toLower();
+    if (tmpl.isEmpty()) return ContentType::UNKNOWN;
+
+    if (tmpl.contains("{fast_forward}")
+        || tmpl.contains("fast_forward")
+        || tmpl.contains("fast forward")
+        || tmpl.contains("fast-forward")
+        || tmpl.contains("ff courses")
+        || tmpl.contains("ff/course")
+        || tmpl.contains("ff/courses")) {
+        return ContentType::FF_COURSES;
+    }
+
+    if (tmpl.contains("nhb+ courses")
+        || tmpl.contains("nhb courses")
+        || tmpl.contains("nothing held back")
+        || tmpl.contains("nothingheldback")) {
+        return ContentType::NHB_COURSES;
+    }
+
+    return ContentType::UNKNOWN;
 }
 
 QString DistributionPanel::buildDistributionAudit(bool includeDetails, int* blockerCount, int* warningCount) {

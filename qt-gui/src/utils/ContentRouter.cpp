@@ -28,6 +28,16 @@ static QList<KeywordRule> builtinRules() {
     return rules;
 }
 
+static bool isCourseType(ContentType type) {
+    return type == ContentType::NHB_COURSES || type == ContentType::FF_COURSES;
+}
+
+static QString courseFileLabel(ContentType type) {
+    if (type == ContentType::FF_COURSES) return "FF Course Files";
+    if (type == ContentType::NHB_COURSES) return "NHB+ Course Files";
+    return "Course Files";
+}
+
 // ==================== Normalize ====================
 
 QString ContentRouter::normalize(const QString& input) {
@@ -207,7 +217,8 @@ QList<ContentRoute> ContentRouter::classifyChildren(
     const QString& memberFolderPath,
     const MemberInfo& member,
     const QString& month,
-    const QString& fallbackDest) const
+    const QString& fallbackDest,
+    ContentType fallbackCourseType) const
 {
     QList<ContentRoute> routes;
 
@@ -238,6 +249,10 @@ QList<ContentRoute> ContentRouter::classifyChildren(
             // Classify the subfolder
             QString keyword;
             ContentType type = classifyFolder(childName, member, &keyword);
+            if (type == ContentType::UNKNOWN && isCourseType(fallbackCourseType)) {
+                type = fallbackCourseType;
+                keyword = "course job";
+            }
 
             ContentRoute route;
             route.sourcePath = childPath;
@@ -261,11 +276,29 @@ QList<ContentRoute> ContentRouter::classifyChildren(
         }
     }
 
-    // Group root-level files — by month if Auto mode, else single route
+    // Group root-level files. Course jobs keep loose videos/files in the
+    // selected course destination instead of treating them as NHB call files.
     if (!rootFiles.isEmpty()) {
-        bool autoMonth = month.startsWith("Auto");
+        const bool courseMode = isCourseType(fallbackCourseType);
 
-        if (autoMonth) {
+        if (courseMode) {
+            ContentRoute fileRoute;
+            fileRoute.sourcePath = memberFolderPath;
+            fileRoute.childName = QString("%1 loose course files").arg(rootFiles.size());
+            fileRoute.isFolder = false;
+            fileRoute.contentType = fallbackCourseType;
+            fileRoute.contentTypeLabel = courseFileLabel(fallbackCourseType);
+            fileRoute.destinationPath = resolveDestination(
+                fallbackCourseType, member, month, fallbackDest);
+            fileRoute.memberId = member.id;
+            fileRoute.selected = true;
+            fileRoute.filePaths = rootFiles;
+
+            qDebug() << "ContentRouter: Grouped" << rootFiles.size()
+                     << fileRoute.contentTypeLabel << "→" << fileRoute.destinationPath;
+
+            routes.prepend(fileRoute);
+        } else if (month.startsWith("Auto")) {
             // Extract month from each file's date prefix and split accordingly
             static QRegularExpression dateRe("^(\\d{2})-\\d{2}-\\d{4}");
             QMap<QString, QStringList> filesByMonth;
@@ -331,7 +364,8 @@ QList<ContentRoute> ContentRouter::classifyLocalChildren(
     const QString& memberFolderPath,
     const MemberInfo& member,
     const QString& month,
-    const QString& fallbackDest) const
+    const QString& fallbackDest,
+    ContentType fallbackCourseType) const
 {
     QList<ContentRoute> routes;
 
@@ -351,6 +385,10 @@ QList<ContentRoute> ContentRouter::classifyLocalChildren(
         if (entry.isDir()) {
             QString keyword;
             ContentType type = classifyFolder(childName, member, &keyword);
+            if (type == ContentType::UNKNOWN && isCourseType(fallbackCourseType)) {
+                type = fallbackCourseType;
+                keyword = "course job";
+            }
 
             ContentRoute route;
             route.sourcePath = childPath;
@@ -375,9 +413,27 @@ QList<ContentRoute> ContentRouter::classifyLocalChildren(
     }
 
     if (!rootFiles.isEmpty()) {
-        bool autoMonth = month.startsWith("Auto");
+        const bool courseMode = isCourseType(fallbackCourseType);
 
-        if (autoMonth) {
+        if (courseMode) {
+            ContentRoute fileRoute;
+            fileRoute.sourcePath = memberFolderPath;
+            fileRoute.childName = QString("%1 loose course files").arg(rootFiles.size());
+            fileRoute.isFolder = false;
+            fileRoute.isLocalSource = true;
+            fileRoute.contentType = fallbackCourseType;
+            fileRoute.contentTypeLabel = courseFileLabel(fallbackCourseType);
+            fileRoute.destinationPath = resolveDestination(
+                fallbackCourseType, member, month, fallbackDest);
+            fileRoute.memberId = member.id;
+            fileRoute.selected = true;
+            fileRoute.localFilePaths = rootFiles;
+
+            qDebug() << "ContentRouter[local]: Grouped" << rootFiles.size()
+                     << fileRoute.contentTypeLabel << "\xe2\x86\x92" << fileRoute.destinationPath;
+
+            routes.prepend(fileRoute);
+        } else if (month.startsWith("Auto")) {
             static QRegularExpression dateRe("^(\\d{2})-\\d{2}-\\d{4}");
             QMap<QString, QStringList> filesByMonth;
 

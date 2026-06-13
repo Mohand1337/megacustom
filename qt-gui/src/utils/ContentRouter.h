@@ -62,7 +62,9 @@ public:
 
     /**
      * Scan a member folder's children and classify each one.
-     * Root-level files are grouped into a single NHB_ROOT_FILES route.
+     * Root-level files are grouped into NHB call routes by default. If the
+     * caller passes a course fallback type, generic folders/files inherit that
+     * course destination instead of requiring NHB/FF tokens in their names.
      * Each subfolder gets its own route based on classification.
      */
     QList<ContentRoute> classifyChildren(
@@ -70,7 +72,8 @@ public:
         const QString& memberFolderPath,
         const MemberInfo& member,
         const QString& month,
-        const QString& fallbackDest = QString()) const;
+        const QString& fallbackDest = QString(),
+        ContentType fallbackCourseType = ContentType::UNKNOWN) const;
 
     /**
      * Scan a LOCAL filesystem folder's children and classify each one.
@@ -81,7 +84,8 @@ public:
         const QString& memberFolderPath,
         const MemberInfo& member,
         const QString& month,
-        const QString& fallbackDest = QString()) const;
+        const QString& fallbackDest = QString(),
+        ContentType fallbackCourseType = ContentType::UNKNOWN) const;
 
     /**
      * Classify a single folder name.

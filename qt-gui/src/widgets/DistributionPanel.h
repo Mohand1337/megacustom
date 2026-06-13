@@ -136,6 +136,7 @@ private:
     void executeBulkRename(const QString& folderPath);
     void showDistributionSettingsDialog();
     QString autoDetectDistributionIntent();
+    ContentType routeCourseTypeFromTemplate() const;
     QString buildDistributionAudit(bool includeDetails = true, int* blockerCount = nullptr, int* warningCount = nullptr);
     bool confirmDistributionAudit();
 
