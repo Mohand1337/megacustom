@@ -685,6 +685,9 @@ void DistributionPanel::setupUI() {
     // Quick template combo (compact)
     m_quickTemplateCombo = new QComboBox();
     m_quickTemplateCombo->addItem("Distribution Folder", "{member}");
+    m_quickTemplateCombo->addItem("NHB+ Courses", "{archive_root}/NHB+ Courses");
+    m_quickTemplateCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses");
+    m_quickTemplateCombo->addItem("FF Courses", "{archive_root}/{fast_forward}/Courses");
     m_quickTemplateCombo->addItem("Hot Seats", "{archive_root}/{fast_forward}/{hot_seats}");
     m_quickTemplateCombo->addItem("Theory Calls", "{archive_root}/{fast_forward}/{theory_calls}");
     m_quickTemplateCombo->addItem("NHB Calls + Month", "{archive_root}/{nhb_calls}/{month}");
@@ -2807,6 +2810,9 @@ void DistributionPanel::onGenerateDestinations() {
     typeRow->addWidget(new QLabel("Path type:"));
     QComboBox* pathTypeCombo = new QComboBox();
     pathTypeCombo->addItem("Distribution Folder", "{member}");
+    pathTypeCombo->addItem("NHB+ Courses", "{archive_root}/NHB+ Courses");
+    pathTypeCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses");
+    pathTypeCombo->addItem("FF Courses", "{archive_root}/{fast_forward}/Courses");
     pathTypeCombo->addItem("Hot Seats", "{archive_root}/{fast_forward}/{hot_seats}");
     pathTypeCombo->addItem("Theory Calls", "{archive_root}/{fast_forward}/{theory_calls}");
     pathTypeCombo->addItem("NHB Calls + Month", "{archive_root}/{nhb_calls}/{month}");
@@ -3472,6 +3478,9 @@ void DistributionPanel::onVariableHelpClicked() {
 </ul>
 <h4>Quick Templates</h4>
 <ul>
+<li><b>NHB+ Courses:</b> {archive_root}/NHB+ Courses</li>
+<li><b>NHB+ Updated Courses:</b> {archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses</li>
+<li><b>FF Courses:</b> {archive_root}/{fast_forward}/Courses</li>
 <li><b>Hot Seats:</b> {archive_root}/{fast_forward}/{hot_seats}</li>
 <li><b>Theory Calls:</b> {archive_root}/{fast_forward}/{theory_calls}</li>
 <li><b>NHB Calls:</b> {archive_root}/{nhb_calls}/{month}</li>
