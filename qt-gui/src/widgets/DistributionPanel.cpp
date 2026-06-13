@@ -572,6 +572,7 @@ void DistributionPanel::setupUI() {
     bannerLayout->addWidget(m_uploadBannerLabel, 1);
     m_uploadBannerCancelBtn = new QPushButton("Cancel");
     m_uploadBannerCancelBtn->setObjectName("PanelDangerButton");
+    m_uploadBannerCancelBtn->setToolTip("Exit upload mode and return to normal scan/distribution mode");
     m_uploadBannerCancelBtn->setFixedWidth(80);
     connect(m_uploadBannerCancelBtn, &QPushButton::clicked, this, [this]() {
         m_controllerActive = false;
@@ -626,6 +627,7 @@ void DistributionPanel::setupUI() {
     m_scanBtn = new QPushButton("Scan");
     m_scanBtn->setObjectName("PanelPrimaryButton");
     m_scanBtn->setIcon(QIcon(":/icons/search.svg"));
+    m_scanBtn->setToolTip("Scan the source folder and match member subfolders against the registry");
     connect(m_scanBtn, &QPushButton::clicked, this, &DistributionPanel::onScanWmFolder);
     row1->addWidget(m_scanBtn);
 
@@ -647,7 +649,10 @@ void DistributionPanel::setupUI() {
 
     // Smart Route checkbox (compact)
     m_smartRouteCheck = new QCheckBox("Smart Route");
-    m_smartRouteCheck->setToolTip("Auto-detect content types and route to correct destinations");
+    m_smartRouteCheck->setToolTip(
+        "Scan inside each matched member folder and route child content separately. "
+        "When the destination template is NHB+ Courses or FF Courses, generic course folders "
+        "such as Module 1 or Lesson 2 inherit that selected course destination.");
     connect(m_smartRouteCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (checked) {
             m_broadcastCheck->setChecked(false);
@@ -679,7 +684,10 @@ void DistributionPanel::setupUI() {
     row2->addWidget(destLabel);
 
     m_destTemplateEdit = new QLineEdit("{member}");
-    m_destTemplateEdit->setToolTip("Destination path template. Variables: {member}, {archive_root}, {nhb_calls}, {month}, etc.");
+    m_destTemplateEdit->setToolTip(
+        "Destination path template. Variables: {member}, {archive_root}, {fast_forward}, "
+        "{nhb_calls}, {month}, etc. Course templates also tell Smart Route whether generic "
+        "modules/lessons should go to NHB+ Courses or FF Courses.");
     row2->addWidget(m_destTemplateEdit, 1);
 
     // Quick template combo (compact)
@@ -693,7 +701,9 @@ void DistributionPanel::setupUI() {
     m_quickTemplateCombo->addItem("NHB Calls + Month", "{archive_root}/{nhb_calls}/{month}");
     m_quickTemplateCombo->addItem("Custom", "");
     m_quickTemplateCombo->setFixedWidth(s*140);
-    m_quickTemplateCombo->setToolTip("Quick preset for destination template");
+    m_quickTemplateCombo->setToolTip(
+        "Choose a destination preset. NHB+ Courses and FF Courses also set the Smart Route "
+        "course context for generic module/lesson folders.");
     connect(m_quickTemplateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &DistributionPanel::onQuickTemplateChanged);
     row2->addWidget(m_quickTemplateCombo);
@@ -705,7 +715,7 @@ void DistributionPanel::setupUI() {
         m_destTemplateEdit->setProperty("error", !valid);
         m_destTemplateEdit->style()->polish(m_destTemplateEdit);
         m_destTemplateEdit->setToolTip(valid
-            ? "Destination path template. Use {member}, {archive_root}, {hot_seats}, etc."
+            ? "Destination path template. Use {member}, {archive_root}, {hot_seats}, etc. Course templates also guide Smart Route."
             : QString("Invalid template: %1").arg(error));
         bool foundPreset = false;
         for (int i = 0; i < m_quickTemplateCombo->count() - 1; ++i) {
@@ -828,6 +838,7 @@ void DistributionPanel::setupUI() {
 
     m_groupCombo = new QComboBox();
     m_groupCombo->setMinimumWidth(s*140);
+    m_groupCombo->setToolTip("Filter selected work to a saved member group. In Broadcast mode, Scan populates only that group.");
     // Popup opens upward since the combo is near the screen bottom
     m_groupCombo->view()->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_groupCombo->addItem("-- Group --", "");
@@ -872,6 +883,7 @@ void DistributionPanel::setupUI() {
 
     m_bulkRenameBtn = ButtonFactory::createText("Bulk Rename", this);
     m_bulkRenameBtn->setIcon(QIcon(":/icons/edit.svg"));
+    m_bulkRenameBtn->setToolTip("Remove '_watermarked' from files in the selected destination folders");
     connect(m_bulkRenameBtn, &QPushButton::clicked, this, &DistributionPanel::onBulkRename);
     actionBar->addWidget(m_bulkRenameBtn);
 
@@ -879,23 +891,28 @@ void DistributionPanel::setupUI() {
 
     m_previewBtn = ButtonFactory::createOutline("Preview", this);
     m_previewBtn->setIcon(QIcon(":/icons/eye.svg"));
+    m_previewBtn->setToolTip("Preview the selected source-to-destination routes before starting");
     connect(m_previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewDistribution);
     actionBar->addWidget(m_previewBtn);
 
     m_auditBtn = ButtonFactory::createOutline("Audit", this);
     m_auditBtn->setIcon(QIcon(":/icons/search.svg"));
-    m_auditBtn->setToolTip("Run preflight checks for matches, destinations, duplicates, and source paths");
+    m_auditBtn->setToolTip(
+        "Run preflight checks for selected work, member matches, missing source paths, "
+        "missing destinations, duplicate destinations, and missing group members");
     connect(m_auditBtn, &QPushButton::clicked, this, &DistributionPanel::onRunAudit);
     actionBar->addWidget(m_auditBtn);
 
     m_startBtn = ButtonFactory::createPrimary("Start Distribution", this);
     m_startBtn->setIcon(QIcon(":/icons/play.svg"));
+    m_startBtn->setToolTip("Run the audit, confirm the job, then copy or upload the selected routes");
     connect(m_startBtn, &QPushButton::clicked, this, &DistributionPanel::onStartDistribution);
     actionBar->addWidget(m_startBtn);
 
     m_pauseBtn = new QPushButton("Pause");
     m_pauseBtn->setProperty("type", "warning");
     m_pauseBtn->setIcon(QIcon(":/icons/pause.svg"));
+    m_pauseBtn->setToolTip("Pause the active distribution job. Click Resume to continue.");
     m_pauseBtn->setEnabled(false);
     m_pauseBtn->setVisible(false);
     connect(m_pauseBtn, &QPushButton::clicked, this, &DistributionPanel::onPauseDistribution);
@@ -904,6 +921,7 @@ void DistributionPanel::setupUI() {
     m_stopBtn = new QPushButton("Stop");
     m_stopBtn->setObjectName("PanelDangerButton");
     m_stopBtn->setIcon(QIcon(":/icons/x.svg"));
+    m_stopBtn->setToolTip("Cancel the active distribution job after confirmation");
     m_stopBtn->setEnabled(false);
     m_stopBtn->setVisible(false);
     connect(m_stopBtn, &QPushButton::clicked, this, &DistributionPanel::onStopDistribution);
@@ -1682,6 +1700,7 @@ void DistributionPanel::populateTable() {
 
             // COL_MATCHED_MEMBER: Member dropdown
             QComboBox* memberCombo = new QComboBox();
+            memberCombo->setToolTip("Choose or correct the registry member matched to this source folder");
             memberCombo->addItem("-- No Match --", QString());
             for (const MemberInfo& member : allMembers) {
                 QString display = member.displayName.isEmpty() ? member.id
@@ -2846,6 +2865,7 @@ static QWidget* createSettingRow(const QString& title, const QString& descriptio
                                   QCheckBox* backingCheck, bool dangerous = false) {
     auto& tm = ThemeManager::instance();
     auto* row = new QWidget();
+    row->setToolTip(description);
     auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(0, 8, 0, 8);
     layout->setSpacing(12);
@@ -2873,6 +2893,7 @@ static QWidget* createSettingRow(const QString& title, const QString& descriptio
 
     // Right: SwitchButton tied to backing QCheckBox
     auto* toggle = new SwitchButton();
+    toggle->setToolTip(description);
     toggle->setChecked(backingCheck->isChecked());
     QObject::connect(toggle, &SwitchButton::toggled, backingCheck, &QCheckBox::setChecked);
     QObject::connect(backingCheck, &QCheckBox::toggled, toggle, &SwitchButton::setChecked);
@@ -2954,6 +2975,9 @@ void DistributionPanel::showDistributionSettingsDialog() {
 
         auto* savedCombo = new QComboBox(dialog);
         savedCombo->setMinimumWidth(DpiScaler::scale(190));
+        savedCombo->setToolTip(
+            "Saved job profiles include source path, source type, group, destination template, "
+            "month, Smart Route, Broadcast, and copy options.");
         auto refreshSavedCombo = [this, savedCombo]() {
             savedCombo->blockSignals(true);
             savedCombo->clear();
@@ -2973,20 +2997,24 @@ void DistributionPanel::showDistributionSettingsDialog() {
         });
 
         auto* saveBtn = ButtonFactory::createOutline("Save Job", dialog);
+        saveBtn->setToolTip("Save the current source, group, destination template, and distribution options as a reusable job profile");
         connect(saveBtn, &QPushButton::clicked, this, [this, refreshSavedCombo]() {
             onSaveTemplate();
             refreshSavedCombo();
         });
         auto* loadBtn = ButtonFactory::createOutline("Load", dialog);
+        loadBtn->setToolTip("Load the selected job profile into the distribution panel without scanning");
         connect(loadBtn, &QPushButton::clicked, this, [this, savedCombo]() {
             onLoadTemplate(savedCombo->currentIndex());
         });
         auto* repeatBtn = ButtonFactory::createOutline("Repeat Last", dialog);
+        repeatBtn->setToolTip("Load the last confirmed distribution job, close this dialog, and scan immediately");
         connect(repeatBtn, &QPushButton::clicked, this, [this, dialog]() {
             dialog->accept();
             onRepeatLastJob();
         });
         auto* deleteBtn = ButtonFactory::createOutline("Delete", dialog);
+        deleteBtn->setToolTip("Delete the selected saved job profile");
         connect(deleteBtn, &QPushButton::clicked, this, [this, savedCombo, refreshSavedCombo]() {
             if (m_savedTemplateCombo && savedCombo->currentIndex() >= 0
                 && savedCombo->currentIndex() < m_savedTemplateCombo->count()) {
@@ -3011,8 +3039,10 @@ void DistributionPanel::showDistributionSettingsDialog() {
         row->setContentsMargins(0, 8, 0, 8);
         row->setSpacing(6);
         auto* importBtn = ButtonFactory::createOutline("Import .txt", dialog);
+        importBtn->setToolTip("Import destination paths from a text file into the destination table");
         connect(importBtn, &QPushButton::clicked, this, &DistributionPanel::onImportDestinations);
         auto* exportBtn = ButtonFactory::createOutline("Export .txt", dialog);
+        exportBtn->setToolTip("Export the current destination paths to a text file");
         connect(exportBtn, &QPushButton::clicked, this, &DistributionPanel::onExportDestinations);
         row->addWidget(importBtn);
         row->addWidget(exportBtn);
@@ -3027,10 +3057,13 @@ void DistributionPanel::showDistributionSettingsDialog() {
         row->setContentsMargins(0, 8, 0, 8);
         row->setSpacing(6);
         auto* previewBtn = ButtonFactory::createOutline("Preview Paths", dialog);
+        previewBtn->setToolTip("Preview expanded destination paths for the current template and member selection");
         connect(previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewPathsClicked);
         auto* genBtn = ButtonFactory::createOutline("Generate Destinations", dialog);
+        genBtn->setToolTip("Generate destination paths for all active members or a selected member group");
         connect(genBtn, &QPushButton::clicked, this, &DistributionPanel::onGenerateDestinations);
         auto* helpBtn = ButtonFactory::createOutline("Variable Help", dialog);
+        helpBtn->setToolTip("Show available destination template variables and quick-template examples");
         connect(helpBtn, &QPushButton::clicked, this, &DistributionPanel::onVariableHelpClicked);
         row->addWidget(previewBtn);
         row->addWidget(genBtn);
@@ -3045,6 +3078,7 @@ void DistributionPanel::showDistributionSettingsDialog() {
     auto* buttonRow = new QHBoxLayout();
     buttonRow->addStretch();
     auto* closeBtn = ButtonFactory::createPrimary("Done", dialog);
+    closeBtn->setToolTip("Close distribution settings");
     connect(closeBtn, &QPushButton::clicked, dialog, &QDialog::accept);
     buttonRow->addWidget(closeBtn);
     mainLayout->addLayout(buttonRow);
@@ -3198,6 +3232,7 @@ void DistributionPanel::onGenerateDestinations() {
     QHBoxLayout* typeRow = new QHBoxLayout();
     typeRow->addWidget(new QLabel("Path type:"));
     QComboBox* pathTypeCombo = new QComboBox();
+    pathTypeCombo->setToolTip("Choose which destination template to generate for the selected members");
     pathTypeCombo->addItem("Distribution Folder", "{member}");
     pathTypeCombo->addItem("NHB+ Courses", "{archive_root}/NHB+ Courses");
     pathTypeCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses");
@@ -3213,6 +3248,7 @@ void DistributionPanel::onGenerateDestinations() {
     QHBoxLayout* monthRow = new QHBoxLayout();
     monthRow->addWidget(new QLabel("Month:"));
     QComboBox* monthCombo = new QComboBox();
+    monthCombo->setToolTip("Month value to use for templates that include {month}");
     monthCombo->addItems({"January", "February", "March", "April", "May", "June",
                           "July", "August", "September", "October", "November", "December"});
     monthCombo->setCurrentIndex(QDate::currentDate().month() - 1);
@@ -3223,6 +3259,7 @@ void DistributionPanel::onGenerateDestinations() {
     QHBoxLayout* membersRow = new QHBoxLayout();
     membersRow->addWidget(new QLabel("Members:"));
     QComboBox* membersCombo = new QComboBox();
+    membersCombo->setToolTip("Choose all active members or one saved member group for path generation");
     membersCombo->addItem(QString("All Active (%1)").arg(activeMembers.size()), "all");
     QStringList groupNames = m_registry->getGroupNames();
     for (const QString& groupName : groupNames) {
@@ -3285,6 +3322,10 @@ void DistributionPanel::onGenerateDestinations() {
     QPushButton* useBtn = new QPushButton("Use as Template");
     useBtn->setObjectName("PanelPrimaryButton");
     QPushButton* closeBtn = new QPushButton("Close");
+    copyBtn->setToolTip("Copy the generated destination paths to the clipboard");
+    exportBtn->setToolTip("Save the generated destination paths to a text file");
+    useBtn->setToolTip("Apply the selected path type as the current destination template");
+    closeBtn->setToolTip("Close without changing the current destination template");
     btnRow->addWidget(copyBtn);
     btnRow->addWidget(exportBtn);
     btnRow->addStretch();
@@ -3816,6 +3857,7 @@ void DistributionPanel::onPasteDestinations() {
     layout->addWidget(instrLabel);
 
     auto* textEdit = new QTextEdit(&dialog);
+    textEdit->setToolTip("Paste destination paths here, one per line. Use 'memberId: /path' to force a specific member.");
     textEdit->setPlaceholderText(
         "icekkk: /Archive/Members/Icekkk/HotSeats\n"
         "sp3nc3: /Archive/Members/sp3nc3/HotSeats\n"
@@ -3836,6 +3878,8 @@ void DistributionPanel::onPasteDestinations() {
     auto* cancelBtn = new QPushButton("Cancel", &dialog);
     auto* pasteBtn = new QPushButton("Add to Table", &dialog);
     pasteBtn->setObjectName("PanelPrimaryButton");
+    cancelBtn->setToolTip("Close without adding pasted destinations");
+    pasteBtn->setToolTip("Parse the pasted destinations and add them as manual distribution rows");
     btnLayout->addWidget(cancelBtn);
     btnLayout->addWidget(pasteBtn);
     layout->addLayout(btnLayout);

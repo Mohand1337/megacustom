@@ -56,6 +56,31 @@ void SmartRouteReviewDialog::setupUI() {
 
     auto addBulkBtn = [&](const QString& label, ContentType type, const QColor& color) {
         auto* btn = new QPushButton(label);
+        QString tooltip;
+        switch (type) {
+        case ContentType::NHB_ROOT_FILES:
+            tooltip = "Set selected matching routes to the member's NHB calls/month destination";
+            break;
+        case ContentType::NHB_COURSES:
+            tooltip = "Set selected matching routes to the member's NHB+ Courses destination";
+            break;
+        case ContentType::HOT_SEATS:
+            tooltip = "Set selected matching routes to the member's Fast Forward Hot Seats destination";
+            break;
+        case ContentType::THEORY_CALLS:
+            tooltip = "Set selected matching routes to the member's Fast Forward Theory Calls destination";
+            break;
+        case ContentType::FF_COURSES:
+            tooltip = "Set selected matching routes to the member's Fast Forward Courses destination";
+            break;
+        case ContentType::FAST_FORWARD:
+            tooltip = "Set selected matching routes to the member's main Fast Forward destination";
+            break;
+        case ContentType::UNKNOWN:
+            tooltip = "Set selected matching routes to a custom destination";
+            break;
+        }
+        btn->setToolTip(tooltip);
         btn->setStyleSheet(QString("QPushButton { border: 1px solid %1; border-radius: 4px; "
             "padding: 4px 10px; color: %1; } "
             "QPushButton:hover { background: %1; color: white; }")
@@ -75,10 +100,12 @@ void SmartRouteReviewDialog::setupUI() {
     bulkLayout->addStretch();
 
     auto* selectAllBtn = new QPushButton("Select All");
+    selectAllBtn->setToolTip("Select every detected route in this review");
     connect(selectAllBtn, &QPushButton::clicked, this, &SmartRouteReviewDialog::onSelectAll);
     bulkLayout->addWidget(selectAllBtn);
 
     auto* deselectAllBtn = new QPushButton("Deselect All");
+    deselectAllBtn->setToolTip("Clear every detected route in this review");
     connect(deselectAllBtn, &QPushButton::clicked, this, &SmartRouteReviewDialog::onDeselectAll);
     bulkLayout->addWidget(deselectAllBtn);
 
@@ -116,10 +143,12 @@ void SmartRouteReviewDialog::setupUI() {
     buttonLayout->addStretch();
 
     auto* cancelBtn = ButtonFactory::createOutline("Cancel", this);
+    cancelBtn->setToolTip("Close the review without applying route edits");
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
     buttonLayout->addWidget(cancelBtn);
 
     m_applyBtn = ButtonFactory::createPrimary("Apply to Distribution", this);
+    m_applyBtn->setToolTip("Apply route selections and edited destinations back to the distribution table");
     connect(m_applyBtn, &QPushButton::clicked, this, [this]() {
         readBackEdits();
         accept();
@@ -262,6 +291,8 @@ void SmartRouteReviewDialog::populateTable() {
             auto* cTypeItem = new QTableWidgetItem(route.contentTypeLabel);
             cTypeItem->setTextAlignment(Qt::AlignCenter);
             cTypeItem->setFlags(cTypeItem->flags() & ~Qt::ItemIsEditable);
+            cTypeItem->setToolTip(QString("%1 route. Destination can be edited before applying.")
+                .arg(route.contentTypeLabel));
             switch (route.contentType) {
                 case ContentType::HOT_SEATS:
                 case ContentType::THEORY_CALLS:
