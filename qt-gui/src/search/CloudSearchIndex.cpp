@@ -14,6 +14,34 @@ CloudSearchIndex::CloudSearchIndex(QObject* parent)
 
 CloudSearchIndex::~CloudSearchIndex() = default;
 
+quint64 CloudSearchIndex::beginBuilding()
+{
+    quint64 generation = 0;
+
+    {
+        QMutexLocker locker(&m_mutex);
+
+        if (m_isBuilding) {
+            return 0;
+        }
+
+        m_nodes.clear();
+        m_handleIndex.clear();
+        m_extensionIndex.clear();
+        m_wordIndex.clear();
+        m_folderCount = 0;
+        m_totalSize = 0;
+        m_lastBuildTimeMs = 0;
+        m_isBuilding = true;
+        generation = ++m_buildGeneration;
+        m_buildTimer.start();
+    }
+
+    emit indexCleared();
+    emit indexingStarted();
+    return generation;
+}
+
 void CloudSearchIndex::clear()
 {
     {
@@ -26,14 +54,15 @@ void CloudSearchIndex::clear()
         m_folderCount = 0;
         m_totalSize = 0;
         m_isBuilding = false;
+        ++m_buildGeneration;
     }
     // Emit signal outside mutex to prevent deadlocks
     emit indexCleared();
 }
 
-void CloudSearchIndex::addNode(const QString& name, const QString& path, qint64 size,
+bool CloudSearchIndex::addNode(const QString& name, const QString& path, qint64 size,
                                 qint64 created, qint64 modified, const QString& handle,
-                                bool isFolder, int depth)
+                                bool isFolder, int depth, quint64 buildGeneration)
 {
     bool shouldEmitStarted = false;
     bool shouldEmitProgress = false;
@@ -42,8 +71,16 @@ void CloudSearchIndex::addNode(const QString& name, const QString& path, qint64 
     {
         QMutexLocker locker(&m_mutex);
 
+        if (buildGeneration != 0
+                && (!m_isBuilding || buildGeneration != m_buildGeneration)) {
+            return false;
+        }
+
         if (!m_isBuilding) {
             m_isBuilding = true;
+            if (buildGeneration == 0) {
+                ++m_buildGeneration;
+            }
             m_buildTimer.start();
             shouldEmitStarted = true;
         }
@@ -112,6 +149,8 @@ void CloudSearchIndex::addNode(const QString& name, const QString& path, qint64 
     if (shouldEmitProgress) {
         emit indexingProgress(currentSize, 0); // 0 = unknown total
     }
+
+    return true;
 }
 
 void CloudSearchIndex::removeNode(const QString& handle)
@@ -205,7 +244,7 @@ void CloudSearchIndex::updateNode(const QString& handle, const QString& newName,
     }
 }
 
-void CloudSearchIndex::finishBuilding()
+bool CloudSearchIndex::finishBuilding(quint64 buildGeneration)
 {
     int nodeCount = 0;
     qint64 buildTimeMs = 0;
@@ -216,12 +255,16 @@ void CloudSearchIndex::finishBuilding()
     {
         QMutexLocker locker(&m_mutex);
 
+        if (buildGeneration != 0 && buildGeneration != m_buildGeneration) {
+            return false;
+        }
+
         m_isBuilding = false;
         m_lastBuildTimeMs = m_buildTimer.elapsed();
 
         nodeCount = m_nodes.size();
         buildTimeMs = m_lastBuildTimeMs;
-        files = fileCount();
+        files = m_nodes.size() - m_folderCount;
         folders = m_folderCount;
         totalSizeMB = m_totalSize / (1024*1024);
     }
@@ -233,6 +276,49 @@ void CloudSearchIndex::finishBuilding()
 
     // Emit signal outside mutex to prevent deadlocks
     emit indexingFinished(nodeCount, buildTimeMs);
+    return true;
+}
+
+int CloudSearchIndex::nodeCount() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_nodes.size();
+}
+
+int CloudSearchIndex::folderCount() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_folderCount;
+}
+
+int CloudSearchIndex::fileCount() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_nodes.size() - m_folderCount;
+}
+
+qint64 CloudSearchIndex::totalSize() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_totalSize;
+}
+
+bool CloudSearchIndex::isBuilding() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_isBuilding;
+}
+
+qint64 CloudSearchIndex::lastBuildTimeMs() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_lastBuildTimeMs;
+}
+
+qint64 CloudSearchIndex::lastSearchTimeMs() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_lastSearchTimeMs;
 }
 
 QVector<SearchResult> CloudSearchIndex::search(const QString& query, int maxResults) const

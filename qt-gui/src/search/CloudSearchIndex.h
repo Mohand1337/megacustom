@@ -125,13 +125,14 @@ public:
     ~CloudSearchIndex();
 
     // Index building
+    quint64 beginBuilding();
     void clear();
-    void addNode(const QString& name, const QString& path, qint64 size,
+    bool addNode(const QString& name, const QString& path, qint64 size,
                  qint64 created, qint64 modified, const QString& handle,
-                 bool isFolder, int depth = 0);
+                 bool isFolder, int depth = 0, quint64 buildGeneration = 0);
     void removeNode(const QString& handle);
     void updateNode(const QString& handle, const QString& newName, const QString& newPath);
-    void finishBuilding();
+    bool finishBuilding(quint64 buildGeneration = 0);
 
     // Search
     QVector<SearchResult> search(const QString& query, int maxResults = 1000) const;
@@ -145,13 +146,13 @@ public:
     QString getPathForHandle(const QString& handle) const;
 
     // Statistics
-    int nodeCount() const { return m_nodes.size(); }
-    int folderCount() const { return m_folderCount; }
-    int fileCount() const { return m_nodes.size() - m_folderCount; }
-    qint64 totalSize() const { return m_totalSize; }
-    bool isBuilding() const { return m_isBuilding; }
-    qint64 lastBuildTimeMs() const { return m_lastBuildTimeMs; }
-    qint64 lastSearchTimeMs() const { return m_lastSearchTimeMs; }
+    int nodeCount() const;
+    int folderCount() const;
+    int fileCount() const;
+    qint64 totalSize() const;
+    bool isBuilding() const;
+    qint64 lastBuildTimeMs() const;
+    qint64 lastSearchTimeMs() const;
 
 signals:
     void indexingStarted();
@@ -185,6 +186,7 @@ private:
     bool m_isBuilding = false;
     qint64 m_lastBuildTimeMs = 0;
     mutable qint64 m_lastSearchTimeMs = 0;
+    quint64 m_buildGeneration = 0;
 
     // Thread safety
     mutable QMutex m_mutex;

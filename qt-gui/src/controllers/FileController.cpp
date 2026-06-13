@@ -402,31 +402,37 @@ void FileController::buildSearchIndex(CloudSearchIndex* index) {
         return;
     }
 
-    emit searchIndexBuildStarted();
-
     mega::MegaApi* capturedApi = megaApi;
 
-    QtConcurrent::run([this, index, capturedApi]() {
+    const quint64 buildGeneration = index->beginBuilding();
+    if (buildGeneration == 0) {
+        qDebug() << "Search index build skipped: already building";
+        return;
+    }
+
+    emit searchIndexBuildStarted();
+
+    QtConcurrent::run([this, index, capturedApi, buildGeneration]() {
         QElapsedTimer timer;
         timer.start();
 
-        index->clear();
-
         MegaNodePtr rootNode(capturedApi->getRootNode());
         if (!rootNode) {
-            QMetaObject::invokeMethod(this, [this]() {
-                emit operationFailed("Could not get root node");
-            }, Qt::QueuedConnection);
+            if (index->finishBuilding(buildGeneration)) {
+                QMetaObject::invokeMethod(this, [this]() {
+                    emit operationFailed("Could not get root node");
+                }, Qt::QueuedConnection);
+            }
             return;
         }
 
         int nodeCount = 0;
         int lastProgress = 0;
 
-        std::function<void(mega::MegaNode*, const QString&, int)> traverseNode;
+        std::function<bool(mega::MegaNode*, const QString&, int)> traverseNode;
         traverseNode = [&](mega::MegaNode* parentNode, const QString& parentPath, int depth) {
             MegaNodeListPtr children(capturedApi->getChildren(parentNode));
-            if (!children) return;
+            if (!children) return true;
 
             for (int i = 0; i < children->size(); i++) {
                 mega::MegaNode* node = children->get(i);
@@ -436,7 +442,7 @@ void FileController::buildSearchIndex(CloudSearchIndex* index) {
                 QString nodePath = parentPath.isEmpty() ? "/" + nodeName :
                                    (parentPath == "/" ? "/" + nodeName : parentPath + "/" + nodeName);
 
-                index->addNode(
+                if (!index->addNode(
                     nodeName,
                     nodePath,
                     static_cast<qint64>(node->getSize()),
@@ -444,8 +450,11 @@ void FileController::buildSearchIndex(CloudSearchIndex* index) {
                     static_cast<qint64>(node->getModificationTime()),
                     QString::number(node->getHandle()),
                     node->isFolder(),
-                    depth
-                );
+                    depth,
+                    buildGeneration
+                )) {
+                    return false;
+                }
 
                 nodeCount++;
 
@@ -457,17 +466,27 @@ void FileController::buildSearchIndex(CloudSearchIndex* index) {
                 }
 
                 if (node->isFolder()) {
-                    traverseNode(node, nodePath, depth + 1);
+                    if (!traverseNode(node, nodePath, depth + 1)) {
+                        return false;
+                    }
                 }
             }
+
+            return true;
         };
 
-        traverseNode(rootNode.get(), "", 0);
+        if (!traverseNode(rootNode.get(), "", 0)) {
+            qDebug() << "Search index build cancelled";
+            return;
+        }
 
         qint64 elapsed = timer.elapsed();
         qDebug() << "Search index built:" << nodeCount << "nodes in" << elapsed << "ms";
 
-        index->finishBuilding();
+        if (!index->finishBuilding(buildGeneration)) {
+            qDebug() << "Search index build finished after cancellation";
+            return;
+        }
 
         QMetaObject::invokeMethod(this, [this, nodeCount]() {
             emit searchIndexBuildCompleted(nodeCount);
