@@ -49,7 +49,9 @@ public slots:
 private slots:
     void onAddMember();
     void onEditMember();
+    void onDuplicateMember();
     void onRemoveMember();
+    void onAuditMembers();
     void onEditTemplate();
     void onSaveTemplate();
     void onImportMembers();
@@ -86,6 +88,10 @@ private:
     QString getSelectedMemberId() const;
     void showMemberEditDialog(const MemberInfo& member, bool isNew);
     void rebuildPathTypesGrid();
+    QList<QStringList> buildMemberAuditRows(int* errorCount = nullptr,
+                                            int* warningCount = nullptr,
+                                            int* infoCount = nullptr) const;
+    void selectMemberById(const QString& memberId);
 
     // Global template path types
     QWidget* m_pathTypesWidget;
@@ -113,6 +119,7 @@ private:
     // Actions
     QPushButton* m_addBtn;
     QPushButton* m_editBtn;
+    QPushButton* m_duplicateBtn;
     QPushButton* m_removeBtn;
     QPushButton* m_bindFolderBtn;
     QPushButton* m_unbindFolderBtn;
@@ -121,6 +128,7 @@ private:
     QPushButton* m_importCsvBtn;
     QPushButton* m_exportCsvBtn;
     QPushButton* m_populateBtn;
+    QPushButton* m_auditBtn;
     QPushButton* m_wpSyncBtn;
 
     // Stats

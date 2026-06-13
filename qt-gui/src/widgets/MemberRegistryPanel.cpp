@@ -214,6 +214,7 @@ void MemberRegistryPanel::setupUI() {
         }
 
         menu.addAction("Edit", this, &MemberRegistryPanel::onEditMember);
+        menu.addAction("Duplicate...", this, &MemberRegistryPanel::onDuplicateMember);
         menu.addAction("Bind Folder...", this, &MemberRegistryPanel::onBindFolder);
         menu.addAction("Unbind Folder", this, &MemberRegistryPanel::onUnbindFolder);
         menu.addSeparator();
@@ -261,12 +262,20 @@ void MemberRegistryPanel::setupUI() {
     m_editBtn = new QPushButton("Edit");
     m_editBtn->setIcon(QIcon(":/icons/edit.svg"));
     m_editBtn->setEnabled(false);
+    m_editBtn->setToolTip("Edit the selected member");
     connect(m_editBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onEditMember);
+
+    m_duplicateBtn = new QPushButton("Duplicate");
+    m_duplicateBtn->setIcon(QIcon(":/icons/copy.svg"));
+    m_duplicateBtn->setEnabled(false);
+    m_duplicateBtn->setToolTip("Create a new member from the selected member, with options for copying paths, contact info, watermark settings, and groups");
+    connect(m_duplicateBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onDuplicateMember);
 
     m_removeBtn = new QPushButton("Delete");
     m_removeBtn->setObjectName("PanelDangerButton");
     m_removeBtn->setIcon(QIcon(":/icons/trash-2.svg"));
     m_removeBtn->setEnabled(false);
+    m_removeBtn->setToolTip("Delete the selected member from the registry");
     connect(m_removeBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onRemoveMember);
 
     m_bindFolderBtn = new QPushButton("Bind Folder");
@@ -282,6 +291,7 @@ void MemberRegistryPanel::setupUI() {
 
     actionsLayout1->addWidget(m_addBtn);
     actionsLayout1->addWidget(m_editBtn);
+    actionsLayout1->addWidget(m_duplicateBtn);
     actionsLayout1->addWidget(m_removeBtn);
     actionsLayout1->addWidget(m_bindFolderBtn);
     actionsLayout1->addWidget(m_unbindFolderBtn);
@@ -296,6 +306,11 @@ void MemberRegistryPanel::setupUI() {
     m_populateBtn = new QPushButton("Populate Defaults");
     m_populateBtn->setToolTip("Populate with default members");
     connect(m_populateBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onPopulateDefaults);
+
+    m_auditBtn = new QPushButton("Audit Members");
+    m_auditBtn->setIcon(QIcon(":/icons/search.svg"));
+    m_auditBtn->setToolTip("Check the member registry for duplicate identities, missing contact/path data, group issues, and routing risks");
+    connect(m_auditBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onAuditMembers);
 
     m_wpSyncBtn = new QPushButton("WordPress Sync");
     m_wpSyncBtn->setToolTip("Sync members from WordPress via REST API");
@@ -319,6 +334,7 @@ void MemberRegistryPanel::setupUI() {
     connect(m_exportCsvBtn, &QPushButton::clicked, this, &MemberRegistryPanel::onExportCsv);
 
     actionsLayout2->addWidget(m_populateBtn);
+    actionsLayout2->addWidget(m_auditBtn);
     actionsLayout2->addWidget(m_wpSyncBtn);
     actionsLayout2->addStretch();
     actionsLayout2->addWidget(m_importCsvBtn);
@@ -863,11 +879,284 @@ QString MemberRegistryPanel::getSelectedMemberId() const {
     return item->data(Qt::UserRole).toString();
 }
 
+void MemberRegistryPanel::selectMemberById(const QString& memberId) {
+    for (int row = 0; row < m_memberTable->rowCount(); ++row) {
+        QTableWidgetItem* item = m_memberTable->item(row, 0);
+        if (item && item->data(Qt::UserRole).toString() == memberId) {
+            m_memberTable->selectRow(row);
+            m_memberTable->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            return;
+        }
+    }
+}
+
+QList<QStringList> MemberRegistryPanel::buildMemberAuditRows(int* errorCount,
+                                                             int* warningCount,
+                                                             int* infoCount) const {
+    int errors = 0;
+    int warnings = 0;
+    int infos = 0;
+    QList<QStringList> rows;
+
+    auto addFinding = [&](const QString& severity,
+                          const QString& area,
+                          const QString& subject,
+                          const QString& problem,
+                          const QString& fix) {
+        rows.append({severity, area, subject, problem, fix});
+        if (severity == "Error") errors++;
+        else if (severity == "Warning") warnings++;
+        else infos++;
+    };
+
+    auto cleanKey = [](const QString& value) {
+        return value.trimmed().toLower();
+    };
+    auto pathKey = [](QString value) {
+        value = value.trimmed();
+        while (value.endsWith('/') && value.size() > 1) value.chop(1);
+        return value.toLower();
+    };
+    auto addDuplicateFindings = [&](const QString& area,
+                                    const QMap<QString, QStringList>& buckets,
+                                    const QString& problemPrefix,
+                                    const QString& fix,
+                                    const QString& severity = "Warning") {
+        for (auto it = buckets.constBegin(); it != buckets.constEnd(); ++it) {
+            QStringList ids = it.value();
+            ids.removeDuplicates();
+            if (ids.size() > 1) {
+                addFinding(severity, area, ids.join(", "),
+                    QString("%1: %2").arg(problemPrefix, it.key()), fix);
+            }
+        }
+    };
+
+    const QList<MemberInfo> members = m_registry->getAllMembers();
+    const QList<MemberGroup> groups = m_registry->getAllGroups();
+
+    QMap<QString, QStringList> idCaseBuckets;
+    QMap<QString, QStringList> displayNameBuckets;
+    QMap<QString, QStringList> emailBuckets;
+    QMap<QString, QStringList> emailPrefixBuckets;
+    QMap<QString, QStringList> wpBuckets;
+    QMap<QString, QStringList> directFolderBuckets;
+    QMap<QString, QStringList> archiveRootBuckets;
+    QMap<QString, QStringList> wmPatternBuckets;
+    QMap<int, QStringList> sortOrderBuckets;
+    struct MatchKey {
+        QString memberId;
+        QString key;
+        QString label;
+    };
+    QList<MatchKey> matchKeys;
+
+    auto addMatchKey = [&](const QString& memberId, const QString& key, const QString& label) {
+        const QString normalized = cleanKey(key);
+        if (normalized.length() >= 3) {
+            matchKeys.append({memberId, normalized, label});
+        }
+    };
+
+    for (const MemberInfo& member : members) {
+        const QString subject = member.id;
+        idCaseBuckets[cleanKey(member.id)].append(member.id);
+        addMatchKey(member.id, member.id, "member ID");
+        if (member.sortOrder > 0) sortOrderBuckets[member.sortOrder].append(member.id);
+
+        const QString nameKey = cleanKey(member.displayName);
+        if (!nameKey.isEmpty()) {
+            displayNameBuckets[nameKey].append(member.id);
+            addMatchKey(member.id, nameKey, "display name");
+        }
+        const QString emailKey = cleanKey(member.email);
+        if (!emailKey.isEmpty()) {
+            emailBuckets[emailKey].append(member.id);
+            const QString emailPrefix = emailKey.section('@', 0, 0);
+            emailPrefixBuckets[emailPrefix].append(member.id);
+            addMatchKey(member.id, emailPrefix, "email prefix");
+        }
+        const QString wpKey = cleanKey(member.wpUserId);
+        if (!wpKey.isEmpty()) wpBuckets[wpKey].append(member.id);
+        const QString folderKey = pathKey(member.distributionFolder);
+        if (!folderKey.isEmpty()) directFolderBuckets[folderKey].append(member.id);
+        const QString archiveKey = pathKey(member.paths.archiveRoot);
+        if (!archiveKey.isEmpty()) archiveRootBuckets[archiveKey].append(member.id);
+        const QString wmKey = cleanKey(member.wmFolderPattern);
+        if (!wmKey.isEmpty()) wmPatternBuckets[wmKey].append(member.id);
+
+        if (member.id.trimmed().isEmpty()) {
+            addFinding("Error", "Identity", subject, "Member ID is empty", "Set a unique member ID.");
+        }
+        if (member.displayName.trimmed().isEmpty()) {
+            addFinding("Warning", "Identity", subject, "Display name is empty", "Add a readable display name.");
+        }
+        if (member.active && !member.hasDistributionFolder() && member.paths.archiveRoot.isEmpty()) {
+            addFinding("Error", "Paths", subject,
+                "Active member has no direct distribution folder and no archive root",
+                "Bind a folder or set archive paths before distribution.");
+        }
+        if (!member.distributionFolder.isEmpty() && !member.distributionFolder.startsWith('/')) {
+            addFinding("Warning", "Paths", subject,
+                "Direct distribution folder does not start with /",
+                "Use an absolute MEGA path.");
+        }
+        if (!member.paths.archiveRoot.isEmpty() && !member.paths.archiveRoot.startsWith('/')) {
+            addFinding("Warning", "Paths", subject,
+                "Archive root does not start with /",
+                "Use an absolute MEGA path.");
+        }
+        if (!member.paths.hotSeatsPath.isEmpty() && member.paths.fastForwardPath.isEmpty()) {
+            addFinding("Warning", "Paths", subject,
+                "Hot Seats path is set but Fast Forward path is empty",
+                "Set Fast Forward path or clear Hot Seats path.");
+        }
+        if (!member.paths.theoryCallsPath.isEmpty() && member.paths.fastForwardPath.isEmpty()) {
+            addFinding("Warning", "Paths", subject,
+                "Theory Calls path is set but Fast Forward path is empty",
+                "Set Fast Forward path or clear Theory Calls path.");
+        }
+        if (member.active && member.email.trimmed().isEmpty() && !member.useGlobalWatermark) {
+            addFinding("Warning", "Watermark", subject,
+                "Active member has no email for personalized watermarking",
+                "Add email or enable global watermark only.");
+        }
+        if (member.active && member.ipAddress.trimmed().isEmpty() && !member.useGlobalWatermark) {
+            addFinding("Warning", "Watermark", subject,
+                "Active member has no IP address for personalized watermarking",
+                "Add IP address or enable global watermark only.");
+        }
+        if (member.useGlobalWatermark && (!member.watermarkFields.isEmpty())) {
+            addFinding("Info", "Watermark", subject,
+                "Global watermark is enabled, so personalized watermark fields are ignored",
+                "Clear fields or disable global watermark if personalization is expected.");
+        }
+        if (!member.active && member.hasDistributionFolder()) {
+            addFinding("Info", "Status", subject,
+                "Inactive member still has a bound distribution folder",
+                "This is okay if intentional; otherwise unbind or reactivate.");
+        }
+        if (member.active && member.wmFolderPattern.trimmed().isEmpty()) {
+            addFinding("Info", "Matching", subject,
+                "Active member has no explicit WM folder pattern",
+                "Add a pattern when folder names differ from member ID/display name.");
+        }
+        if (member.active && m_registry->getGroupsForMember(member.id).isEmpty()) {
+            addFinding("Info", "Groups", subject,
+                "Active member is not in any saved group",
+                "Add to NHB+/FF/etc. groups if group-based workflows should include this member.");
+        }
+    }
+
+    int collisionWarnings = 0;
+    for (int i = 0; i < matchKeys.size(); ++i) {
+        for (int j = i + 1; j < matchKeys.size(); ++j) {
+            const MatchKey& a = matchKeys[i];
+            const MatchKey& b = matchKeys[j];
+            if (a.memberId == b.memberId || a.key == b.key) continue;
+
+            const bool aInsideB = b.key.contains(a.key);
+            const bool bInsideA = a.key.contains(b.key);
+            if (!aInsideB && !bInsideA) continue;
+
+            const MatchKey& shorter = a.key.length() <= b.key.length() ? a : b;
+            const MatchKey& longer = a.key.length() <= b.key.length() ? b : a;
+            addFinding("Warning", "Matching",
+                QString("%1, %2").arg(shorter.memberId, longer.memberId),
+                QString("%1 '%2' is contained in %3 '%4'")
+                    .arg(shorter.label, shorter.key, longer.label, longer.key),
+                "Use explicit WM folder patterns to prevent fuzzy matching the wrong member.");
+            if (++collisionWarnings >= 40) {
+                addFinding("Info", "Matching", "Audit",
+                    "Additional fuzzy-match collision warnings were suppressed",
+                    "Fix the listed patterns first, then run audit again.");
+                i = matchKeys.size();
+                break;
+            }
+        }
+    }
+
+    addDuplicateFindings("Identity", idCaseBuckets,
+        "Member IDs differ only by case", "Rename one member ID to avoid ambiguous matching.", "Error");
+    addDuplicateFindings("Identity", displayNameBuckets,
+        "Duplicate display name", "Use distinct display names or add notes explaining the duplicate.");
+    addDuplicateFindings("Identity", emailBuckets,
+        "Duplicate email", "Confirm whether these are the same person or split the contact details.", "Error");
+    addDuplicateFindings("Matching", emailPrefixBuckets,
+        "Duplicate email username prefix used for folder matching",
+        "Use explicit WM folder patterns to avoid matching the wrong member.");
+    addDuplicateFindings("WordPress", wpBuckets,
+        "Duplicate WordPress user ID", "Keep one registry member per WordPress user ID unless intentional.", "Error");
+    addDuplicateFindings("Paths", directFolderBuckets,
+        "Duplicate direct distribution folder", "Bind each member to a unique destination folder.", "Error");
+    addDuplicateFindings("Paths", archiveRootBuckets,
+        "Duplicate archive root", "Set a unique archive root for each member.", "Error");
+    addDuplicateFindings("Matching", wmPatternBuckets,
+        "Duplicate WM folder pattern", "Use distinct patterns so watermark folders match one member.");
+
+    for (auto it = sortOrderBuckets.constBegin(); it != sortOrderBuckets.constEnd(); ++it) {
+        if (it.value().size() > 1) {
+            addFinding("Info", "Ordering", it.value().join(", "),
+                QString("Members share sort order %1").arg(it.key()),
+                "Adjust sort order if display order matters.");
+        }
+    }
+
+    for (const MemberGroup& group : groups) {
+        QStringList seen;
+        QStringList duplicateIds;
+        QStringList missingIds;
+        QStringList inactiveIds;
+        for (const QString& memberId : group.memberIds) {
+            if (seen.contains(memberId)) duplicateIds.append(memberId);
+            seen.append(memberId);
+            if (!m_registry->hasMember(memberId)) {
+                missingIds.append(memberId);
+                continue;
+            }
+            if (!m_registry->getMember(memberId).active) {
+                inactiveIds.append(memberId);
+            }
+        }
+        duplicateIds.removeDuplicates();
+        missingIds.removeDuplicates();
+        inactiveIds.removeDuplicates();
+
+        if (group.name.trimmed().isEmpty()) {
+            addFinding("Error", "Groups", "(blank group)", "Group name is empty", "Rename or delete the group.");
+        }
+        if (group.memberIds.isEmpty()) {
+            addFinding("Info", "Groups", group.name, "Group has no members", "Add members or delete the group.");
+        }
+        if (!duplicateIds.isEmpty()) {
+            addFinding("Warning", "Groups", group.name,
+                QString("Group contains duplicate member IDs: %1").arg(duplicateIds.join(", ")),
+                "Open the group and re-save membership.");
+        }
+        if (!missingIds.isEmpty()) {
+            addFinding("Error", "Groups", group.name,
+                QString("Group references missing members: %1").arg(missingIds.join(", ")),
+                "Remove missing IDs or recreate those members.");
+        }
+        if (!inactiveIds.isEmpty()) {
+            addFinding("Info", "Groups", group.name,
+                QString("Group contains inactive members: %1").arg(inactiveIds.join(", ")),
+                "Remove them from the group if they should not receive files.");
+        }
+    }
+
+    if (errorCount) *errorCount = errors;
+    if (warningCount) *warningCount = warnings;
+    if (infoCount) *infoCount = infos;
+    return rows;
+}
+
 void MemberRegistryPanel::onTableSelectionChanged() {
     QString memberId = getSelectedMemberId();
     bool hasSelection = !memberId.isEmpty();
 
     m_editBtn->setEnabled(hasSelection);
+    m_duplicateBtn->setEnabled(hasSelection);
     m_removeBtn->setEnabled(hasSelection);
     m_bindFolderBtn->setEnabled(hasSelection);
 
@@ -1259,6 +1548,143 @@ void MemberRegistryPanel::onEditMember() {
     showMemberEditDialog(info, false);
 }
 
+void MemberRegistryPanel::onDuplicateMember() {
+    const QString sourceId = getSelectedMemberId();
+    if (sourceId.isEmpty()) return;
+
+    const MemberInfo source = m_registry->getMember(sourceId);
+    QString baseId = source.id + "_copy";
+    QString newId = baseId;
+    int suffix = 2;
+    while (m_registry->hasMember(newId)) {
+        newId = baseId + QString::number(suffix++);
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString("Duplicate Member: %1").arg(source.displayName.isEmpty() ? source.id : source.displayName));
+    dialog.setMinimumWidth(520);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* infoLabel = new QLabel(
+        "Create a new registry member from the selected member. The new member gets fresh activity/WordPress sync state.");
+    infoLabel->setWordWrap(true);
+    infoLabel->setProperty("type", "secondary");
+    layout->addWidget(infoLabel);
+
+    auto* form = new QFormLayout();
+    auto* idEdit = new QLineEdit(newId);
+    idEdit->setToolTip("Unique member ID for the duplicate. Existing members will not be overwritten.");
+    auto* nameEdit = new QLineEdit(source.displayName + " (copy)");
+    nameEdit->setToolTip("Display name for the duplicated member.");
+    auto* orderSpin = new QSpinBox();
+    orderSpin->setRange(1, 9999);
+    orderSpin->setValue(m_registry->getAllMembers().size() + 1);
+    orderSpin->setToolTip("Sort order for the duplicated member.");
+    form->addRow("New member ID:", idEdit);
+    form->addRow("Display name:", nameEdit);
+    form->addRow("Sort order:", orderSpin);
+    layout->addLayout(form);
+
+    auto* copyPathsCheck = new QCheckBox("Copy archive paths");
+    copyPathsCheck->setChecked(true);
+    copyPathsCheck->setToolTip("Copy archive root, NHB calls, Fast Forward, theory calls, and hot seats paths.");
+    auto* copyFolderCheck = new QCheckBox("Copy direct distribution folder");
+    copyFolderCheck->setChecked(false);
+    copyFolderCheck->setToolTip("Copy the direct distribution folder binding. Leave off when the duplicate should get its own folder.");
+    auto* copyContactCheck = new QCheckBox("Copy contact fields");
+    copyContactCheck->setChecked(true);
+    copyContactCheck->setToolTip("Copy email, IP, MAC, and social handle.");
+    auto* copyWatermarkCheck = new QCheckBox("Copy watermark settings");
+    copyWatermarkCheck->setChecked(true);
+    copyWatermarkCheck->setToolTip("Copy personalized watermark field selection and global-watermark override.");
+    auto* copyGroupsCheck = new QCheckBox("Copy group membership");
+    copyGroupsCheck->setChecked(true);
+    copyGroupsCheck->setToolTip("Add the duplicated member to the same saved groups as the source member.");
+    auto* activeCheck = new QCheckBox("Mark duplicate active");
+    activeCheck->setChecked(source.active);
+    activeCheck->setToolTip("Set whether the duplicated member should be active immediately.");
+
+    layout->addWidget(copyPathsCheck);
+    layout->addWidget(copyFolderCheck);
+    layout->addWidget(copyContactCheck);
+    layout->addWidget(copyWatermarkCheck);
+    layout->addWidget(copyGroupsCheck);
+    layout->addWidget(activeCheck);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText("Duplicate");
+    buttons->button(QDialogButtonBox::Ok)->setToolTip("Create the duplicated member with these options");
+    buttons->button(QDialogButtonBox::Cancel)->setToolTip("Close without creating a duplicate");
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    newId = idEdit->text().trimmed().toLower();
+    if (newId.isEmpty()) {
+        QMessageBox::warning(this, "Duplicate Member", "New member ID is required.");
+        return;
+    }
+    if (m_registry->hasMember(newId)) {
+        QMessageBox::warning(this, "Duplicate Member",
+            QString("A member with ID '%1' already exists.").arg(newId));
+        return;
+    }
+
+    MemberInfo copy = source;
+    copy.id = newId;
+    copy.displayName = nameEdit->text().trimmed().isEmpty()
+        ? newId
+        : nameEdit->text().trimmed();
+    copy.sortOrder = orderSpin->value();
+    copy.active = activeCheck->isChecked();
+    copy.pipelineStatus = MemberStatusInfo();
+    copy.wpUserId.clear();
+    copy.lastWpSync = 0;
+
+    if (!copyPathsCheck->isChecked()) {
+        copy.paths = MemberPaths();
+        copy.wmFolderPattern.clear();
+    }
+    if (!copyFolderCheck->isChecked()) {
+        copy.distributionFolder.clear();
+    }
+    if (!copyContactCheck->isChecked()) {
+        copy.email.clear();
+        copy.ipAddress.clear();
+        copy.macAddress.clear();
+        copy.socialHandle.clear();
+    }
+    if (!copyWatermarkCheck->isChecked()) {
+        copy.watermarkFields.clear();
+        copy.useGlobalWatermark = false;
+    }
+
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    copy.createdAt = now;
+    copy.updatedAt = now;
+
+    m_registry->addMember(copy);
+
+    if (copyGroupsCheck->isChecked()) {
+        const QStringList groups = m_registry->getGroupsForMember(source.id);
+        for (const QString& groupName : groups) {
+            MemberGroup group = m_registry->getGroup(groupName);
+            if (!group.memberIds.contains(copy.id)) {
+                group.memberIds.append(copy.id);
+                group.updatedAt = now;
+                m_registry->updateGroup(group);
+            }
+        }
+    }
+
+    refresh();
+    selectMemberById(copy.id);
+    QMessageBox::information(this, "Duplicate Member",
+        QString("Created member '%1' from '%2'.").arg(copy.id, source.id));
+}
+
 void MemberRegistryPanel::onRemoveMember() {
     QString memberId = getSelectedMemberId();
     if (memberId.isEmpty()) return;
@@ -1272,6 +1698,97 @@ void MemberRegistryPanel::onRemoveMember() {
     if (ret == QMessageBox::Yes) {
         m_registry->removeMember(memberId);
     }
+}
+
+void MemberRegistryPanel::onAuditMembers() {
+    int errors = 0;
+    int warnings = 0;
+    int infos = 0;
+    const QList<QStringList> findings = buildMemberAuditRows(&errors, &warnings, &infos);
+
+    QDialog dialog(this);
+    dialog.setWindowTitle("Member Registry Audit");
+    dialog.setMinimumSize(900, 560);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* summary = new QLabel(QString("Audit complete: %1 errors, %2 warnings, %3 info across %4 members and %5 groups.")
+        .arg(errors)
+        .arg(warnings)
+        .arg(infos)
+        .arg(m_registry->getAllMembers().size())
+        .arg(m_registry->getAllGroups().size()));
+    summary->setObjectName("PanelSubtitle");
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+
+    auto* table = new QTableWidget(&dialog);
+    table->setColumnCount(5);
+    table->setHorizontalHeaderLabels({"Severity", "Area", "Subject", "Problem", "Suggested Fix"});
+    table->setRowCount(findings.size());
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setAlternatingRowColors(true);
+    table->setSortingEnabled(false);
+    table->verticalHeader()->setVisible(false);
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Interactive);
+    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    table->setColumnWidth(0, 90);
+    table->setColumnWidth(1, 110);
+    table->setColumnWidth(2, 180);
+
+    auto& tm = ThemeManager::instance();
+    for (int row = 0; row < findings.size(); ++row) {
+        const QStringList finding = findings[row];
+        for (int col = 0; col < finding.size(); ++col) {
+            auto* item = new QTableWidgetItem(finding[col]);
+            item->setToolTip(finding[col]);
+            item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+            if (col == 0) {
+                item->setTextAlignment(Qt::AlignCenter);
+                if (finding[col] == "Error") item->setForeground(tm.supportError());
+                else if (finding[col] == "Warning") item->setForeground(tm.supportWarning());
+                else item->setForeground(tm.supportInfo());
+            }
+            table->setItem(row, col, item);
+        }
+    }
+    table->setSortingEnabled(true);
+    layout->addWidget(table, 1);
+
+    auto buildReport = [&]() {
+        QStringList lines;
+        lines.append(summary->text());
+        lines.append("Severity\tArea\tSubject\tProblem\tSuggested Fix");
+        for (const QStringList& finding : findings) {
+            lines.append(finding.join("\t"));
+        }
+        return lines.join("\n");
+    };
+
+    auto* buttonRow = new QHBoxLayout();
+    auto* copyBtn = new QPushButton("Copy Report", &dialog);
+    copyBtn->setToolTip("Copy the full audit report to the clipboard");
+    connect(copyBtn, &QPushButton::clicked, &dialog, [&]() {
+        QApplication::clipboard()->setText(buildReport());
+        QMessageBox::information(&dialog, "Audit Report", "Audit report copied to clipboard.");
+    });
+    auto* closeBtn = new QPushButton("Close", &dialog);
+    closeBtn->setToolTip("Close the member audit report");
+    connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    buttonRow->addWidget(copyBtn);
+    buttonRow->addStretch();
+    buttonRow->addWidget(closeBtn);
+    layout->addLayout(buttonRow);
+
+    if (findings.isEmpty()) {
+        QMessageBox::information(this, "Member Registry Audit",
+            "No member registry issues found.");
+        return;
+    }
+
+    dialog.exec();
 }
 
 void MemberRegistryPanel::onBindFolder() {
