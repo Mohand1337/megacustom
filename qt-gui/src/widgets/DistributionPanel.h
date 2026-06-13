@@ -12,6 +12,7 @@
 #include <QMap>
 #include <QList>
 #include <QThread>
+#include <QVariantMap>
 #include <memory>
 
 #include "utils/ContentRouter.h"
@@ -96,6 +97,7 @@ private slots:
     void onPauseDistribution();
     void onBulkRename();
     void onPreviewDistribution();
+    void onRunAudit();
     void onFileListReceived(const QVariantList& files);
 
     // Worker thread slots
@@ -114,6 +116,7 @@ private slots:
     void onSaveTemplate();
     void onDeleteTemplate();
     void onLoadTemplate(int index);
+    void onRepeatLastJob();
 
     // Import/Export slots
     void onImportDestinations();
@@ -132,6 +135,9 @@ private:
     QString getDestinationPath(const QString& memberId, const QString& month = QString());
     void executeBulkRename(const QString& folderPath);
     void showDistributionSettingsDialog();
+    QString autoDetectDistributionIntent();
+    QString buildDistributionAudit(bool includeDetails = true, int* blockerCount = nullptr, int* warningCount = nullptr);
+    bool confirmDistributionAudit();
 
     // UI Components - Configuration
     QComboBox* m_sourceTypeCombo = nullptr;  // "Cloud" or "Local"
@@ -175,6 +181,7 @@ private:
     QPushButton* m_pauseBtn;
     QPushButton* m_stopBtn;
     QPushButton* m_bulkRenameBtn;
+    QPushButton* m_auditBtn = nullptr;
     QLabel* m_moveWarningBanner = nullptr;
 
     // Upload mode banner
@@ -235,6 +242,11 @@ private:
     void loadSavedTemplates();
     void saveSavedTemplates();
     QString savedTemplatesPath() const;
+    QString lastJobProfilePath() const;
+    QVariantMap currentJobProfile(const QString& name = QString()) const;
+    void applyJobProfile(const QVariantMap& data);
+    void saveLastJobProfile();
+    bool loadLastJobProfile(bool scanAfterLoad);
 
     // Table column indices
     enum TableColumns {

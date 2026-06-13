@@ -882,6 +882,12 @@ void DistributionPanel::setupUI() {
     connect(m_previewBtn, &QPushButton::clicked, this, &DistributionPanel::onPreviewDistribution);
     actionBar->addWidget(m_previewBtn);
 
+    m_auditBtn = ButtonFactory::createOutline("Audit", this);
+    m_auditBtn->setIcon(QIcon(":/icons/search.svg"));
+    m_auditBtn->setToolTip("Run preflight checks for matches, destinations, duplicates, and source paths");
+    connect(m_auditBtn, &QPushButton::clicked, this, &DistributionPanel::onRunAudit);
+    actionBar->addWidget(m_auditBtn);
+
     m_startBtn = ButtonFactory::createPrimary("Start Distribution", this);
     m_startBtn->setIcon(QIcon(":/icons/play.svg"));
     connect(m_startBtn, &QPushButton::clicked, this, &DistributionPanel::onStartDistribution);
@@ -1058,6 +1064,8 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
 }
 
 void DistributionPanel::onScanWmFolder() {
+    const QString detectedIntent = autoDetectDistributionIntent();
+
     // Dispatch to local scan if Local mode is selected
     const bool isLocal = m_sourceTypeCombo &&
         m_sourceTypeCombo->currentData().toString() == "local";
@@ -1089,7 +1097,9 @@ void DistributionPanel::onScanWmFolder() {
     }
 
     QString wmPath = m_wmPathEdit->text();
-    m_statusLabel->setText("Scanning " + wmPath + "...");
+    m_statusLabel->setText(detectedIntent.isEmpty()
+        ? QString("Scanning %1...").arg(wmPath)
+        : QString("Scanning %1... %2").arg(wmPath, detectedIntent));
     m_scanBtn->setEnabled(false);
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
@@ -1154,7 +1164,10 @@ void DistributionPanel::onScanLocalFolder() {
 
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
-    m_statusLabel->setText("Scanning local folder " + localPath + "...");
+    const QString detectedIntent = autoDetectDistributionIntent();
+    m_statusLabel->setText(detectedIntent.isEmpty()
+        ? QString("Scanning local folder %1...").arg(localPath)
+        : QString("Scanning local folder %1... %2").arg(localPath, detectedIntent));
 
     // Broadcast mode for Local: single local source → all active members (or group)
     if (m_broadcastCheck->isChecked()) {
@@ -1184,11 +1197,17 @@ void DistributionPanel::onScanLocalFolder() {
             m_wmFolders.append(info);
         }
         populateTable();
+        int blockers = 0;
+        int warnings = 0;
+        buildDistributionAudit(false, &blockers, &warnings);
         QString groupSuffix = groupFilter.isEmpty()
             ? QString()
             : QString(" (group: %1)").arg(groupFilter);
-        m_statusLabel->setText(QString("Broadcast (local)%1: %2 members ready. Source: %3")
-            .arg(groupSuffix).arg(m_wmFolders.size()).arg(localPath));
+        QString auditSuffix = blockers > 0
+            ? QString(" Audit: %1 blockers.").arg(blockers)
+            : (warnings > 0 ? QString(" Audit: %1 warnings.").arg(warnings) : QString(" Audit clean."));
+        m_statusLabel->setText(QString("Broadcast (local)%1: %2 members ready. Source: %3.%4")
+            .arg(groupSuffix).arg(m_wmFolders.size()).arg(localPath, auditSuffix));
         m_statsLabel->setText(QString("Members: %1 | Source: %2")
             .arg(m_wmFolders.size()).arg(localPath));
         return;
@@ -1269,10 +1288,15 @@ void DistributionPanel::onScanLocalFolder() {
     QString statsText = QString("Found: %1 local folders (%2 matched, %3 unmatched)")
         .arg(m_wmFolders.size()).arg(matched).arg(unmatched);
     if (smartRouted > 0) statsText += QString(" \xe2\x80\x94 %1 smart-routed").arg(smartRouted);
-    m_statsLabel->setText(statsText);
-    m_statusLabel->setText("Local scan complete");
-
     populateTable();
+    int blockers = 0;
+    int warnings = 0;
+    buildDistributionAudit(false, &blockers, &warnings);
+    QString auditSuffix = blockers > 0
+        ? QString(" Audit: %1 blockers.").arg(blockers)
+        : (warnings > 0 ? QString(" Audit: %1 warnings.").arg(warnings) : QString(" Audit clean."));
+    m_statsLabel->setText(statsText);
+    m_statusLabel->setText("Local scan complete." + auditSuffix);
     updateEmptyState();
 }
 
@@ -1338,12 +1362,18 @@ void DistributionPanel::populateBroadcastTable(const QString& sourcePath) {
     }
 
     populateTable();
+    int blockers = 0;
+    int warnings = 0;
+    buildDistributionAudit(false, &blockers, &warnings);
+    QString auditSuffix = blockers > 0
+        ? QString(" Audit: %1 blockers.").arg(blockers)
+        : (warnings > 0 ? QString(" Audit: %1 warnings.").arg(warnings) : QString(" Audit clean."));
 
     QString groupSuffix = groupFilter.isEmpty()
         ? QString()
         : QString(" (group: %1)").arg(groupFilter);
-    m_statusLabel->setText(QString("Broadcast mode%1: %2 members ready. Source: %3")
-        .arg(groupSuffix).arg(m_wmFolders.size()).arg(sourcePath));
+    m_statusLabel->setText(QString("Broadcast mode%1: %2 members ready. Source: %3.%4")
+        .arg(groupSuffix).arg(m_wmFolders.size()).arg(sourcePath, auditSuffix));
     m_statsLabel->setText(QString("Members: %1 | Source: %2").arg(m_wmFolders.size()).arg(sourcePath));
 }
 
@@ -1451,10 +1481,15 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
     if (smartRouted > 0) {
         statsText += QString(" — %1 smart-routed").arg(smartRouted);
     }
-    m_statsLabel->setText(statsText);
-    m_statusLabel->setText("Scan complete");
-
     populateTable();
+    int blockers = 0;
+    int warnings = 0;
+    buildDistributionAudit(false, &blockers, &warnings);
+    QString auditSuffix = blockers > 0
+        ? QString(" Audit: %1 blockers.").arg(blockers)
+        : (warnings > 0 ? QString(" Audit: %1 warnings.").arg(warnings) : QString(" Audit clean."));
+    m_statsLabel->setText(statsText);
+    m_statusLabel->setText("Scan complete." + auditSuffix);
 }
 
 void DistributionPanel::populateTable() {
@@ -1596,8 +1631,10 @@ void DistributionPanel::populateTable() {
                 cType->setTextAlignment(Qt::AlignCenter);
                 switch (route.contentType) {
                 case ContentType::NHB_ROOT_FILES: cType->setForeground(tm.supportInfo()); break;
+                case ContentType::NHB_COURSES:    cType->setForeground(tm.supportInfo()); break;
                 case ContentType::HOT_SEATS:      cType->setForeground(tm.supportSuccess()); break;
                 case ContentType::THEORY_CALLS:   cType->setForeground(tm.supportSuccess()); break;
+                case ContentType::FF_COURSES:     cType->setForeground(tm.supportWarning()); break;
                 case ContentType::FAST_FORWARD:    cType->setForeground(tm.supportWarning()); break;
                 case ContentType::UNKNOWN:         cType->setForeground(tm.supportWarning()); break;
                 }
@@ -1836,6 +1873,284 @@ QString DistributionPanel::getDestinationPath(const QString& memberId, const QSt
     return dest;
 }
 
+QString DistributionPanel::autoDetectDistributionIntent() {
+    if (!m_wmPathEdit || !m_destTemplateEdit) return {};
+
+    const QString sourcePath = m_wmPathEdit->text().trimmed();
+    if (sourcePath.isEmpty()) return {};
+
+    QString groupSignal;
+    if (m_groupCombo && m_groupCombo->currentIndex() >= 0) {
+        groupSignal = m_groupCombo->currentText() + " "
+            + m_groupCombo->itemData(m_groupCombo->currentIndex()).toString();
+    }
+
+    const QString signal = (sourcePath + " " + groupSignal).toLower();
+    const bool mentionsCourse = signal.contains("course")
+        || signal.contains("courses")
+        || signal.contains("module")
+        || signal.contains("modules")
+        || signal.contains("lesson")
+        || signal.contains("lessons");
+    const bool mentionsUpdated = signal.contains("updated")
+        || signal.contains("2021-2024")
+        || signal.contains("regularly");
+    const bool mentionsNhb = signal.contains("nhb")
+        || signal.contains("nothing held back")
+        || signal.contains("nothingheldback");
+    const bool mentionsFf = signal.contains("fast forward")
+        || signal.contains("fast-forward")
+        || signal.contains("fastforward")
+        || QRegularExpression("\\bff\\b", QRegularExpression::CaseInsensitiveOption)
+               .match(signal).hasMatch();
+
+    QString detectedTemplate;
+    QString label;
+    if (mentionsCourse && mentionsFf) {
+        detectedTemplate = "{archive_root}/{fast_forward}/Courses";
+        label = "Auto-detected FF Courses";
+    } else if (mentionsCourse && mentionsNhb && mentionsUpdated) {
+        detectedTemplate = "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses";
+        label = "Auto-detected NHB+ Updated Courses";
+    } else if (mentionsCourse && mentionsNhb) {
+        detectedTemplate = "{archive_root}/NHB+ Courses";
+        label = "Auto-detected NHB+ Courses";
+    } else if (mentionsCourse) {
+        label = "Course source detected";
+    }
+
+    if (mentionsCourse) {
+        if (m_copyContentsOnlyCheck) m_copyContentsOnlyCheck->setChecked(true);
+        if (m_createDestFolderCheck) m_createDestFolderCheck->setChecked(true);
+        if (m_skipExistingCheck) m_skipExistingCheck->setChecked(true);
+    }
+
+    if (!detectedTemplate.isEmpty()) {
+        const QString current = m_destTemplateEdit->text().trimmed();
+        const QStringList replaceableTemplates = {
+            "",
+            "{member}",
+            "{archive_root}/NHB+ Courses",
+            "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses",
+            "{archive_root}/{fast_forward}/Courses"
+        };
+        if (replaceableTemplates.contains(current)) {
+            m_destTemplateEdit->setText(detectedTemplate);
+            if (m_quickTemplateCombo) {
+                const int idx = m_quickTemplateCombo->findData(detectedTemplate);
+                if (idx >= 0) {
+                    m_quickTemplateCombo->blockSignals(true);
+                    m_quickTemplateCombo->setCurrentIndex(idx);
+                    m_quickTemplateCombo->blockSignals(false);
+                }
+            }
+        } else {
+            label += " (kept custom destination)";
+        }
+    }
+
+    return label;
+}
+
+QString DistributionPanel::buildDistributionAudit(bool includeDetails, int* blockerCount, int* warningCount) {
+    int folders = m_wmFolders.size();
+    int matched = 0;
+    int unmatched = 0;
+    int selectedTasks = 0;
+    int selectedFolders = 0;
+    int selectedRoutes = 0;
+    int smartFolders = 0;
+
+    QStringList blockers;
+    QStringList warnings;
+    QStringList selectedMemberIds;
+    QMap<QString, QStringList> destMembers;
+
+    auto rememberDestination = [&destMembers](const QString& dest, const QString& memberId) {
+        if (dest.isEmpty()) return;
+        QStringList& members = destMembers[dest];
+        if (!members.contains(memberId)) members.append(memberId);
+    };
+
+    auto checkLocalPath = [&blockers](const QString& path, const QString& label) {
+        if (path.isEmpty()) {
+            blockers.append(QString("%1 has no source path").arg(label));
+            return;
+        }
+        if (!QFileInfo::exists(path)) {
+            blockers.append(QString("%1 source no longer exists: %2").arg(label, path));
+        }
+    };
+
+    int tableRow = 0;
+    for (int i = 0; i < m_wmFolders.size(); ++i) {
+        const WmFolderInfo& info = m_wmFolders[i];
+        if (info.matched) matched++;
+        else unmatched++;
+        if (info.smartRouted) smartFolders++;
+
+        if (info.smartRouted) {
+            tableRow++; // header row
+            for (int r = 0; r < info.routes.size(); ++r) {
+                const ContentRoute& route = info.routes[r];
+                const int childRow = tableRow + r;
+                if (!info.selected || !route.selected) continue;
+
+                selectedTasks++;
+                selectedRoutes++;
+                if (!selectedMemberIds.contains(route.memberId)) {
+                    selectedMemberIds.append(route.memberId);
+                }
+                if (!info.matched) {
+                    blockers.append(QString("%1 is selected but has no matched member").arg(info.folderName));
+                }
+
+                if (route.isLocalSource || info.isLocalSource) {
+                    if (route.isFolder) {
+                        checkLocalPath(route.sourcePath,
+                            QString("%1/%2").arg(info.memberId, route.childName));
+                    } else if (route.localFilePaths.isEmpty()) {
+                        blockers.append(QString("%1/%2 has no local files").arg(info.memberId, route.childName));
+                    }
+                } else if (route.sourcePath.isEmpty()) {
+                    blockers.append(QString("%1/%2 has no cloud source path").arg(info.memberId, route.childName));
+                }
+
+                QTableWidgetItem* destItem = m_memberTable->item(childRow, COL_DESTINATION);
+                QString dest = destItem ? destItem->text().trimmed() : route.destinationPath;
+                if (dest.isEmpty()) {
+                    blockers.append(QString("%1/%2 has no destination").arg(info.memberId, route.childName));
+                } else {
+                    rememberDestination(dest, route.memberId);
+                }
+            }
+            tableRow += info.routes.size();
+            continue;
+        }
+
+        if (info.selected) {
+            selectedTasks++;
+            selectedFolders++;
+            if (!selectedMemberIds.contains(info.memberId)) selectedMemberIds.append(info.memberId);
+            if (!info.matched) {
+                blockers.append(QString("%1 is selected but has no matched member").arg(info.folderName));
+            }
+
+            if (info.isLocalSource) {
+                checkLocalPath(info.fullPath,
+                    info.memberId.isEmpty() ? info.folderName : info.memberId);
+            } else if (info.fullPath.isEmpty()) {
+                blockers.append(QString("%1 has no cloud source path")
+                    .arg(info.memberId.isEmpty() ? info.folderName : info.memberId));
+            }
+
+            QTableWidgetItem* destItem = m_memberTable->item(tableRow, COL_DESTINATION);
+            QString dest = destItem ? destItem->text().trimmed() : getDestinationPath(info.memberId);
+            if (dest.isEmpty()) {
+                blockers.append(QString("%1 has no destination")
+                    .arg(info.memberId.isEmpty() ? info.folderName : info.memberId));
+            } else {
+                rememberDestination(dest, info.memberId);
+            }
+        }
+        tableRow++;
+    }
+
+    if (selectedTasks == 0) {
+        blockers.append("No selected folders or routes");
+    }
+
+    for (auto it = destMembers.constBegin(); it != destMembers.constEnd(); ++it) {
+        if (it.value().size() > 1) {
+            warnings.append(QString("Destination is shared by multiple members: %1 (%2)")
+                .arg(it.key(), it.value().join(", ")));
+        }
+    }
+
+    QString groupFilter;
+    if (m_groupCombo && m_groupCombo->currentIndex() > 0) {
+        groupFilter = m_groupCombo->itemData(m_groupCombo->currentIndex()).toString();
+    }
+    if (!groupFilter.isEmpty() && m_registry) {
+        const QStringList groupMembers = m_registry->getGroupMemberIds(groupFilter);
+        QStringList missingMembers;
+        for (const QString& memberId : groupMembers) {
+            if (!selectedMemberIds.contains(memberId)) missingMembers.append(memberId);
+        }
+        if (!missingMembers.isEmpty()) {
+            warnings.append(QString("%1 group members are not selected/found: %2")
+                .arg(missingMembers.size())
+                .arg(missingMembers.mid(0, 12).join(", ")));
+        }
+    }
+
+    if (blockerCount) *blockerCount = blockers.size();
+    if (warningCount) *warningCount = warnings.size();
+
+    QStringList report;
+    report.append("Distribution preflight audit");
+    report.append(QString("Folders scanned: %1 (%2 matched, %3 unmatched)")
+        .arg(folders).arg(matched).arg(unmatched));
+    report.append(QString("Selected work: %1 tasks (%2 folder rows, %3 smart-route rows)")
+        .arg(selectedTasks).arg(selectedFolders).arg(selectedRoutes));
+    report.append(QString("Smart-routed folders: %1").arg(smartFolders));
+    report.append(QString("Blockers: %1").arg(blockers.size()));
+    if (includeDetails && !blockers.isEmpty()) {
+        for (const QString& blocker : blockers.mid(0, 20)) {
+            report.append("  - " + blocker);
+        }
+        if (blockers.size() > 20) {
+            report.append(QString("  - ...and %1 more").arg(blockers.size() - 20));
+        }
+    }
+    report.append(QString("Warnings: %1").arg(warnings.size()));
+    if (includeDetails && !warnings.isEmpty()) {
+        for (const QString& warning : warnings.mid(0, 20)) {
+            report.append("  - " + warning);
+        }
+        if (warnings.size() > 20) {
+            report.append(QString("  - ...and %1 more").arg(warnings.size() - 20));
+        }
+    }
+
+    return report.join("\n");
+}
+
+bool DistributionPanel::confirmDistributionAudit() {
+    int blockers = 0;
+    int warnings = 0;
+    const QString report = buildDistributionAudit(true, &blockers, &warnings);
+
+    if (blockers > 0) {
+        QMessageBox::warning(this, "Distribution Audit", report);
+        return false;
+    }
+
+    if (warnings > 0) {
+        auto reply = QMessageBox::question(this, "Distribution Audit",
+            report + "\n\nContinue anyway?",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        return reply == QMessageBox::Yes;
+    }
+
+    return true;
+}
+
+void DistributionPanel::onRunAudit() {
+    int blockers = 0;
+    int warnings = 0;
+    const QString report = buildDistributionAudit(true, &blockers, &warnings);
+
+    if (blockers > 0) {
+        QMessageBox::warning(this, "Distribution Audit", report);
+    } else if (warnings > 0) {
+        QMessageBox::information(this, "Distribution Audit", report);
+    } else {
+        QMessageBox::information(this, "Distribution Audit", report + "\n\nReady to start.");
+    }
+}
+
 void DistributionPanel::onSelectAll() {
     for (int row = 0; row < m_memberTable->rowCount(); ++row) {
         QWidget* widget = m_memberTable->cellWidget(row, COL_CHECK);
@@ -2060,6 +2375,10 @@ void DistributionPanel::onStartDistribution() {
         return;
     }
 
+    if (!confirmDistributionAudit()) {
+        return;
+    }
+
     // Build task list from selected items
     QList<FolderCopyTask> tasks;
     bool copyFolderItself = !m_copyContentsOnlyCheck->isChecked();
@@ -2277,6 +2596,8 @@ void DistributionPanel::onStartDistribution() {
             QMessageBox::Yes | QMessageBox::No);
         if (ret != QMessageBox::Yes) return;
     }
+
+    saveLastJobProfile();
 
     // Update UI state
     m_isRunning = true;
@@ -2596,20 +2917,60 @@ void DistributionPanel::showDistributionSettingsDialog() {
         "Server-side move — files will be PERMANENTLY deleted from source after transfer. No bandwidth used.",
         m_moveFilesCheck, true));
 
-    // --- Templates ---
-    mainLayout->addWidget(createSectionHeader("Templates"));
+    // --- Job Profiles ---
+    mainLayout->addWidget(createSectionHeader("Job Profiles"));
     {
         auto* row = new QHBoxLayout();
         row->setContentsMargins(0, 8, 0, 8);
         row->setSpacing(6);
-        auto* saveBtn = ButtonFactory::createOutline("Save...", dialog);
-        connect(saveBtn, &QPushButton::clicked, this, &DistributionPanel::onSaveTemplate);
-        auto* loadBtn = ButtonFactory::createOutline("Load...", dialog);
-        connect(loadBtn, &QPushButton::clicked, this, &DistributionPanel::onLoadTemplate);
-        auto* deleteBtn = ButtonFactory::createOutline("Delete...", dialog);
-        connect(deleteBtn, &QPushButton::clicked, this, &DistributionPanel::onDeleteTemplate);
+
+        auto* savedCombo = new QComboBox(dialog);
+        savedCombo->setMinimumWidth(DpiScaler::scale(190));
+        auto refreshSavedCombo = [this, savedCombo]() {
+            savedCombo->blockSignals(true);
+            savedCombo->clear();
+            for (int i = 0; i < m_savedTemplateCombo->count(); ++i) {
+                savedCombo->addItem(m_savedTemplateCombo->itemText(i),
+                                    m_savedTemplateCombo->itemData(i));
+            }
+            savedCombo->setCurrentIndex(m_savedTemplateCombo->currentIndex());
+            savedCombo->blockSignals(false);
+        };
+        refreshSavedCombo();
+        connect(savedCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int index) {
+            if (m_savedTemplateCombo && index >= 0 && index < m_savedTemplateCombo->count()) {
+                m_savedTemplateCombo->setCurrentIndex(index);
+            }
+        });
+
+        auto* saveBtn = ButtonFactory::createOutline("Save Job", dialog);
+        connect(saveBtn, &QPushButton::clicked, this, [this, refreshSavedCombo]() {
+            onSaveTemplate();
+            refreshSavedCombo();
+        });
+        auto* loadBtn = ButtonFactory::createOutline("Load", dialog);
+        connect(loadBtn, &QPushButton::clicked, this, [this, savedCombo]() {
+            onLoadTemplate(savedCombo->currentIndex());
+        });
+        auto* repeatBtn = ButtonFactory::createOutline("Repeat Last", dialog);
+        connect(repeatBtn, &QPushButton::clicked, this, [this, dialog]() {
+            dialog->accept();
+            onRepeatLastJob();
+        });
+        auto* deleteBtn = ButtonFactory::createOutline("Delete", dialog);
+        connect(deleteBtn, &QPushButton::clicked, this, [this, savedCombo, refreshSavedCombo]() {
+            if (m_savedTemplateCombo && savedCombo->currentIndex() >= 0
+                && savedCombo->currentIndex() < m_savedTemplateCombo->count()) {
+                m_savedTemplateCombo->setCurrentIndex(savedCombo->currentIndex());
+            }
+            onDeleteTemplate();
+            refreshSavedCombo();
+        });
+        row->addWidget(savedCombo, 1);
         row->addWidget(saveBtn);
         row->addWidget(loadBtn);
+        row->addWidget(repeatBtn);
         row->addWidget(deleteBtn);
         row->addStretch();
         mainLayout->addLayout(row);
@@ -2940,6 +3301,126 @@ QString DistributionPanel::savedTemplatesPath() const {
     return configDir + "/dist_templates.json";
 }
 
+QString DistributionPanel::lastJobProfilePath() const {
+    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(configDir);
+    return configDir + "/dist_last_job.json";
+}
+
+QVariantMap DistributionPanel::currentJobProfile(const QString& name) const {
+    QVariantMap data;
+    if (!name.isEmpty()) data["name"] = name;
+
+    data["text"] = m_destTemplateEdit ? m_destTemplateEdit->text().trimmed() : QString();
+    data["quickIdx"] = m_quickTemplateCombo ? m_quickTemplateCombo->currentIndex() : -1;
+    data["sourcePath"] = m_wmPathEdit ? m_wmPathEdit->text().trimmed() : QString();
+    data["sourceType"] = m_sourceTypeCombo
+        ? m_sourceTypeCombo->currentData().toString()
+        : QString("cloud");
+    data["month"] = m_monthCombo ? m_monthCombo->currentText() : QString();
+    data["groupName"] = (m_groupCombo && m_groupCombo->currentIndex() >= 0)
+        ? m_groupCombo->itemData(m_groupCombo->currentIndex()).toString()
+        : QString();
+    data["broadcast"] = m_broadcastCheck && m_broadcastCheck->isChecked();
+    data["smartRoute"] = m_smartRouteCheck && m_smartRouteCheck->isChecked();
+    data["copyContentsOnly"] = m_copyContentsOnlyCheck && m_copyContentsOnlyCheck->isChecked();
+    data["skipExisting"] = m_skipExistingCheck && m_skipExistingCheck->isChecked();
+    data["createDestination"] = m_createDestFolderCheck && m_createDestFolderCheck->isChecked();
+    data["removeWatermarkSuffix"] = m_removeWatermarkSuffixCheck
+        && m_removeWatermarkSuffixCheck->isChecked();
+    data["moveFiles"] = m_moveFilesCheck && m_moveFilesCheck->isChecked();
+    data["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    data["profileVersion"] = 2;
+    return data;
+}
+
+void DistributionPanel::applyJobProfile(const QVariantMap& data) {
+    const QString templateText = data.value("text",
+        data.value("templateText").toString()).toString();
+    if (!templateText.isEmpty() && m_destTemplateEdit) {
+        m_destTemplateEdit->setText(templateText);
+    }
+
+    const int quickIdx = data.value("quickIdx",
+        data.value("quickTemplateIndex", -1)).toInt();
+    if (m_quickTemplateCombo && quickIdx >= 0 && quickIdx < m_quickTemplateCombo->count()) {
+        m_quickTemplateCombo->blockSignals(true);
+        m_quickTemplateCombo->setCurrentIndex(quickIdx);
+        m_quickTemplateCombo->blockSignals(false);
+    }
+
+    if (m_sourceTypeCombo && data.contains("sourceType")) {
+        const int sourceIdx = m_sourceTypeCombo->findData(data.value("sourceType").toString());
+        if (sourceIdx >= 0) m_sourceTypeCombo->setCurrentIndex(sourceIdx);
+    }
+    if (m_wmPathEdit && data.contains("sourcePath")) {
+        m_wmPathEdit->setText(data.value("sourcePath").toString());
+    }
+    if (m_monthCombo && data.contains("month")) {
+        const int monthIdx = m_monthCombo->findText(data.value("month").toString());
+        if (monthIdx >= 0) m_monthCombo->setCurrentIndex(monthIdx);
+    }
+    if (m_groupCombo && data.contains("groupName")) {
+        const int groupIdx = m_groupCombo->findData(data.value("groupName").toString());
+        m_groupCombo->blockSignals(true);
+        m_groupCombo->setCurrentIndex(groupIdx >= 0 ? groupIdx : 0);
+        m_groupCombo->blockSignals(false);
+    }
+
+    if (m_copyContentsOnlyCheck && data.contains("copyContentsOnly")) {
+        m_copyContentsOnlyCheck->setChecked(data.value("copyContentsOnly").toBool());
+    }
+    if (m_skipExistingCheck && data.contains("skipExisting")) {
+        m_skipExistingCheck->setChecked(data.value("skipExisting").toBool());
+    }
+    if (m_createDestFolderCheck && data.contains("createDestination")) {
+        m_createDestFolderCheck->setChecked(data.value("createDestination").toBool());
+    }
+    if (m_removeWatermarkSuffixCheck && data.contains("removeWatermarkSuffix")) {
+        m_removeWatermarkSuffixCheck->setChecked(data.value("removeWatermarkSuffix").toBool());
+    }
+    if (m_moveFilesCheck && data.contains("moveFiles")) {
+        m_moveFilesCheck->setChecked(data.value("moveFiles").toBool());
+    }
+
+    const bool broadcast = data.value("broadcast", false).toBool();
+    const bool smartRoute = data.value("smartRoute", false).toBool();
+    if (m_broadcastCheck) m_broadcastCheck->setChecked(broadcast);
+    if (m_smartRouteCheck) m_smartRouteCheck->setChecked(smartRoute && !broadcast);
+}
+
+void DistributionPanel::saveLastJobProfile() {
+    QFile file(lastJobProfilePath());
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning() << "DistributionPanel: Could not save last job profile:" << file.errorString();
+        return;
+    }
+    QJsonObject root = QJsonObject::fromVariantMap(currentJobProfile("Last Job"));
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    file.close();
+}
+
+bool DistributionPanel::loadLastJobProfile(bool scanAfterLoad) {
+    QFile file(lastJobProfilePath());
+    if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    if (!doc.isObject()) return false;
+
+    applyJobProfile(doc.object().toVariantMap());
+    m_statusLabel->setText(scanAfterLoad
+        ? "Loaded last job. Scanning..."
+        : "Loaded last job.");
+
+    if (scanAfterLoad) {
+        onScanWmFolder();
+    }
+    return true;
+}
+
 void DistributionPanel::loadSavedTemplates() {
     m_savedTemplateCombo->blockSignals(true);
     m_savedTemplateCombo->clear();
@@ -2958,11 +3439,12 @@ void DistributionPanel::loadSavedTemplates() {
     for (const QJsonValue& val : templates) {
         QJsonObject tmpl = val.toObject();
         QString name = tmpl.value("name").toString();
-        QString text = tmpl.value("templateText").toString();
-        int quickIdx = tmpl.value("quickTemplateIndex").toInt(-1);
+        QString text = tmpl.value("templateText").toString(
+            tmpl.value("text").toString());
+        int quickIdx = tmpl.value("quickTemplateIndex").toInt(
+            tmpl.value("quickIdx").toInt(-1));
 
-        // Store template text and quick index as QVariantMap in itemData
-        QVariantMap itemData;
+        QVariantMap itemData = tmpl.toVariantMap();
         itemData["text"] = text;
         itemData["quickIdx"] = quickIdx;
         m_savedTemplateCombo->addItem(name, itemData);
@@ -2979,11 +3461,14 @@ void DistributionPanel::saveSavedTemplates() {
         QString text = itemData.value("text").toString();
         int quickIdx = itemData.value("quickIdx", -1).toInt();
 
-        QJsonObject tmpl;
+        QJsonObject tmpl = QJsonObject::fromVariantMap(itemData);
         tmpl["name"] = m_savedTemplateCombo->itemText(i);
         tmpl["templateText"] = text;
         tmpl["quickTemplateIndex"] = quickIdx;
-        tmpl["created"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        if (!tmpl.contains("created")) {
+            tmpl["created"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        }
+        tmpl["updated"] = QDateTime::currentDateTime().toString(Qt::ISODate);
         templates.append(tmpl);
     }
 
@@ -3006,8 +3491,8 @@ void DistributionPanel::onSaveTemplate() {
     }
 
     bool ok;
-    QString name = QInputDialog::getText(this, "Save Template",
-        "Template name:", QLineEdit::Normal, "", &ok);
+    QString name = QInputDialog::getText(this, "Save Job Profile",
+        "Profile name:", QLineEdit::Normal, "", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
     name = name.trimmed();
 
@@ -3024,28 +3509,27 @@ void DistributionPanel::onSaveTemplate() {
         }
     }
 
-    int quickIdx = m_quickTemplateCombo->currentIndex();
-    QVariantMap data;
+    QVariantMap data = currentJobProfile(name);
     data["text"] = currentText;
-    data["quickIdx"] = quickIdx;
+    data["quickIdx"] = m_quickTemplateCombo ? m_quickTemplateCombo->currentIndex() : -1;
     m_savedTemplateCombo->addItem(name, data);
     m_savedTemplateCombo->setCurrentIndex(m_savedTemplateCombo->count() - 1);
     saveSavedTemplates();
 
-    m_statusLabel->setText(QString("Template '%1' saved.").arg(name));
+    m_statusLabel->setText(QString("Job profile '%1' saved.").arg(name));
 }
 
 void DistributionPanel::onDeleteTemplate() {
     int idx = m_savedTemplateCombo->currentIndex();
     if (idx <= 0) {
-        QMessageBox::information(this, "Delete Template",
-            "Select a saved template to delete.");
+        QMessageBox::information(this, "Delete Job Profile",
+            "Select a saved job profile to delete.");
         return;
     }
 
     QString name = m_savedTemplateCombo->itemText(idx);
-    auto reply = QMessageBox::question(this, "Delete Template",
-        QString("Delete template '%1'?").arg(name),
+    auto reply = QMessageBox::question(this, "Delete Job Profile",
+        QString("Delete job profile '%1'?").arg(name),
         QMessageBox::Yes | QMessageBox::No);
     if (reply != QMessageBox::Yes) return;
 
@@ -3053,27 +3537,23 @@ void DistributionPanel::onDeleteTemplate() {
     m_savedTemplateCombo->setCurrentIndex(0);
     saveSavedTemplates();
 
-    m_statusLabel->setText(QString("Template '%1' deleted.").arg(name));
+    m_statusLabel->setText(QString("Job profile '%1' deleted.").arg(name));
 }
 
 void DistributionPanel::onLoadTemplate(int index) {
     if (index <= 0) return;
 
     QVariantMap data = m_savedTemplateCombo->itemData(index).toMap();
-    QString templateText = data.value("text").toString();
-    int quickIdx = data.value("quickIdx", -1).toInt();
+    applyJobProfile(data);
 
-    if (!templateText.isEmpty()) {
-        m_destTemplateEdit->setText(templateText);
+    m_statusLabel->setText(QString("Loaded job profile '%1'.").arg(m_savedTemplateCombo->itemText(index)));
+}
+
+void DistributionPanel::onRepeatLastJob() {
+    if (!loadLastJobProfile(true)) {
+        QMessageBox::information(this, "Repeat Last Job",
+            "No previous distribution job was found.");
     }
-
-    if (quickIdx >= 0 && quickIdx < m_quickTemplateCombo->count()) {
-        m_quickTemplateCombo->blockSignals(true);
-        m_quickTemplateCombo->setCurrentIndex(quickIdx);
-        m_quickTemplateCombo->blockSignals(false);
-    }
-
-    m_statusLabel->setText(QString("Loaded template '%1'.").arg(m_savedTemplateCombo->itemText(index)));
 }
 
 // ==================== Import/Export Destinations ====================

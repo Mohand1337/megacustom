@@ -19,8 +19,10 @@ struct MemberInfo;
  */
 enum class ContentType {
     NHB_ROOT_FILES,    // Root-level files (mp4, mp3, pdf) → NHB calls + month
+    NHB_COURSES,       // NHB+ course folders → member NHB+ Courses folder
     HOT_SEATS,         // Subfolder matching hot seats pattern
     THEORY_CALLS,      // Subfolder matching theory calls pattern
+    FF_COURSES,        // Fast Forward course folders → member FF Courses folder
     FAST_FORWARD,      // Generic Fast Forward subfolder
     UNKNOWN            // Unclassified — falls back to template destination
 };

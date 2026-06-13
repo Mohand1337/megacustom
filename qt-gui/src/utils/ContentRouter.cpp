@@ -19,8 +19,10 @@ struct KeywordRule {
 
 static QList<KeywordRule> builtinRules() {
     static QList<KeywordRule> rules = {
+        { ContentType::NHB_COURSES,   { "nhb+ courses", "nhb courses", "nothing held back courses", "nothingheldback courses", "nhb course", "nothing held back course", "nothingheldback course" } },
         { ContentType::HOT_SEATS,     { "hot seat", "hotseat", "hot-seat", "hotseats", "hot seats", "hot-seats" } },
         { ContentType::THEORY_CALLS,  { "theory call", "theory-call", "theorycall", "theory calls", "theory-calls", "theorycalls" } },
+        { ContentType::FF_COURSES,    { "ff courses", "fast forward courses", "fast-forward courses", "fastforward courses", "ff course", "fast forward course", "fast-forward course", "fastforward course" } },
         { ContentType::FAST_FORWARD,  { "fast forward", "fast-forward", "fastforward" } },
     };
     return rules;
@@ -82,6 +84,9 @@ ContentType ContentRouter::dynamicMatch(
         // Also match against the last segment of NHB calls path
         candidates.append({ normalize(lastSegment(member.paths.nhbCallsPath)), ContentType::NHB_ROOT_FILES });
     }
+    if (!member.paths.archiveRoot.isEmpty()) {
+        candidates.append({ normalize("NHB+ Courses"), ContentType::NHB_COURSES });
+    }
 
     // Phase 1: Exact normalized match
     for (const auto& cand : candidates) {
@@ -120,7 +125,7 @@ ContentType ContentRouter::keywordMatch(
     // Also try with the full lowercase name (preserving date prefixes etc.)
     QString lowerName = folderName.toLower().trimmed();
 
-    // Phase 1: Check specific types first (HOT_SEATS, THEORY_CALLS) — always take priority
+    // Phase 1: Check specific types first (course folders, HOT_SEATS, THEORY_CALLS)
     for (const auto& rule : builtinRules()) {
         if (rule.type == ContentType::FAST_FORWARD) continue;
         for (const QString& keyword : rule.keywords) {
@@ -131,7 +136,26 @@ ContentType ContentRouter::keywordMatch(
         }
     }
 
-    // Phase 2: Check generic FAST_FORWARD keywords
+    // Phase 2: Domain shorthand for course material with module/lesson naming.
+    static QRegularExpression courseWord("\\b(course|courses|module|modules|lesson|lessons)\\b",
+                                         QRegularExpression::CaseInsensitiveOption);
+    const bool hasCourseWord = courseWord.match(lowerName).hasMatch();
+    if (hasCourseWord) {
+        if (lowerName.contains("fast forward")
+            || lowerName.contains("fast-forward")
+            || lowerName.contains("fastforward")) {
+            if (matchedKeyword) *matchedKeyword = "fast forward course";
+            return ContentType::FF_COURSES;
+        }
+        if (lowerName.contains("nhb")
+            || lowerName.contains("nothing held back")
+            || lowerName.contains("nothingheldback")) {
+            if (matchedKeyword) *matchedKeyword = "nhb course";
+            return ContentType::NHB_COURSES;
+        }
+    }
+
+    // Phase 3: Check generic FAST_FORWARD keywords
     for (const auto& rule : builtinRules()) {
         if (rule.type != ContentType::FAST_FORWARD) continue;
         for (const QString& keyword : rule.keywords) {
@@ -142,10 +166,14 @@ ContentType ContentRouter::keywordMatch(
         }
     }
 
-    // Phase 3: "FF" prefix heuristic (common abbreviation)
+    // Phase 4: "FF" prefix heuristic (common abbreviation)
     // "FF Hot Seats" → HOT_SEATS, "FF Theory Call" → THEORY_CALLS, "FF Something" → FAST_FORWARD
     static QRegularExpression ffPrefix("\\bff\\b", QRegularExpression::CaseInsensitiveOption);
     if (ffPrefix.match(lowerName).hasMatch()) {
+        if (hasCourseWord) {
+            if (matchedKeyword) *matchedKeyword = "ff course";
+            return ContentType::FF_COURSES;
+        }
         // Specific subtypes already checked in Phase 1 — if we're here, none matched
         if (matchedKeyword) *matchedKeyword = "ff";
         return ContentType::FAST_FORWARD;
@@ -422,6 +450,12 @@ QString ContentRouter::resolveDestination(
         }
         break;
 
+    case ContentType::NHB_COURSES:
+        if (!member.paths.archiveRoot.isEmpty()) {
+            return member.paths.archiveRoot + "/NHB+ Courses";
+        }
+        break;
+
     case ContentType::HOT_SEATS:
         if (!member.paths.archiveRoot.isEmpty() && !member.paths.fastForwardPath.isEmpty()
             && !member.paths.hotSeatsPath.isEmpty()) {
@@ -433,6 +467,12 @@ QString ContentRouter::resolveDestination(
         if (!member.paths.archiveRoot.isEmpty() && !member.paths.fastForwardPath.isEmpty()
             && !member.paths.theoryCallsPath.isEmpty()) {
             return member.paths.getTheoryCallsFullPath();
+        }
+        break;
+
+    case ContentType::FF_COURSES:
+        if (!member.paths.archiveRoot.isEmpty() && !member.paths.fastForwardPath.isEmpty()) {
+            return member.paths.archiveRoot + "/" + member.paths.fastForwardPath + "/Courses";
         }
         break;
 
@@ -457,8 +497,10 @@ QString ContentRouter::resolveDestination(
 QString ContentRouter::contentTypeLabel(ContentType type) {
     switch (type) {
     case ContentType::NHB_ROOT_FILES: return "NHB Files";
+    case ContentType::NHB_COURSES:    return "NHB+ Courses";
     case ContentType::HOT_SEATS:     return "Hot Seats";
     case ContentType::THEORY_CALLS:  return "Theory Calls";
+    case ContentType::FF_COURSES:    return "FF Courses";
     case ContentType::FAST_FORWARD:  return "Fast Forward";
     case ContentType::UNKNOWN:       return "Unknown";
     }

@@ -69,6 +69,8 @@ void SmartRouteReviewDialog::setupUI() {
     addBulkBtn("Set All Hot Seats", ContentType::HOT_SEATS, tm.supportSuccess());
     addBulkBtn("Set All Theory Calls", ContentType::THEORY_CALLS, tm.supportSuccess());
     addBulkBtn("Set All NHB Files", ContentType::NHB_ROOT_FILES, tm.supportInfo());
+    addBulkBtn("Set All NHB Courses", ContentType::NHB_COURSES, tm.supportInfo());
+    addBulkBtn("Set All FF Courses", ContentType::FF_COURSES, tm.supportWarning());
     addBulkBtn("Set All Fast Forward", ContentType::FAST_FORWARD, tm.supportWarning());
     bulkLayout->addStretch();
 
@@ -266,8 +268,10 @@ void SmartRouteReviewDialog::populateTable() {
                     cTypeItem->setForeground(tm.supportSuccess());
                     break;
                 case ContentType::NHB_ROOT_FILES:
+                case ContentType::NHB_COURSES:
                     cTypeItem->setForeground(tm.supportInfo());
                     break;
+                case ContentType::FF_COURSES:
                 case ContentType::FAST_FORWARD:
                 case ContentType::UNKNOWN:
                     cTypeItem->setForeground(tm.supportWarning());
