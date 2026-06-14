@@ -130,6 +130,7 @@ public slots:
     void refresh();
     void addFilesFromDownloader(const QStringList& filePaths);
     void selectMember(const QString& memberId);
+    void retryJob(const QString& jobId);
 
 private slots:
     void onAddFiles();
@@ -244,6 +245,7 @@ private:
     bool m_pausedForDiskSpace = false;
     QString m_diskSpacePauseMessage;
     QString m_currentJobId;
+    QString m_retrySourceJobId;
     bool m_currentJobCancelled = false;
     QString m_sourceRootDir;  // Root folder from "Add Folder" for subfolder structure
 

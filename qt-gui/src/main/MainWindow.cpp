@@ -33,6 +33,7 @@
 #include "search/CloudSearchIndex.h"
 #include "utils/Settings.h"
 #include "utils/DpiScaler.h"
+#include "utils/OperationJobStore.h"
 #include "styles/ThemeManager.h"
 #include "core/MegaManager.h"
 #include "accounts/AccountManager.h"
@@ -781,15 +782,26 @@ void MainWindow::setupUI()
             });
     connect(m_logViewerPanel, &LogViewerPanel::retryJobRequested,
             this, [this](const QString& jobId) {
-                if (!m_downloaderPanel) {
+                OperationJobRecord record = OperationJobStore::instance().job(jobId);
+                if (record.type == OperationJobType::Download && m_downloaderPanel) {
+                    if (m_sidebar) {
+                        m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Downloader);
+                    }
+                    onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Downloader));
+                    m_downloaderPanel->retryJob(jobId);
+                    updateStatus(QString("Retry requested for download job %1").arg(jobId));
                     return;
                 }
-                if (m_sidebar) {
-                    m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Downloader);
+                if (record.type == OperationJobType::Watermark && m_watermarkPanel) {
+                    if (m_sidebar) {
+                        m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Watermark);
+                    }
+                    onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Watermark));
+                    m_watermarkPanel->retryJob(jobId);
+                    updateStatus(QString("Retry requested for watermark job %1").arg(jobId));
+                    return;
                 }
-                onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Downloader));
-                m_downloaderPanel->retryJob(jobId);
-                updateStatus(QString("Retry requested for download job %1").arg(jobId));
+                updateStatus(QString("Retry is not available for job %1").arg(jobId));
             });
 
     // Advanced Search Panel (Tools menu only, no sidebar)

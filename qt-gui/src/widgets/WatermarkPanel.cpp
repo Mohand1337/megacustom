@@ -34,6 +34,7 @@
 #include <QProcess>
 #include <QApplication>
 #include <QClipboard>
+#include <QJsonArray>
 #include <QJsonObject>
 
 namespace MegaCustom {
@@ -1142,6 +1143,167 @@ void WatermarkPanel::selectMember(const QString& memberId) {
     m_statusLabel->setText(QString("Selected member: %1").arg(memberId));
 }
 
+void WatermarkPanel::retryJob(const QString& jobId) {
+    if (m_isRunning) {
+        QMessageBox::warning(this, "Watermark Running",
+            "A watermark job is already running. Stop it before retrying another job.");
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(jobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Watermark) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This job cannot be retried from the Watermark panel.");
+        return;
+    }
+
+    QStringList filePaths;
+    const QJsonArray filesArray = record.metadata["filePaths"].toArray();
+    for (const QJsonValue& value : filesArray) {
+        const QString path = value.toString().trimmed();
+        if (!path.isEmpty()) {
+            filePaths.append(path);
+        }
+    }
+
+    if (filePaths.isEmpty()) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This watermark job does not contain retry metadata. New watermark jobs created after this update can be retried.");
+        return;
+    }
+
+    if (!m_files.isEmpty()) {
+        int reply = QMessageBox::question(this, "Replace Watermark Queue",
+            "Retrying this job will replace the current watermark queue. Continue?",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    const QJsonObject metadata = record.metadata;
+    const QString mode = metadata["mode"].toString("global");
+    const int modeIndex = m_modeCombo->findData(mode);
+    if (modeIndex >= 0) {
+        m_modeCombo->setCurrentIndex(modeIndex);
+    }
+
+    m_primaryTextEdit->setText(metadata["primaryText"].toString());
+    m_secondaryTextEdit->setText(metadata["secondaryText"].toString());
+    m_sameAsInputCheck->setChecked(metadata["sameAsInput"].toBool(true));
+    m_outputDirEdit->setText(metadata["outputDirRaw"].toString());
+    m_sourceRootDir = metadata["sourceRootDir"].toString();
+
+    auto setComboValue = [](QComboBox* combo, const QString& value) {
+        if (!combo || value.isEmpty()) return;
+        const int index = combo->findText(value);
+        if (index >= 0) {
+            combo->setCurrentIndex(index);
+        }
+    };
+    setComboValue(m_presetCombo, metadata["preset"].toString());
+    if (metadata.contains("crf")) {
+        m_crfSpin->setValue(metadata["crf"].toInt(m_crfSpin->value()));
+    }
+    if (metadata.contains("intervalSeconds")) {
+        m_intervalSpin->setValue(metadata["intervalSeconds"].toInt(m_intervalSpin->value()));
+    }
+    if (metadata.contains("durationSeconds")) {
+        m_durationSpin->setValue(metadata["durationSeconds"].toInt(m_durationSpin->value()));
+    }
+
+    m_embedMetadataCheck->setChecked(metadata["embedMetadata"].toBool(false));
+    m_metaTitleEdit->setText(metadata["metadataTitle"].toString());
+    m_metaAuthorEdit->setText(metadata["metadataAuthor"].toString());
+    m_metaCommentEdit->setText(metadata["metadataComment"].toString());
+    m_metaKeywordsEdit->setText(metadata["metadataKeywords"].toString());
+
+    if (m_autoUploadCheck) {
+        m_autoUploadCheck->setChecked(metadata["autoUpload"].toBool(false));
+    }
+    if (m_customPathCheck) {
+        m_customPathCheck->setChecked(metadata["customPathEnabled"].toBool(false));
+    }
+    if (m_customPathEdit) {
+        m_customPathEdit->setText(metadata["customUploadPath"].toString());
+    }
+
+    QSet<QString> selectedMembers;
+    const QJsonArray memberArray = metadata["selectedMemberIds"].toArray();
+    for (const QJsonValue& value : memberArray) {
+        const QString id = value.toString().trimmed();
+        if (!id.isEmpty()) {
+            selectedMembers.insert(id);
+        }
+    }
+
+    loadMembers();
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        const QString id = item->data(Qt::UserRole).toString();
+        item->setCheckState(selectedMembers.contains(id) ? Qt::Checked : Qt::Unchecked);
+    }
+    m_memberListWidget->blockSignals(false);
+    onMemberSelectionChanged();
+
+    auto fileTypeForPath = [](const QString& path) {
+        const QString ext = QFileInfo(path).suffix().toLower();
+        static const QSet<QString> videoExts = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"};
+        static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
+        if (ext == "pdf") return QString("pdf");
+        if (audioExts.contains(ext)) return QString("audio");
+        if (videoExts.contains(ext)) return QString("video");
+        return QString("passthrough");
+    };
+
+    QStringList missingFiles;
+    m_files.clear();
+    m_lastMemberFileMap.clear();
+    m_workerIdxToRow.clear();
+    for (const QString& path : filePaths) {
+        QFileInfo fi(path);
+        if (!fi.exists()) {
+            missingFiles.append(path);
+            continue;
+        }
+
+        WatermarkFileInfo info;
+        info.filePath = path;
+        info.fileName = fi.fileName();
+        info.fileSize = fi.size();
+        info.fileType = fileTypeForPath(path);
+        info.status = "pending";
+        m_files.append(info);
+    }
+
+    if (!missingFiles.isEmpty()) {
+        QMessageBox::warning(this, "Missing Files",
+            QString("%1 file(s) from this job no longer exist and will be skipped:\n\n%2")
+                .arg(missingFiles.size())
+                .arg(missingFiles.join("\n")));
+    }
+
+    if (m_files.isEmpty()) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "None of the original files are still available.");
+        m_retrySourceJobId.clear();
+        populateTable();
+        updateStats();
+        updateButtonStates();
+        return;
+    }
+
+    populateTable();
+    updateStats();
+    updateButtonStates();
+    m_retrySourceJobId = record.id;
+    m_statusLabel->setText(QString("Retrying watermark job %1").arg(record.id));
+
+    onStartWatermark();
+}
+
 void WatermarkPanel::loadMembers() {
     // Preserve current selections
     QSet<QString> previouslyChecked;
@@ -1586,19 +1748,57 @@ void WatermarkPanel::onStartWatermark() {
         }
     }
 
+    QStringList selectedMemberIdsForMetadata;
+    if (m_modeCombo->currentData().toString() == "member") {
+        selectedMemberIdsForMetadata = allMemberIds;
+        if (selectedMemberIdsForMetadata.isEmpty() && !memberId.isEmpty()) {
+            selectedMemberIdsForMetadata.append(memberId);
+        }
+    }
+
+    QJsonArray filePathArray;
+    for (const QString& path : filePaths) {
+        filePathArray.append(path);
+    }
+    QJsonArray memberIdArray;
+    for (const QString& id : selectedMemberIdsForMetadata) {
+        memberIdArray.append(id);
+    }
+
     QJsonObject metadata;
     metadata["mode"] = m_modeCombo->currentData().toString();
     metadata["sourceFileCount"] = filePaths.size();
     metadata["plannedOutputCount"] = plannedCount;
     metadata["memberCount"] = allMemberIds.isEmpty() ? (memberId.isEmpty() ? 0 : 1) : allMemberIds.size();
     metadata["outputDir"] = outputDir.isEmpty() ? "same_as_input" : outputDir;
+    metadata["outputDirRaw"] = m_outputDirEdit->text();
+    metadata["sameAsInput"] = m_sameAsInputCheck->isChecked();
+    metadata["filePaths"] = filePathArray;
+    metadata["selectedMemberIds"] = memberIdArray;
+    metadata["primaryText"] = m_primaryTextEdit->text();
+    metadata["secondaryText"] = m_secondaryTextEdit->text();
+    metadata["preset"] = m_presetCombo->currentText();
+    metadata["crf"] = m_crfSpin->value();
+    metadata["intervalSeconds"] = m_intervalSpin->value();
+    metadata["durationSeconds"] = m_durationSpin->value();
+    metadata["embedMetadata"] = m_embedMetadataCheck->isChecked();
+    metadata["metadataTitle"] = m_metaTitleEdit->text();
+    metadata["metadataAuthor"] = m_metaAuthorEdit->text();
+    metadata["metadataComment"] = m_metaCommentEdit->text();
+    metadata["metadataKeywords"] = m_metaKeywordsEdit->text();
     metadata["autoUpload"] = m_autoUploadCheck && m_autoUploadCheck->isChecked();
+    metadata["customPathEnabled"] = m_customPathCheck && m_customPathCheck->isChecked();
+    metadata["customUploadPath"] = m_customPathEdit ? m_customPathEdit->text() : QString();
     metadata["sourceRootDir"] = m_sourceRootDir;
+    if (!m_retrySourceJobId.isEmpty()) {
+        metadata["retryOfJobId"] = m_retrySourceJobId;
+    }
     m_currentJobId = OperationJobStore::instance().createJob(
         OperationJobType::Watermark,
         QString("Watermark %1 %2").arg(plannedCount).arg(plannedCount == 1 ? "file" : "files"),
         plannedCount,
         metadata);
+    m_retrySourceJobId.clear();
     m_currentJobCancelled = false;
 
     // Create worker thread

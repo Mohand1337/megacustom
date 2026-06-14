@@ -1633,9 +1633,32 @@ Verification completed:
 
 Still pending:
 
-- Add watermark retry only after watermark jobs persist selected files, member IDs, templates, output strategy, and auto-upload mode.
 - Add distribution retry only after distribution jobs persist selected tasks, source/destination plan, conflict policy, and move/copy mode.
 - Add cleanup actions for disk-full paused watermark jobs and partial distribution folders.
+
+### 2026-06-15 Watermark Retry Contract Pass
+
+Scope:
+
+- Added a safe watermark retry contract by persisting the watermark run plan instead of trying to infer it from table rows after the fact.
+
+Implemented:
+
+- New watermark jobs persist original file paths, selected member IDs, mode, watermark text/templates, output strategy, source root, encoding settings, metadata fields, auto-upload setting, and custom upload path.
+- Retried watermark jobs record `retryOfJobId` in the new job metadata.
+- Watermark panel can rebuild its queue/settings/member selection from a selected watermark job and start the retry through the normal validation path.
+- Jobs tab Retry is now enabled for terminal download and watermark jobs.
+- MainWindow routes retry requests to Downloader or Watermark based on the selected job type.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add distribution retry only after distribution jobs persist selected tasks, source/destination plan, conflict policy, and move/copy mode.
+- Add cleanup actions for disk-full paused watermark jobs and partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
 
 ## Non-Goals
 
