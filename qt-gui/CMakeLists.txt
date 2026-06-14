@@ -117,6 +117,7 @@ set(SOURCES
     src/utils/CopyHelper.cpp
     src/utils/CloudPathValidator.cpp
     src/utils/MetricsStore.cpp
+    src/utils/OperationJobStore.cpp
     src/dialogs/LoginDialog.cpp
     src/dialogs/AboutDialog.cpp
     src/dialogs/MappingEditDialog.cpp
@@ -208,6 +209,7 @@ set(HEADERS
     src/utils/CloudPathValidator.h
     src/utils/MetricsStore.h
     src/utils/MegaUploadUtils.h
+    src/utils/OperationJobStore.h
     src/dialogs/LoginDialog.h
     src/dialogs/AboutDialog.h
     src/dialogs/MappingEditDialog.h

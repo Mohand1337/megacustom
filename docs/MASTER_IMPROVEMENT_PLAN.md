@@ -1534,6 +1534,35 @@ Verification required:
 - Confirm Copy Report copies visible rows with headers.
 - Confirm distribution history job IDs display without crowding the table.
 
+### 2026-06-14 Job Foundation Pass
+
+Scope:
+
+- Started Slice D with a shared job model and first-pass wiring for the three most important long-running workflows.
+
+Implemented:
+
+- `JOB-001`: added `OperationJobStore`, a lightweight durable job store for recent jobs.
+- Jobs now have ID, type, status, title, summary, error, created/started/updated/finished timestamps, planned/completed/failed/skipped counts, and metadata.
+- Job status supports queued, running, paused, completed, failed, cancelled, and cleanup required.
+- Job records serialize to `operation_jobs.json` in the app config directory.
+- Job progress persistence is throttled so frequent UI progress updates do not spam disk writes.
+- Job lifecycle events are logged through `LogManager` with stable `job.*` actions and job IDs.
+- `JOB-002`: `WatermarkPanel` creates a job per watermark run, tracks progress/failures, and maps disk-full stops to paused jobs.
+- `JOB-003`: `DistributionPanel` creates jobs for local/cloud copy runs and adopts existing `DistributionController` job IDs for controller-driven uploads.
+- `JOB-004`: `DownloaderPanel` creates jobs for download batches, tracks progress/failures/cancellation, and logs auto-send-to-watermark under the source download job.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- `JOB-002`: wire deeper `WatermarkerController` / engine-level events to the same parent job.
+- `JOB-003`: expose job filters in distribution history and ensure every lower-level folder/upload skip event carries the job ID.
+- `JOB-004`: carry parent/child job relationships from downloader auto-send into the created watermark job.
+- `JOB-005`: add the first recent-job summary view in `LogViewerPanel`, then graduate it into the full Job Center.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

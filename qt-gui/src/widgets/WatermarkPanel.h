@@ -166,6 +166,7 @@ private:
     void updateEmptyState();
     void updateStats();
     void updateButtonStates();
+    void updateCurrentJobProgress(const QString& summary = {});
     void loadMembers();
     QStringList getSelectedMemberIds() const;
     WatermarkConfig buildConfig() const;
@@ -242,6 +243,8 @@ private:
     bool m_isRunning = false;
     bool m_pausedForDiskSpace = false;
     QString m_diskSpacePauseMessage;
+    QString m_currentJobId;
+    bool m_currentJobCancelled = false;
     QString m_sourceRootDir;  // Root folder from "Add Folder" for subfolder structure
 
     // Stored member file map from last multi-member watermark (for manual send to distribution)

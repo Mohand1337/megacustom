@@ -4,6 +4,7 @@
 #include "core/LogManager.h"
 #include "utils/AnimationHelper.h"
 #include "utils/CopyHelper.h"
+#include "utils/OperationJobStore.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -706,6 +707,24 @@ void DownloaderPanel::onStartDownloads() {
 
     // Clear completed files for new batch
     m_completedFiles.clear();
+    m_currentJobUrls.clear();
+    for (const QString& url : urls) {
+        m_currentJobUrls.insert(url);
+    }
+
+    QJsonObject metadata;
+    metadata["outputDir"] = outputDir;
+    metadata["quality"] = m_qualityCombo->currentText();
+    metadata["parallel"] = m_parallelSpin->value();
+    metadata["skipExisting"] = m_skipExistingCheck->isChecked();
+    metadata["downloadSubtitles"] = m_downloadSubtitlesCheck->isChecked();
+    metadata["docsFormat"] = m_docsFormatCombo->currentText();
+    m_currentJobId = OperationJobStore::instance().createJob(
+        OperationJobType::Download,
+        QString("Download %1 %2").arg(urls.size()).arg(urls.size() == 1 ? "item" : "items"),
+        urls.size(),
+        metadata);
+    m_currentJobCancelled = false;
 
     // Create worker thread
     m_workerThread = new QThread();
@@ -741,11 +760,21 @@ void DownloaderPanel::onStartDownloads() {
     m_statusLabel->setText("Starting downloads...");
 
     emit downloadStarted();
+    OperationJobStore::instance().markRunning(
+        m_currentJobId,
+        QString("Downloading %1 %2 to %3")
+            .arg(urls.size())
+            .arg(urls.size() == 1 ? "item" : "items")
+            .arg(outputDir));
     m_workerThread->start();
 }
 
 void DownloaderPanel::onStopDownloads() {
     if (m_worker) {
+        m_currentJobCancelled = true;
+        OperationJobStore::instance().markCancelled(
+            m_currentJobId,
+            "Download cancellation requested");
         m_worker->cancel();
         m_statusLabel->setText("Cancelling...");
     }
@@ -885,6 +914,9 @@ void DownloaderPanel::onWorkerProgress(int itemIndex, int totalItems, const QStr
     int overallPercent = (itemIndex * 100 + percent) / totalItems;
     AnimationHelper::animateProgress(m_progressBar, overallPercent);
     m_statusLabel->setText(QString("Downloading %1 (%2%)").arg(file).arg(percent));
+    updateCurrentJobProgress(QString("Downloading %1 (%2%)")
+        .arg(file.isEmpty() ? "current item" : file)
+        .arg(percent));
 
     emit downloadProgress(itemIndex + 1, totalItems, file);
 }
@@ -911,15 +943,23 @@ void DownloaderPanel::onWorkerItemCompleted(int itemIndex, bool success,
 
                 // Log to LogManager
                 if (success) {
-                    LogManager::instance().logDownload("complete",
+                    LogManager::instance().logWithContext(LogLevel::Info, LogCategory::Download,
+                        "download.file_completed",
                         "Downloaded: " + outputPath.toStdString(),
-                        outputPath.toStdString());
+                        "",
+                        outputPath.toStdString(),
+                        m_currentJobId.toStdString());
                     m_completedFiles.append(outputPath);
                     emit downloadCompleted(outputPath, m_items[i].url);
                 } else {
-                    LogManager::instance().logError("download_failed",
+                    LogManager::instance().logWithContext(LogLevel::Error, LogCategory::Download,
+                        "download.file_failed",
                         "Failed to download: " + m_items[i].url.toStdString(),
+                        "",
+                        "",
+                        m_currentJobId.toStdString(),
                         error.toStdString());
+                    OperationJobStore::instance().setLastError(m_currentJobId, error);
                 }
                 break;
             }
@@ -928,6 +968,9 @@ void DownloaderPanel::onWorkerItemCompleted(int itemIndex, bool success,
     }
 
     populateTable();
+    updateCurrentJobProgress(success
+        ? QString("Downloaded %1").arg(QFileInfo(outputPath).fileName())
+        : QString("Failed: %1").arg(error.left(160)));
 }
 
 void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
@@ -936,6 +979,28 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
 
     AnimationHelper::animateProgress(m_progressBar, 100);
     m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(successCount).arg(failCount));
+
+    if (!m_currentJobId.isEmpty()) {
+        if (m_currentJobCancelled) {
+            OperationJobStore::instance().markCancelled(
+                m_currentJobId,
+                QString("Download cancelled: %1 completed, %2 failed")
+                    .arg(successCount).arg(failCount));
+        } else if (failCount > 0) {
+            OperationJobStore::instance().markFailed(
+                m_currentJobId,
+                QString("Download completed with %1 failed").arg(failCount),
+                successCount,
+                failCount);
+        } else {
+            OperationJobStore::instance().markCompleted(
+                m_currentJobId,
+                successCount,
+                failCount,
+                0,
+                QString("Download complete: %1 succeeded").arg(successCount));
+        }
+    }
 
     emit allDownloadsCompleted(successCount, failCount);
     emit downloadsCompleted(m_completedFiles);
@@ -951,28 +1016,76 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
             QString("Completed: %1 success, %2 failed.\n\nCheck the table for error details.")
                 .arg(successCount).arg(failCount));
     }
+
+    m_currentJobId.clear();
+    m_currentJobUrls.clear();
+    m_currentJobCancelled = false;
 }
 
 void DownloaderPanel::onWorkerLog(const QString& message) {
     const QString lower = message.toLower();
     if (lower.contains("error") || lower.contains("failed") || lower.contains("timeout")) {
-        LogManager::instance().logError("download_progress_error",
-            message.toStdString());
+        LogManager::instance().logWithContext(LogLevel::Error, LogCategory::Download,
+            "download.progress_error",
+            message.toStdString(),
+            "",
+            "",
+            m_currentJobId.toStdString());
+        OperationJobStore::instance().setLastError(m_currentJobId, message);
     } else if (lower.contains("warning") || lower.contains("warn")) {
-        LogManager::instance().warning(LogCategory::Download,
-            "download_progress_warning",
-            message.toStdString());
+        LogManager::instance().logWithContext(LogLevel::Warning, LogCategory::Download,
+            "download.progress_warning",
+            message.toStdString(),
+            "",
+            "",
+            m_currentJobId.toStdString());
     } else {
-        LogManager::instance().debug(LogCategory::Download,
-            "download_progress",
-            message.toStdString());
+        LogManager::instance().logWithContext(LogLevel::Debug, LogCategory::Download,
+            "download.progress",
+            message.toStdString(),
+            "",
+            "",
+            m_currentJobId.toStdString());
     }
     // Also output to console for debugging
     qDebug() << "Downloader:" << message;
 }
 
+void DownloaderPanel::updateCurrentJobProgress(const QString& summary) {
+    if (m_currentJobId.isEmpty()) {
+        return;
+    }
+
+    int completed = 0;
+    int failed = 0;
+    for (const DownloadItemInfo& item : m_items) {
+        if (!m_currentJobUrls.contains(item.url)) {
+            continue;
+        }
+        if (item.status == "complete") {
+            ++completed;
+        } else if (item.status == "error") {
+            ++failed;
+        }
+    }
+
+    OperationJobStore::instance().updateProgress(
+        m_currentJobId,
+        completed,
+        failed,
+        0,
+        summary);
+}
+
 void DownloaderPanel::checkAndAutoSend() {
     if (m_autoSendCheck->isChecked() && !m_completedFiles.isEmpty()) {
+        LogManager::instance().logWithContext(LogLevel::Info, LogCategory::Download,
+            "download.auto_send_to_watermark",
+            QString("Auto-sent %1 completed downloads to Watermark")
+                .arg(m_completedFiles.size()).toStdString(),
+            "",
+            "",
+            m_currentJobId.toStdString());
         emit sendToWatermark(m_completedFiles);
         m_statusLabel->setText(m_statusLabel->text() + QString(" | Auto-sent %1 %2 to Watermark").arg(m_completedFiles.size()).arg(m_completedFiles.size() == 1 ? "file" : "files"));
     }

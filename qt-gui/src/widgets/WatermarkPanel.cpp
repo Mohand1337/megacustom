@@ -6,6 +6,8 @@
 #include "utils/Constants.h"
 #include "utils/MetricsStore.h"
 #include "utils/MegaUploadUtils.h"
+#include "utils/OperationJobStore.h"
+#include "core/LogManager.h"
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
 #include "dialogs/WatermarkSettingsDialog.h"
@@ -32,6 +34,7 @@
 #include <QProcess>
 #include <QApplication>
 #include <QClipboard>
+#include <QJsonObject>
 
 namespace MegaCustom {
 
@@ -1576,6 +1579,28 @@ void WatermarkPanel::onStartWatermark() {
         }
     }
 
+    int plannedCount = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (!info.isHeader) {
+            ++plannedCount;
+        }
+    }
+
+    QJsonObject metadata;
+    metadata["mode"] = m_modeCombo->currentData().toString();
+    metadata["sourceFileCount"] = filePaths.size();
+    metadata["plannedOutputCount"] = plannedCount;
+    metadata["memberCount"] = allMemberIds.isEmpty() ? (memberId.isEmpty() ? 0 : 1) : allMemberIds.size();
+    metadata["outputDir"] = outputDir.isEmpty() ? "same_as_input" : outputDir;
+    metadata["autoUpload"] = m_autoUploadCheck && m_autoUploadCheck->isChecked();
+    metadata["sourceRootDir"] = m_sourceRootDir;
+    m_currentJobId = OperationJobStore::instance().createJob(
+        OperationJobType::Watermark,
+        QString("Watermark %1 %2").arg(plannedCount).arg(plannedCount == 1 ? "file" : "files"),
+        plannedCount,
+        metadata);
+    m_currentJobCancelled = false;
+
     // Create worker thread
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
@@ -1659,6 +1684,7 @@ void WatermarkPanel::onStartWatermark() {
                 .arg(formatFileSize(available))
                 .arg(formatFileSize(needed));
             m_statusLabel->setText(m_diskSpacePauseMessage);
+            OperationJobStore::instance().markPaused(m_currentJobId, m_diskSpacePauseMessage);
         });
     connect(m_worker, &WatermarkWorker::memberAutoUploadSkipped, this,
         [this](const QString& memberId, const QString& reason) {
@@ -1688,11 +1714,20 @@ void WatermarkPanel::onStartWatermark() {
     m_statusLabel->setText("Starting...");
 
     emit watermarkStarted();
+    OperationJobStore::instance().markRunning(
+        m_currentJobId,
+        QString("Watermarking %1 %2")
+            .arg(plannedCount)
+            .arg(plannedCount == 1 ? "file" : "files"));
     m_workerThread->start();
 }
 
 void WatermarkPanel::onStopWatermark() {
     if (m_worker) {
+        m_currentJobCancelled = true;
+        OperationJobStore::instance().markCancelled(
+            m_currentJobId,
+            "Watermark cancellation requested");
         m_worker->cancel();
         m_statusLabel->setText("Cancelling...");
     }
@@ -1933,6 +1968,10 @@ void WatermarkPanel::onWorkerProgress(int fileIndex, int totalFiles, const QStri
         m_statusLabel->setText(QString("Processing %1 (%2%)").arg(fileName).arg(percent));
     }
 
+    updateCurrentJobProgress(QString("Processing %1 (%2%)")
+        .arg(fileName.isEmpty() ? "current file" : fileName)
+        .arg(percent));
+
     emit watermarkProgress(fileIndex + 1, totalFiles, currentFile);
 }
 
@@ -1950,7 +1989,30 @@ void WatermarkPanel::onWorkerFileCompleted(int fileIndex, bool success, const QS
         // Update the member's header row
         int headerRow = findMemberHeaderRow(m_files[row].memberId);
         if (headerRow >= 0) updateMemberHeader(headerRow);
+
+        const WatermarkFileInfo& fileInfo = m_files[row];
+        if (success) {
+            LogManager::instance().logWithContext(LogLevel::Info, LogCategory::Watermark,
+                "watermark.file_completed",
+                QString("Watermarked: %1").arg(outputPath).toStdString(),
+                fileInfo.memberId.toStdString(),
+                outputPath.toStdString(),
+                m_currentJobId.toStdString());
+        } else {
+            LogManager::instance().logWithContext(LogLevel::Error, LogCategory::Watermark,
+                "watermark.file_failed",
+                QString("Failed to watermark: %1").arg(fileInfo.filePath).toStdString(),
+                fileInfo.memberId.toStdString(),
+                fileInfo.filePath.toStdString(),
+                m_currentJobId.toStdString(),
+                error.toStdString());
+            OperationJobStore::instance().setLastError(m_currentJobId, error);
+        }
     }
+
+    updateCurrentJobProgress(success
+        ? QString("Watermarked %1").arg(QFileInfo(outputPath).fileName())
+        : QString("Failed: %1").arg(error.left(160)));
 }
 
 void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
@@ -1964,14 +2026,39 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
             ? "Paused: disk is full. Free space and start again."
             : m_diskSpacePauseMessage;
         m_statusLabel->setText(message);
+        OperationJobStore::instance().markPaused(m_currentJobId, message);
         QMessageBox::warning(this, "Watermarking Paused",
             QString("%1\n\nNo more files or member folders will be created until you restart the job.")
                 .arg(message));
+        m_currentJobId.clear();
+        m_currentJobCancelled = false;
         return;
     }
 
     AnimationHelper::animateProgress(m_progressBar, 100);
     m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(successCount).arg(failCount));
+
+    if (!m_currentJobId.isEmpty()) {
+        if (m_currentJobCancelled) {
+            OperationJobStore::instance().markCancelled(
+                m_currentJobId,
+                QString("Watermark cancelled: %1 completed, %2 failed")
+                    .arg(successCount).arg(failCount));
+        } else if (failCount > 0) {
+            OperationJobStore::instance().markFailed(
+                m_currentJobId,
+                QString("Watermark completed with %1 failed").arg(failCount),
+                successCount,
+                failCount);
+        } else {
+            OperationJobStore::instance().markCompleted(
+                m_currentJobId,
+                successCount,
+                failCount,
+                0,
+                QString("Watermark complete: %1 succeeded").arg(successCount));
+        }
+    }
 
     if (failCount == 0) {
         QMessageBox::information(this, "Complete",
@@ -1981,6 +2068,35 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
             QString("Completed: %1 success, %2 failed.\n\nCheck the table for error details.")
                 .arg(successCount).arg(failCount));
     }
+
+    m_currentJobId.clear();
+    m_currentJobCancelled = false;
+}
+
+void WatermarkPanel::updateCurrentJobProgress(const QString& summary) {
+    if (m_currentJobId.isEmpty()) {
+        return;
+    }
+
+    int completed = 0;
+    int failed = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            continue;
+        }
+        if (info.status == "complete" || info.status == "uploaded") {
+            ++completed;
+        } else if (info.status == "error") {
+            ++failed;
+        }
+    }
+
+    OperationJobStore::instance().updateProgress(
+        m_currentJobId,
+        completed,
+        failed,
+        0,
+        summary);
 }
 
 void WatermarkPanel::populateTable() {

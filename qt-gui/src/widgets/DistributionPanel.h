@@ -139,6 +139,7 @@ private:
     ContentType routeCourseTypeFromTemplate() const;
     QString buildDistributionAudit(bool includeDetails = true, int* blockerCount = nullptr, int* warningCount = nullptr);
     bool confirmDistributionAudit();
+    void updateCurrentJobProgress(const QString& summary = {});
 
     // UI Components - Configuration
     QComboBox* m_sourceTypeCombo = nullptr;  // "Cloud" or "Local"
@@ -221,6 +222,9 @@ private:
     bool m_isPaused = false;
     bool m_isMoving = false;
     bool m_controllerActive = false;  // True when DistributionController is driving the UI
+    QString m_currentJobId;
+    bool m_currentJobCancelled = false;
+    int m_currentJobPlannedCount = 0;
     int m_successCount = 0;
     int m_failCount = 0;
 

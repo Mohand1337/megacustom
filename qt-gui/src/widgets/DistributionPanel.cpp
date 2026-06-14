@@ -7,6 +7,7 @@
 #include "utils/ContentRouter.h"
 #include "utils/MegaUploadUtils.h"
 #include "utils/DpiScaler.h"
+#include "utils/OperationJobStore.h"
 #include "widgets/ButtonFactory.h"
 #include "widgets/SwitchButton.h"
 #include "dialogs/SmartRouteReviewDialog.h"
@@ -467,8 +468,17 @@ void DistributionPanel::setDistributionController(DistributionController* contro
         // Distribution started — set UI running state
         connect(m_distController, &DistributionController::distributionStarted,
                 this, [this](const QString& jobId) {
-            Q_UNUSED(jobId);
             if (!m_controllerActive) return;
+            m_currentJobId = OperationJobStore::instance().createJob(
+                OperationJobType::Distribution,
+                QString("Upload to %1 member folders").arg(m_currentJobPlannedCount),
+                m_currentJobPlannedCount,
+                QJsonObject{},
+                jobId);
+            m_currentJobCancelled = false;
+            OperationJobStore::instance().markRunning(
+                m_currentJobId,
+                QString("Uploading to %1 member folders").arg(m_currentJobPlannedCount));
             m_isRunning = true;
             m_statusLabel->setText("Upload starting...");
         });
@@ -478,6 +488,8 @@ void DistributionPanel::setDistributionController(DistributionController* contro
                 this, [this](const QtDistributionProgress& progress) {
             if (!m_controllerActive) return;
             m_statusLabel->setText(QString("Uploading: %1 - %2")
+                .arg(progress.currentMember, progress.currentFile));
+            updateCurrentJobProgress(QString("Uploading %1 - %2")
                 .arg(progress.currentMember, progress.currentFile));
         });
 
@@ -513,6 +525,12 @@ void DistributionPanel::setDistributionController(DistributionController* contro
                 m_failCount++;
                 AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
             }
+            if (!status.lastError.isEmpty()) {
+                OperationJobStore::instance().setLastError(m_currentJobId, status.lastError);
+            }
+            updateCurrentJobProgress(QString("%1: %2")
+                .arg(status.memberName.isEmpty() ? status.memberId : status.memberName,
+                     status.state));
         });
 
         // Distribution finished — reset UI and show summary
@@ -535,18 +553,48 @@ void DistributionPanel::setDistributionController(DistributionController* contro
             m_statusLabel->setText(QString("Upload complete: %1 of %2 members, %3 files uploaded")
                 .arg(result.membersCompleted).arg(result.totalMembers).arg(result.filesUploaded));
 
+            if (!m_currentJobId.isEmpty()) {
+                if (m_currentJobCancelled) {
+                    OperationJobStore::instance().markCancelled(
+                        m_currentJobId,
+                        QString("Upload cancelled: %1 completed, %2 failed")
+                            .arg(result.membersCompleted).arg(result.membersFailed));
+                } else if (result.membersFailed > 0 || result.filesFailed > 0) {
+                    OperationJobStore::instance().markFailed(
+                        m_currentJobId,
+                        QString("Upload completed with %1 member failures and %2 file failures")
+                            .arg(result.membersFailed).arg(result.filesFailed),
+                        result.membersCompleted,
+                        result.membersFailed,
+                        result.membersSkipped);
+                } else {
+                    OperationJobStore::instance().markCompleted(
+                        m_currentJobId,
+                        result.membersCompleted,
+                        result.membersFailed,
+                        result.membersSkipped,
+                        QString("Upload complete: %1 members, %2 files")
+                            .arg(result.membersCompleted).arg(result.filesUploaded));
+                }
+            }
+
             QMessageBox::information(this, "Upload Complete",
                 QString("Upload finished.\n\n"
                         "Members: %1 succeeded, %2 failed, %3 skipped\n"
                         "Files: %4 uploaded, %5 failed")
                 .arg(result.membersCompleted).arg(result.membersFailed).arg(result.membersSkipped)
                 .arg(result.filesUploaded).arg(result.filesFailed));
+
+            m_currentJobId.clear();
+            m_currentJobCancelled = false;
+            m_currentJobPlannedCount = 0;
         });
 
         // Error handling
         connect(m_distController, &DistributionController::distributionError,
                 this, [this](const QString& error) {
             m_statusLabel->setText(QString("Error: %1").arg(error));
+            OperationJobStore::instance().setLastError(m_currentJobId, error);
         });
 
         qDebug() << "DistributionPanel: DistributionController connected";
@@ -2384,11 +2432,18 @@ void DistributionPanel::onStartDistribution() {
             QMessageBox::Yes | QMessageBox::No);
         if (ret != QMessageBox::Yes) return;
 
+        m_currentJobId.clear();
+        m_currentJobCancelled = false;
+        m_currentJobPlannedCount = m_pendingMemberFileMap.size();
         m_isRunning = true;
         m_startBtn->setEnabled(false);
         m_pauseBtn->setEnabled(true);
         m_stopBtn->setEnabled(true);
         AnimationHelper::smoothShow(m_progressBar);
+        m_progressBar->setValue(0);
+        m_progressBar->setMaximum(qMax(1, m_currentJobPlannedCount));
+        m_successCount = 0;
+        m_failCount = 0;
         m_statusLabel->setText(QString("Uploading %1 files to %2 members...")
             .arg(totalFiles).arg(m_pendingMemberFileMap.size()));
         emit distributionStarted();
@@ -2657,8 +2712,33 @@ void DistributionPanel::onStartDistribution() {
     AnimationHelper::smoothShow(m_progressBar);
     m_successCount = 0;
     m_failCount = 0;
+    m_currentJobCancelled = false;
+    m_currentJobPlannedCount = tasks.size();
+
+    QJsonObject metadata;
+    metadata["operation"] = moveMode ? "move" : "copy";
+    metadata["copyFolderItself"] = copyFolderItself;
+    metadata["conflictMode"] = m_skipExistingCheck->isChecked() ? "skip_existing" : "overwrite_existing";
+    metadata["templatePath"] = templatePath;
+    metadata["sourcePath"] = m_wmPathEdit->text();
+    metadata["broadcast"] = m_broadcastCheck && m_broadcastCheck->isChecked();
+    metadata["smartRoute"] = m_smartRouteCheck && m_smartRouteCheck->isChecked();
+    m_currentJobId = OperationJobStore::instance().createJob(
+        OperationJobType::Distribution,
+        QString("%1 %2 distribution %3")
+            .arg(moveMode ? "Move" : "Copy")
+            .arg(tasks.size())
+            .arg(tasks.size() == 1 ? "task" : "tasks"),
+        tasks.size(),
+        metadata);
 
     emit distributionStarted();
+    OperationJobStore::instance().markRunning(
+        m_currentJobId,
+        QString("%1 %2 distribution %3")
+            .arg(moveMode ? "Moving" : "Copying")
+            .arg(tasks.size())
+            .arg(tasks.size() == 1 ? "task" : "tasks"));
 
     // Start worker thread
     cleanupWorkerThread();
@@ -2702,6 +2782,11 @@ void DistributionPanel::onStopDistribution() {
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (reply != QMessageBox::Yes) return;
 
+    m_currentJobCancelled = true;
+    OperationJobStore::instance().markCancelled(
+        m_currentJobId,
+        "Distribution cancellation requested");
+
     if (m_controllerActive && m_distController) {
         m_distController->cancel();
     } else if (m_copyWorker) {
@@ -2721,6 +2806,7 @@ void DistributionPanel::onPauseDistribution() {
             m_statusLabel->setText("Upload resumed");
             m_progressBar->setProperty("paused", false);
             m_progressBar->style()->polish(m_progressBar);
+            OperationJobStore::instance().markRunning(m_currentJobId, "Upload resumed");
         } else {
             m_distController->pause();
             m_isPaused = true;
@@ -2728,6 +2814,7 @@ void DistributionPanel::onPauseDistribution() {
             m_statusLabel->setText("Upload paused");
             m_progressBar->setProperty("paused", true);
             m_progressBar->style()->polish(m_progressBar);
+            OperationJobStore::instance().markPaused(m_currentJobId, "Upload paused");
         }
         return;
     }
@@ -2741,6 +2828,7 @@ void DistributionPanel::onPauseDistribution() {
         m_statusLabel->setText("Distribution resumed");
         m_progressBar->setProperty("paused", false);
         m_progressBar->style()->polish(m_progressBar);
+        OperationJobStore::instance().markRunning(m_currentJobId, "Distribution resumed");
     } else {
         m_copyWorker->pause();
         m_isPaused = true;
@@ -2748,6 +2836,7 @@ void DistributionPanel::onPauseDistribution() {
         m_statusLabel->setText("Distribution paused");
         m_progressBar->setProperty("paused", true);
         m_progressBar->style()->polish(m_progressBar);
+        OperationJobStore::instance().markPaused(m_currentJobId, "Distribution paused");
     }
 }
 
@@ -2771,6 +2860,9 @@ void DistributionPanel::onWorkerTaskStarted(int index, const QString& source, co
             statusItem->setText(verb + "...");
             statusItem->setForeground(ThemeManager::instance().supportWarning());
         }
+
+        updateCurrentJobProgress(QString("%1 %2 -> %3")
+            .arg(verb, memberDisplay, dest));
     }
 }
 
@@ -2803,9 +2895,13 @@ void DistributionPanel::onWorkerTaskCompleted(int index, bool success, const QSt
         }
         QTableWidgetItem* memberItem = m_memberTable->item(index, COL_MATCHED_MEMBER);
         qDebug() << "Task failed:" << (memberItem ? memberItem->text() : "?") << "-" << error;
+        OperationJobStore::instance().setLastError(m_currentJobId, error);
     }
 
     AnimationHelper::animateProgress(m_progressBar, m_successCount + m_failCount);
+    updateCurrentJobProgress(success
+        ? "Distribution task completed"
+        : QString("Distribution task failed: %1").arg(error.left(160)));
 }
 
 void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
@@ -2821,11 +2917,37 @@ void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
     m_statusLabel->setText(QString("Distribution complete: %1 succeeded, %2 failed")
         .arg(success).arg(failed));
 
+    if (!m_currentJobId.isEmpty()) {
+        if (m_currentJobCancelled) {
+            OperationJobStore::instance().markCancelled(
+                m_currentJobId,
+                QString("Distribution cancelled: %1 succeeded, %2 failed")
+                    .arg(success).arg(failed));
+        } else if (failed > 0) {
+            OperationJobStore::instance().markFailed(
+                m_currentJobId,
+                QString("Distribution completed with %1 failed").arg(failed),
+                success,
+                failed);
+        } else {
+            OperationJobStore::instance().markCompleted(
+                m_currentJobId,
+                success,
+                failed,
+                0,
+                QString("Distribution complete: %1 succeeded").arg(success));
+        }
+    }
+
     emit distributionCompleted(success, failed);
 
     QMessageBox::information(this, "Distribution Complete",
         QString("Distribution finished.\n\nSucceeded: %1\nFailed: %2")
         .arg(success).arg(failed));
+
+    m_currentJobId.clear();
+    m_currentJobCancelled = false;
+    m_currentJobPlannedCount = 0;
 
     cleanupWorkerThread();
 }
@@ -2840,7 +2962,24 @@ void DistributionPanel::onWorkerProgress(int current, int total, const QString& 
         m_statusLabel->setText(QString("%1: %2").arg(m_isMoving ? "Moving" : "Copying").arg(currentItem));
     }
 
+    updateCurrentJobProgress(currentItem.isEmpty()
+        ? QString()
+        : QString("%1: %2").arg(m_isMoving ? "Moving" : "Copying", currentItem));
+
     emit distributionProgress(current, total, currentItem);
+}
+
+void DistributionPanel::updateCurrentJobProgress(const QString& summary) {
+    if (m_currentJobId.isEmpty()) {
+        return;
+    }
+
+    OperationJobStore::instance().updateProgress(
+        m_currentJobId,
+        m_successCount,
+        m_failCount,
+        0,
+        summary);
 }
 
 // ==================== Helper Methods ====================

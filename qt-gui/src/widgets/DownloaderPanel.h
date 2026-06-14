@@ -14,6 +14,7 @@
 #include <QGroupBox>
 #include <QThread>
 #include <QProcess>
+#include <QSet>
 #include <memory>
 #include <atomic>
 
@@ -164,6 +165,7 @@ private:
     void updateEmptyState();
     void updateStats();
     void updateButtonStates();
+    void updateCurrentJobProgress(const QString& summary = {});
     void checkAndAutoSend();
 
     // URL utilities (C++ for immediate UI feedback)
@@ -216,7 +218,10 @@ private:
     // Data
     QList<DownloadItemInfo> m_items;
     QStringList m_completedFiles;  // Files ready to send to watermark
+    QSet<QString> m_currentJobUrls;
+    QString m_currentJobId;
     bool m_isRunning = false;
+    bool m_currentJobCancelled = false;
 
     // Worker thread
     QThread* m_workerThread = nullptr;
