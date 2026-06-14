@@ -14,6 +14,7 @@
 #include <QDateTimeEdit>
 #include <QFutureWatcher>
 #include <QPlainTextEdit>
+#include "utils/OperationJobStore.h"
 #include <vector>
 
 class EmptyStateWidget;
@@ -41,11 +42,14 @@ signals:
 
 public slots:
     void refresh();
+    void refreshJobs();
     void refreshActivityLog();
     void refreshDistributionHistory();
     void refreshStats();
 
 private slots:
+    void onJobTypeFilterChanged(int index);
+    void onJobStatusFilterChanged(int index);
     void onSearchChanged(const QString& text);
     void onLevelFilterChanged(int index);
     void onCategoryFilterChanged(int index);
@@ -59,6 +63,7 @@ private slots:
     void onCopyDetailsClicked();
     void onCopyReportClicked();
     void onAutoRefreshToggled(bool enabled);
+    void onJobsTableSelectionChanged();
     void onActivityTableSelectionChanged();
     void onDistributionTableSelectionChanged();
     void onTabChanged(int index);
@@ -67,6 +72,8 @@ private slots:
 
 private:
     void setupUI();
+    void populateJobsTable();
+    void populateJobsTableFromRecords(const QList<OperationJobRecord>& records);
     void populateActivityTable();
     void populateActivityTableFromEntries(const std::vector<LogEntry>& entries);
     void populateDistributionTable();
@@ -76,15 +83,27 @@ private:
     void updateEmptyState();
     void updateCopyButtonStates();
     void updateLastRefreshedLabel();
+    QTableWidget* currentVisibleTable() const;
     LogFilter buildActivityFilter(int limit) const;
     QString buildTableReport(QTableWidget* table) const;
     QString formatTimestamp(qint64 timestamp) const;
     QString formatFileSize(qint64 bytes) const;
     QString formatDuration(qint64 ms) const;
+    QString formatJobRecordDetails(const OperationJobRecord& record) const;
+    QString formatJobProgress(const OperationJobRecord& record) const;
+    QString formatJobType(OperationJobType type) const;
+    QString formatJobStatus(OperationJobStatus status) const;
     QString formatLogEntryDetails(const LogEntry& entry) const;
     QString formatDistributionRecordDetails(const DistributionRecord& record) const;
     QColor getLevelColor(int level) const;
     QColor getStatusColor(int status) const;
+    QColor getJobStatusColor(OperationJobStatus status) const;
+
+    // UI Components - Jobs Tab
+    QTableWidget* m_jobsTable = nullptr;
+    QComboBox* m_jobTypeCombo = nullptr;
+    QComboBox* m_jobStatusCombo = nullptr;
+    QPlainTextEdit* m_jobDetailsText = nullptr;
 
     // UI Components - Activity Log Tab
     QTableWidget* m_activityTable = nullptr;

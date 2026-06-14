@@ -13,6 +13,7 @@
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QCheckBox>
+#include <QSignalBlocker>
 #include <QScrollArea>
 #include <QSplitter>
 #include <QTextEdit>
@@ -86,6 +87,90 @@ void LogViewerPanel::setupUI() {
     // Tab widget
     m_tabWidget = new QTabWidget();
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &LogViewerPanel::onTabChanged);
+
+    // =====================================================
+    // Jobs Tab
+    // =====================================================
+    QWidget* jobsTab = new QWidget();
+    QVBoxLayout* jobsLayout = new QVBoxLayout(jobsTab);
+    jobsLayout->setContentsMargins(8, 8, 8, 8);
+    jobsLayout->setSpacing(8);
+
+    QHBoxLayout* jobsFilterLayout = new QHBoxLayout();
+    jobsFilterLayout->setSpacing(8);
+
+    jobsFilterLayout->addWidget(new QLabel("Type:"));
+    m_jobTypeCombo = new QComboBox();
+    m_jobTypeCombo->setToolTip("Limit recent jobs to one operation type.");
+    m_jobTypeCombo->addItem("All Types", "all");
+    m_jobTypeCombo->addItem("Download", "download");
+    m_jobTypeCombo->addItem("Watermark", "watermark");
+    m_jobTypeCombo->addItem("Distribution", "distribution");
+    connect(m_jobTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &LogViewerPanel::onJobTypeFilterChanged);
+    jobsFilterLayout->addWidget(m_jobTypeCombo);
+
+    jobsFilterLayout->addWidget(new QLabel("Status:"));
+    m_jobStatusCombo = new QComboBox();
+    m_jobStatusCombo->setToolTip("Limit recent jobs by lifecycle state.");
+    m_jobStatusCombo->addItem("All Statuses", "all");
+    m_jobStatusCombo->addItem("Active", "active");
+    m_jobStatusCombo->addItem("Needs Attention", "issues");
+    m_jobStatusCombo->addItem("Paused", "paused");
+    m_jobStatusCombo->addItem("Completed", "completed");
+    m_jobStatusCombo->addItem("Failed", "failed");
+    m_jobStatusCombo->addItem("Cancelled", "cancelled");
+    connect(m_jobStatusCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &LogViewerPanel::onJobStatusFilterChanged);
+    jobsFilterLayout->addWidget(m_jobStatusCombo);
+    jobsFilterLayout->addStretch();
+    jobsLayout->addLayout(jobsFilterLayout);
+
+    m_jobsTable = new QTableWidget();
+    m_jobsTable->setObjectName("JobsTable");
+    m_jobsTable->setColumnCount(8);
+    m_jobsTable->setHorizontalHeaderLabels({
+        "Updated", "Status", "Type", "Title", "Progress", "Summary", "Last Error", "Job ID"
+    });
+    m_jobsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_jobsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_jobsTable->setAlternatingRowColors(true);
+    m_jobsTable->verticalHeader()->setVisible(false);
+    m_jobsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Interactive);
+    m_jobsTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Interactive);
+    m_jobsTable->setColumnWidth(0, 140);
+    m_jobsTable->setColumnWidth(1, 105);
+    m_jobsTable->setColumnWidth(2, 100);
+    m_jobsTable->setColumnWidth(3, 180);
+    m_jobsTable->setColumnWidth(4, 110);
+    m_jobsTable->setColumnWidth(6, 180);
+    m_jobsTable->setColumnWidth(7, 150);
+
+    CopyHelper::installTableCopyMenu(m_jobsTable);
+
+    connect(m_jobsTable, &QTableWidget::itemSelectionChanged,
+            this, &LogViewerPanel::onJobsTableSelectionChanged);
+    jobsLayout->addWidget(m_jobsTable, 1);
+
+    QGroupBox* jobDetailsBox = new QGroupBox("Selected Job Details");
+    QVBoxLayout* jobDetailsLayout = new QVBoxLayout(jobDetailsBox);
+    jobDetailsLayout->setContentsMargins(10, 8, 10, 10);
+    m_jobDetailsText = new QPlainTextEdit();
+    m_jobDetailsText->setReadOnly(true);
+    m_jobDetailsText->setMaximumHeight(150);
+    m_jobDetailsText->setPlaceholderText("Select a job to inspect progress, errors, and metadata.");
+    m_jobDetailsText->setToolTip("Selecting a job also sets the Activity search to that job ID.");
+    jobDetailsLayout->addWidget(m_jobDetailsText);
+    jobsLayout->addWidget(jobDetailsBox);
+
+    m_tabWidget->addTab(jobsTab, "Jobs");
 
     // =====================================================
     // Activity Log Tab
@@ -333,7 +418,7 @@ void LogViewerPanel::setupUI() {
 
     m_refreshBtn = new QPushButton("Refresh");
     m_refreshBtn->setIcon(QIcon(":/icons/refresh-cw.svg"));
-    m_refreshBtn->setToolTip("Reload activity logs, distribution history, and summary counts.");
+    m_refreshBtn->setToolTip("Reload jobs, activity logs, distribution history, and summary counts.");
     connect(m_refreshBtn, &QPushButton::clicked, this, &LogViewerPanel::onRefreshClicked);
     bottomLayout->addWidget(m_refreshBtn);
 
@@ -345,7 +430,7 @@ void LogViewerPanel::setupUI() {
 
     m_copyDetailsBtn = new QPushButton("Copy Details");
     m_copyDetailsBtn->setIcon(QIcon(":/icons/copy.svg"));
-    m_copyDetailsBtn->setToolTip("Copy the full selected activity or distribution row details.");
+    m_copyDetailsBtn->setToolTip("Copy the full selected job, activity, or distribution row details.");
     m_copyDetailsBtn->setEnabled(false);
     connect(m_copyDetailsBtn, &QPushButton::clicked, this, &LogViewerPanel::onCopyDetailsClicked);
     bottomLayout->addWidget(m_copyDetailsBtn);
@@ -360,7 +445,7 @@ void LogViewerPanel::setupUI() {
     m_clearBtn = new QPushButton("Clear Logs");
     m_clearBtn->setObjectName("PanelDangerButton");
     m_clearBtn->setIcon(QIcon(":/icons/trash-2.svg"));
-    m_clearBtn->setToolTip("Clear persisted activity logs, error logs, and distribution history.");
+    m_clearBtn->setToolTip("Clear persisted jobs, activity logs, error logs, and distribution history.");
     connect(m_clearBtn, &QPushButton::clicked, this, &LogViewerPanel::onClearClicked);
     bottomLayout->addWidget(m_clearBtn);
 
@@ -395,15 +480,20 @@ void LogViewerPanel::setupUI() {
 
 void LogViewerPanel::refresh() {
     // Guard against calls before widgets are fully initialized
-    if (!m_activityTable || !m_distributionTable || !m_statsLabel) return;
+    if (!m_jobsTable || !m_activityTable || !m_distributionTable || !m_statsLabel) return;
 
     // Don't start new refresh if already loading
     if (m_isLoading) return;
 
     setLoadingState(true);
+    refreshJobs();
     refreshActivityLog();
     refreshDistributionHistory();
     refreshStats();
+}
+
+void LogViewerPanel::refreshJobs() {
+    populateJobsTable();
 }
 
 void LogViewerPanel::refreshActivityLog() {
@@ -469,6 +559,96 @@ void LogViewerPanel::onDistributionHistoryLoaded() {
         setLoadingState(false);
         updateLastRefreshedLabel();
     }
+}
+
+void LogViewerPanel::populateJobsTable() {
+    if (!m_jobsTable) return;
+    populateJobsTableFromRecords(OperationJobStore::instance().recentJobs(500));
+}
+
+void LogViewerPanel::populateJobsTableFromRecords(const QList<OperationJobRecord>& records) {
+    if (!m_jobsTable) return;
+    m_jobsTable->setRowCount(0);
+
+    const QString typeFilter = m_jobTypeCombo
+        ? m_jobTypeCombo->currentData().toString()
+        : QStringLiteral("all");
+    const QString statusFilter = m_jobStatusCombo
+        ? m_jobStatusCombo->currentData().toString()
+        : QStringLiteral("all");
+
+    int visibleCount = 0;
+    for (const OperationJobRecord& record : records) {
+        if (typeFilter != "all" && OperationJobStore::typeToString(record.type) != typeFilter) {
+            continue;
+        }
+
+        const bool active = record.status == OperationJobStatus::Queued
+            || record.status == OperationJobStatus::Running
+            || record.status == OperationJobStatus::Paused;
+        const bool issue = record.status == OperationJobStatus::Paused
+            || record.status == OperationJobStatus::Failed
+            || record.status == OperationJobStatus::CleanupRequired;
+
+        if (statusFilter == "active" && !active) {
+            continue;
+        }
+        if (statusFilter == "issues" && !issue) {
+            continue;
+        }
+        if (statusFilter != "all" && statusFilter != "active" && statusFilter != "issues"
+            && OperationJobStore::statusToString(record.status) != statusFilter) {
+            continue;
+        }
+
+        const int row = m_jobsTable->rowCount();
+        m_jobsTable->insertRow(row);
+
+        const QString details = formatJobRecordDetails(record);
+
+        QTableWidgetItem* updatedItem = new QTableWidgetItem(
+            record.updatedAt.isValid()
+                ? record.updatedAt.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                : "-");
+        updatedItem->setData(Qt::UserRole, details);
+        updatedItem->setData(Qt::UserRole + 1, record.id);
+        m_jobsTable->setItem(row, 0, updatedItem);
+
+        QTableWidgetItem* statusItem = new QTableWidgetItem(formatJobStatus(record.status));
+        statusItem->setForeground(getJobStatusColor(record.status));
+        m_jobsTable->setItem(row, 1, statusItem);
+
+        m_jobsTable->setItem(row, 2, new QTableWidgetItem(formatJobType(record.type)));
+
+        QTableWidgetItem* titleItem = new QTableWidgetItem(record.title);
+        titleItem->setToolTip(record.title);
+        m_jobsTable->setItem(row, 3, titleItem);
+
+        m_jobsTable->setItem(row, 4, new QTableWidgetItem(formatJobProgress(record)));
+
+        QTableWidgetItem* summaryItem = new QTableWidgetItem(record.summary);
+        summaryItem->setToolTip(record.summary);
+        m_jobsTable->setItem(row, 5, summaryItem);
+
+        QTableWidgetItem* errorItem = new QTableWidgetItem(record.lastError);
+        errorItem->setToolTip(record.lastError);
+        if (!record.lastError.isEmpty()) {
+            errorItem->setForeground(ThemeManager::instance().supportError());
+        }
+        m_jobsTable->setItem(row, 6, errorItem);
+
+        QTableWidgetItem* idItem = new QTableWidgetItem(record.id);
+        idItem->setToolTip(record.id);
+        m_jobsTable->setItem(row, 7, idItem);
+
+        ++visibleCount;
+    }
+
+    if (m_tabWidget && m_tabWidget->currentIndex() == 0 && m_countLabel) {
+        m_countLabel->setText(QString("Showing %1 jobs").arg(visibleCount));
+    }
+    updateEmptyState();
+    updateCopyButtonStates();
 }
 
 void LogViewerPanel::populateActivityTable() {
@@ -642,7 +822,7 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
         m_distributionTable->setRowCount(0);
     }
 
-    if (m_tabWidget && m_tabWidget->currentIndex() == 1 && m_countLabel) {
+    if (m_tabWidget && m_tabWidget->currentIndex() == 2 && m_countLabel) {
         m_countLabel->setText(QString("Showing %1 distributions").arg(visibleCount));
     }
     updateEmptyState();
@@ -652,10 +832,12 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
 void LogViewerPanel::updateStatsDisplay() {
     LogManager& logMgr = LogManager::instance();
     LogStats stats = logMgr.getStats();
+    const QList<OperationJobRecord> jobs = OperationJobStore::instance().recentJobs(500);
 
     QString statsText = QString(
-        "Total: %1 entries | Errors: %2 | Warnings: %3 | "
-        "Distributions: %4 total (%5 successful, %6 failed)")
+        "Jobs: %1 recent | Total: %2 entries | Errors: %3 | Warnings: %4 | "
+        "Distributions: %5 total (%6 successful, %7 failed)")
+        .arg(jobs.size())
         .arg(stats.totalEntries)
         .arg(stats.errorCount)
         .arg(stats.warningCount)
@@ -680,8 +862,10 @@ void LogViewerPanel::setLoadingState(bool loading) {
 }
 
 void LogViewerPanel::updateEmptyState() {
-    if (!m_emptyState || !m_activityTable || !m_distributionTable || !m_tabWidget) return;
-    bool empty = m_activityTable->rowCount() == 0 && m_distributionTable->rowCount() == 0;
+    if (!m_emptyState || !m_jobsTable || !m_activityTable || !m_distributionTable || !m_tabWidget) return;
+    bool empty = m_jobsTable->rowCount() == 0
+        && m_activityTable->rowCount() == 0
+        && m_distributionTable->rowCount() == 0;
     m_emptyState->setVisible(empty);
     m_tabWidget->setVisible(!empty);
 }
@@ -689,8 +873,7 @@ void LogViewerPanel::updateEmptyState() {
 void LogViewerPanel::updateCopyButtonStates() {
     if (!m_copyDetailsBtn || !m_copyReportBtn || !m_tabWidget) return;
 
-    const bool activityActive = m_tabWidget->currentIndex() == 0;
-    QTableWidget* table = activityActive ? m_activityTable : m_distributionTable;
+    QTableWidget* table = currentVisibleTable();
     const bool hasRows = table && table->rowCount() > 0;
     const bool hasSelection = table && table->currentRow() >= 0;
 
@@ -698,17 +881,25 @@ void LogViewerPanel::updateCopyButtonStates() {
     m_copyReportBtn->setEnabled(hasRows);
 
     if (!hasSelection) {
-        m_copyDetailsBtn->setToolTip(activityActive
-            ? "Select an activity row to copy its full details."
-            : "Select a distribution row to copy its full details.");
+        if (m_tabWidget->currentIndex() == 0) {
+            m_copyDetailsBtn->setToolTip("Select a job row to copy its full details.");
+        } else if (m_tabWidget->currentIndex() == 1) {
+            m_copyDetailsBtn->setToolTip("Select an activity row to copy its full details.");
+        } else {
+            m_copyDetailsBtn->setToolTip("Select a distribution row to copy its full details.");
+        }
     } else {
-        m_copyDetailsBtn->setToolTip("Copy the full selected activity or distribution row details.");
+        m_copyDetailsBtn->setToolTip("Copy the full selected job, activity, or distribution row details.");
     }
 
     if (!hasRows) {
-        m_copyReportBtn->setToolTip(activityActive
-            ? "No visible activity rows to copy."
-            : "No visible distribution rows to copy.");
+        if (m_tabWidget->currentIndex() == 0) {
+            m_copyReportBtn->setToolTip("No visible job rows to copy.");
+        } else if (m_tabWidget->currentIndex() == 1) {
+            m_copyReportBtn->setToolTip("No visible activity rows to copy.");
+        } else {
+            m_copyReportBtn->setToolTip("No visible distribution rows to copy.");
+        }
     } else {
         m_copyReportBtn->setToolTip("Copy the currently visible table as a tab-separated report.");
     }
@@ -719,6 +910,20 @@ void LogViewerPanel::updateLastRefreshedLabel() {
 
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
     m_lastRefreshedLabel->setText(QString("Last refreshed: %1").arg(timestamp));
+}
+
+QTableWidget* LogViewerPanel::currentVisibleTable() const {
+    if (!m_tabWidget) return nullptr;
+    switch (m_tabWidget->currentIndex()) {
+        case 0:
+            return m_jobsTable;
+        case 1:
+            return m_activityTable;
+        case 2:
+            return m_distributionTable;
+        default:
+            return nullptr;
+    }
 }
 
 LogFilter LogViewerPanel::buildActivityFilter(int limit) const {
@@ -790,6 +995,18 @@ QString LogViewerPanel::buildTableReport(QTableWidget* table) const {
     }
 
     return lines.join("\n");
+}
+
+void LogViewerPanel::onJobTypeFilterChanged(int index) {
+    Q_UNUSED(index);
+    if (!m_jobsTable) return;
+    refreshJobs();
+}
+
+void LogViewerPanel::onJobStatusFilterChanged(int index) {
+    Q_UNUSED(index);
+    if (!m_jobsTable) return;
+    refreshJobs();
 }
 
 void LogViewerPanel::onSearchChanged(const QString& text) {
@@ -873,15 +1090,16 @@ void LogViewerPanel::onExportClicked() {
 void LogViewerPanel::onClearClicked() {
     int ret = QMessageBox::question(this, "Clear Logs",
         "Are you sure you want to clear all logs?\n\n"
-        "This will clear persisted activity logs, error logs, and distribution history.\n"
+        "This will clear persisted jobs, activity logs, error logs, and distribution history.\n"
         "This action cannot be undone.",
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
 
     if (ret == QMessageBox::Yes) {
+        OperationJobStore::instance().clearAll();
         LogManager::instance().clearAll();
         refresh();
-        QMessageBox::information(this, "Cleared", "All logs have been cleared.");
+        QMessageBox::information(this, "Cleared", "All jobs and logs have been cleared.");
     }
 }
 
@@ -896,6 +1114,8 @@ void LogViewerPanel::onCopyDetailsClicked() {
 
     QString details;
     if (m_tabWidget->currentIndex() == 0) {
+        details = m_jobDetailsText ? m_jobDetailsText->toPlainText() : QString();
+    } else if (m_tabWidget->currentIndex() == 1) {
         details = m_activityDetailsText ? m_activityDetailsText->toPlainText() : QString();
     } else if (m_distributionTable && m_distributionTable->currentRow() >= 0) {
         QTableWidgetItem* item = m_distributionTable->item(m_distributionTable->currentRow(), 0);
@@ -909,9 +1129,7 @@ void LogViewerPanel::onCopyDetailsClicked() {
 void LogViewerPanel::onCopyReportClicked() {
     if (!m_tabWidget) return;
 
-    QTableWidget* table = (m_tabWidget->currentIndex() == 0)
-        ? m_activityTable
-        : m_distributionTable;
+    QTableWidget* table = currentVisibleTable();
 
     const QString report = buildTableReport(table);
     if (report.trimmed().isEmpty()) return;
@@ -925,6 +1143,53 @@ void LogViewerPanel::onAutoRefreshToggled(bool enabled) {
     } else {
         m_refreshTimer->stop();
     }
+}
+
+void LogViewerPanel::onJobsTableSelectionChanged() {
+    if (!m_jobsTable) return;
+
+    int row = m_jobsTable->currentRow();
+    if (row < 0) {
+        if (m_jobDetailsText) m_jobDetailsText->clear();
+        updateCopyButtonStates();
+        return;
+    }
+
+    QTableWidgetItem* updatedItem = m_jobsTable->item(row, 0);
+    const QString fullDetails = updatedItem ? updatedItem->data(Qt::UserRole).toString() : QString();
+    const QString jobId = updatedItem ? updatedItem->data(Qt::UserRole + 1).toString() : QString();
+
+    if (m_jobDetailsText) {
+        m_jobDetailsText->setPlainText(fullDetails);
+    }
+    if (!fullDetails.isEmpty()) {
+        emit logEntrySelected(fullDetails);
+    }
+
+    if (!jobId.isEmpty() && m_searchEdit) {
+        if (m_quickFilterCombo) {
+            QSignalBlocker blocker(m_quickFilterCombo);
+            m_quickFilterCombo->setCurrentIndex(0);
+        }
+        if (m_levelCombo) {
+            QSignalBlocker blocker(m_levelCombo);
+            m_levelCombo->setCurrentIndex(0);
+        }
+        if (m_categoryCombo) {
+            QSignalBlocker blocker(m_categoryCombo);
+            m_categoryCombo->setCurrentIndex(0);
+        }
+        m_levelFilter = -1;
+        m_categoryFilter = -1;
+        m_searchText = jobId;
+        {
+            QSignalBlocker blocker(m_searchEdit);
+            m_searchEdit->setText(jobId);
+        }
+        refreshActivityLog();
+    }
+
+    updateCopyButtonStates();
 }
 
 void LogViewerPanel::onActivityTableSelectionChanged() {
@@ -965,9 +1230,11 @@ void LogViewerPanel::onDistributionTableSelectionChanged() {
 
 void LogViewerPanel::onTabChanged(int index) {
     // Guard against early calls before widgets are fully initialized
-    if (!m_countLabel || !m_activityTable || !m_distributionTable) return;
+    if (!m_countLabel || !m_jobsTable || !m_activityTable || !m_distributionTable) return;
 
     if (index == 0) {
+        m_countLabel->setText(QString("Showing %1 jobs").arg(m_jobsTable->rowCount()));
+    } else if (index == 1) {
         m_countLabel->setText(QString("Showing %1 entries").arg(m_activityTable->rowCount()));
     } else {
         m_countLabel->setText(QString("Showing %1 distributions").arg(m_distributionTable->rowCount()));
@@ -993,6 +1260,92 @@ QString LogViewerPanel::formatDuration(qint64 ms) const {
     if (ms < 1000) return QString("%1 ms").arg(ms);
     if (ms < 60000) return QString("%1 s").arg(ms / 1000.0, 0, 'f', 1);
     return QString("%1 min").arg(ms / 60000.0, 0, 'f', 1);
+}
+
+QString LogViewerPanel::formatJobRecordDetails(const OperationJobRecord& record) const {
+    QString output;
+    QTextStream stream(&output);
+    stream << "Job ID: " << record.id << "\n";
+    stream << "Type: " << formatJobType(record.type) << "\n";
+    stream << "Status: " << formatJobStatus(record.status) << "\n";
+    stream << "Title: " << record.title << "\n";
+    stream << "Progress: " << formatJobProgress(record) << "\n";
+    if (!record.summary.isEmpty()) {
+        stream << "Summary: " << record.summary << "\n";
+    }
+    if (!record.lastError.isEmpty()) {
+        stream << "Last Error: " << record.lastError << "\n";
+    }
+    if (record.createdAt.isValid()) {
+        stream << "Created: " << record.createdAt.toLocalTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+    }
+    if (record.startedAt.isValid()) {
+        stream << "Started: " << record.startedAt.toLocalTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+    }
+    if (record.updatedAt.isValid()) {
+        stream << "Updated: " << record.updatedAt.toLocalTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+    }
+    if (record.finishedAt.isValid()) {
+        stream << "Finished: " << record.finishedAt.toLocalTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+    }
+    if (!record.memberIds.isEmpty()) {
+        stream << "Members: " << record.memberIds.join(", ") << "\n";
+    }
+    if (!record.sourceRoots.isEmpty()) {
+        stream << "Sources: " << record.sourceRoots.join(" | ") << "\n";
+    }
+    if (!record.destinationRoots.isEmpty()) {
+        stream << "Destinations: " << record.destinationRoots.join(" | ") << "\n";
+    }
+    if (!record.metadata.isEmpty()) {
+        stream << "Metadata: "
+               << QString::fromUtf8(QJsonDocument(record.metadata).toJson(QJsonDocument::Compact))
+               << "\n";
+    }
+    stream << "Related Activity: selecting this job sets Activity search to this job ID.";
+    return output.trimmed();
+}
+
+QString LogViewerPanel::formatJobProgress(const OperationJobRecord& record) const {
+    const int done = record.completedCount;
+    const int failed = record.failedCount;
+    const int skipped = record.skippedCount;
+    const int planned = qMax(record.plannedCount, done + failed + skipped);
+
+    QString progress = planned > 0
+        ? QString("%1/%2").arg(done + failed + skipped).arg(planned)
+        : QString("%1 done").arg(done);
+    QStringList extras;
+    if (done > 0) extras << QString("%1 ok").arg(done);
+    if (failed > 0) extras << QString("%1 failed").arg(failed);
+    if (skipped > 0) extras << QString("%1 skipped").arg(skipped);
+    if (!extras.isEmpty()) {
+        progress += QString(" (%1)").arg(extras.join(", "));
+    }
+    return progress;
+}
+
+QString LogViewerPanel::formatJobType(OperationJobType type) const {
+    switch (type) {
+        case OperationJobType::Download: return "Download";
+        case OperationJobType::Watermark: return "Watermark";
+        case OperationJobType::Distribution: return "Distribution";
+        case OperationJobType::Unknown:
+        default: return "Unknown";
+    }
+}
+
+QString LogViewerPanel::formatJobStatus(OperationJobStatus status) const {
+    switch (status) {
+        case OperationJobStatus::Queued: return "Queued";
+        case OperationJobStatus::Running: return "Running";
+        case OperationJobStatus::Paused: return "Paused";
+        case OperationJobStatus::Completed: return "Completed";
+        case OperationJobStatus::Failed: return "Failed";
+        case OperationJobStatus::Cancelled: return "Cancelled";
+        case OperationJobStatus::CleanupRequired: return "Cleanup Required";
+        default: return "Queued";
+    }
 }
 
 QString LogViewerPanel::formatLogEntryDetails(const LogEntry& entry) const {
@@ -1080,6 +1433,27 @@ QColor LogViewerPanel::getStatusColor(int status) const {
         case 3: return tm.supportSuccess();  // Completed - green
         case 4: return tm.supportError();    // Failed - red
         default: return tm.textPrimary();
+    }
+}
+
+QColor LogViewerPanel::getJobStatusColor(OperationJobStatus status) const {
+    auto& tm = ThemeManager::instance();
+    switch (status) {
+        case OperationJobStatus::Queued:
+            return tm.textSecondary();
+        case OperationJobStatus::Running:
+            return tm.supportInfo();
+        case OperationJobStatus::Paused:
+            return tm.supportWarning();
+        case OperationJobStatus::Completed:
+            return tm.supportSuccess();
+        case OperationJobStatus::Failed:
+        case OperationJobStatus::CleanupRequired:
+            return tm.supportError();
+        case OperationJobStatus::Cancelled:
+            return tm.textSecondary();
+        default:
+            return tm.textPrimary();
     }
 }
 

@@ -1561,7 +1561,33 @@ Still pending:
 - `JOB-002`: wire deeper `WatermarkerController` / engine-level events to the same parent job.
 - `JOB-003`: expose job filters in distribution history and ensure every lower-level folder/upload skip event carries the job ID.
 - `JOB-004`: carry parent/child job relationships from downloader auto-send into the created watermark job.
-- `JOB-005`: add the first recent-job summary view in `LogViewerPanel`, then graduate it into the full Job Center.
+- Expand the first job summary into the full Job Center with retry, cleanup, and resume controls.
+
+### 2026-06-15 Job Summary View Pass
+
+Scope:
+
+- Continued Slice D by exposing the shared job model inside the Log Viewer.
+
+Implemented:
+
+- `JOB-005`: added a Jobs tab to `LogViewerPanel`.
+- Recent jobs now show updated time, status, type, title, progress counts, summary, last error, and job ID.
+- Jobs can be filtered by operation type and lifecycle status.
+- Selecting a job writes its job ID into the Activity search, resets conflicting activity filters, and refreshes related log events.
+- Failed and paused jobs expose last error/status context in the table and copyable details pane.
+- Copy Details and Copy Report now work for Jobs, Activity, and Distribution tabs.
+- Clear Logs now also clears persisted job summaries to avoid orphaned job rows after log cleanup.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add a richer Job Center with retry failed, cleanup required, resume, and open-related-panel actions.
+- Persist parent/child job relationships for downloader-to-watermark handoffs.
+- Add distribution-history filtering directly by selected job ID.
 
 ## Non-Goals
 

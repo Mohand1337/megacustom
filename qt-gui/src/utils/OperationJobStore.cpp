@@ -320,6 +320,14 @@ QList<OperationJobRecord> OperationJobStore::recentJobs(int limit) const {
     return records;
 }
 
+void OperationJobStore::clearAll() {
+    QMutexLocker locker(&m_mutex);
+    loadLocked();
+    m_jobs.clear();
+    m_lastPersistByJob.clear();
+    persistLocked();
+}
+
 QString OperationJobStore::typeToString(OperationJobType type) {
     switch (type) {
     case OperationJobType::Download:

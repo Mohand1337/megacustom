@@ -78,6 +78,7 @@ public:
 
     OperationJobRecord job(const QString& jobId) const;
     QList<OperationJobRecord> recentJobs(int limit = 100) const;
+    void clearAll();
 
     static QString typeToString(OperationJobType type);
     static OperationJobType typeFromString(const QString& value);
