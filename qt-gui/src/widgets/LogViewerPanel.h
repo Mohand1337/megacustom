@@ -23,6 +23,7 @@ namespace MegaCustom {
 struct LogEntry;
 struct DistributionRecord;
 struct LogStats;
+struct LogFilter;
 
 /**
  * Panel for viewing activity logs and distribution history
@@ -54,6 +55,9 @@ private slots:
     void onRefreshClicked();
     void onExportClicked();
     void onClearClicked();
+    void onQuickFilterChanged(int index);
+    void onCopyDetailsClicked();
+    void onCopyReportClicked();
     void onAutoRefreshToggled(bool enabled);
     void onActivityTableSelectionChanged();
     void onDistributionTableSelectionChanged();
@@ -70,11 +74,15 @@ private:
     void updateStatsDisplay();
     void setLoadingState(bool loading);
     void updateEmptyState();
+    void updateCopyButtonStates();
     void updateLastRefreshedLabel();
+    LogFilter buildActivityFilter(int limit) const;
+    QString buildTableReport(QTableWidget* table) const;
     QString formatTimestamp(qint64 timestamp) const;
     QString formatFileSize(qint64 bytes) const;
     QString formatDuration(qint64 ms) const;
     QString formatLogEntryDetails(const LogEntry& entry) const;
+    QString formatDistributionRecordDetails(const DistributionRecord& record) const;
     QColor getLevelColor(int level) const;
     QColor getStatusColor(int status) const;
 
@@ -83,6 +91,7 @@ private:
     QLineEdit* m_searchEdit = nullptr;
     QComboBox* m_levelCombo = nullptr;
     QComboBox* m_categoryCombo = nullptr;
+    QComboBox* m_quickFilterCombo = nullptr;
     QDateTimeEdit* m_fromDateEdit = nullptr;
     QDateTimeEdit* m_toDateEdit = nullptr;
     QCheckBox* m_dateFilterCheck = nullptr;
@@ -100,6 +109,8 @@ private:
     QTabWidget* m_tabWidget = nullptr;
     QPushButton* m_refreshBtn = nullptr;
     QPushButton* m_exportBtn = nullptr;
+    QPushButton* m_copyDetailsBtn = nullptr;
+    QPushButton* m_copyReportBtn = nullptr;
     QPushButton* m_clearBtn = nullptr;
     QCheckBox* m_autoRefreshCheck = nullptr;
     QLabel* m_statsLabel = nullptr;

@@ -1513,6 +1513,27 @@ Verification required:
 - Confirm `.json` / `.jsonl` exports contain JSONL and `.txt` export contains readable text.
 - Confirm downloader progress no longer floods normal activity logs during a real download.
 
+### 2026-06-14 Log Viewer Usability Pass
+
+Scope:
+
+- Continued Slice B without introducing the full Job Center yet.
+
+Implemented:
+
+- `LOG-010`: added quick filters for All Activity, Needs Attention, Errors Only, Today, and Debug/System.
+- `LOG-012`: added Copy Details and Copy Report actions for visible activity/distribution data.
+- Continued `LOG-008`: selected distribution rows now expose full structured details, not only status tooltips.
+- Continued `LOG-013`: distribution history now displays job IDs directly and includes job/member/source/destination/timing/error context in copied details.
+
+Verification required:
+
+- Build Qt GUI.
+- Confirm quick filters combine correctly with search/category/date filters.
+- Confirm Copy Details works for both Activity and Distribution tabs.
+- Confirm Copy Report copies visible rows with headers.
+- Confirm distribution history job IDs display without crowding the table.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

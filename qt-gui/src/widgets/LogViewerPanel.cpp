@@ -4,6 +4,8 @@
 #include "utils/MemberRegistry.h"
 #include "utils/CopyHelper.h"
 #include "styles/ThemeManager.h"
+#include <QApplication>
+#include <QClipboard>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -16,6 +18,7 @@
 #include <QTextEdit>
 #include <QMenu>
 #include <QTextStream>
+#include <QTime>
 #include <QtConcurrent/QtConcurrent>
 
 namespace MegaCustom {
@@ -138,6 +141,19 @@ void LogViewerPanel::setupUI() {
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &LogViewerPanel::onCategoryFilterChanged);
     filterLayout->addWidget(m_categoryCombo);
+
+    QLabel* quickLabel = new QLabel("Quick:");
+    filterLayout->addWidget(quickLabel);
+    m_quickFilterCombo = new QComboBox();
+    m_quickFilterCombo->setToolTip("Apply a common operational filter without changing the saved level/category choices.");
+    m_quickFilterCombo->addItem("All Activity", "all");
+    m_quickFilterCombo->addItem("Needs Attention", "issues");
+    m_quickFilterCombo->addItem("Errors Only", "errors");
+    m_quickFilterCombo->addItem("Today", "today");
+    m_quickFilterCombo->addItem("Debug/System", "debug_system");
+    connect(m_quickFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &LogViewerPanel::onQuickFilterChanged);
+    filterLayout->addWidget(m_quickFilterCombo);
 
     filterLayout->addStretch();
     activityLayout->addLayout(filterLayout);
@@ -264,9 +280,9 @@ void LogViewerPanel::setupUI() {
     // Distribution table
     m_distributionTable = new QTableWidget();
     m_distributionTable->setObjectName("DistributionLogTable");
-    m_distributionTable->setColumnCount(8);
+    m_distributionTable->setColumnCount(9);
     m_distributionTable->setHorizontalHeaderLabels({
-        "Time", "Member", "Source File", "Destination", "Status", "Size", "WM Time", "Upload Time"
+        "Time", "Job", "Member", "Source File", "Destination", "Status", "Size", "WM Time", "Upload Time"
     });
     m_distributionTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_distributionTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -276,20 +292,22 @@ void LogViewerPanel::setupUI() {
 
     // Column sizing
     m_distributionTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);     // Time
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive); // Member
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);   // Source
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive); // Dest
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);     // Status
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);     // Size
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);     // WM Time
-    m_distributionTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Fixed);     // Upload
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive); // Job
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Interactive); // Member
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);   // Source
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Interactive); // Dest
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);     // Status
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);     // Size
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Fixed);     // WM Time
+    m_distributionTable->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Fixed);     // Upload
     m_distributionTable->setColumnWidth(0, 140);
-    m_distributionTable->setColumnWidth(1, 100);
-    m_distributionTable->setColumnWidth(3, 150);
-    m_distributionTable->setColumnWidth(4, 90);
-    m_distributionTable->setColumnWidth(5, 80);
+    m_distributionTable->setColumnWidth(1, 120);
+    m_distributionTable->setColumnWidth(2, 100);
+    m_distributionTable->setColumnWidth(4, 150);
+    m_distributionTable->setColumnWidth(5, 90);
     m_distributionTable->setColumnWidth(6, 80);
     m_distributionTable->setColumnWidth(7, 80);
+    m_distributionTable->setColumnWidth(8, 80);
 
     CopyHelper::installTableCopyMenu(m_distributionTable);
 
@@ -324,6 +342,20 @@ void LogViewerPanel::setupUI() {
     m_exportBtn->setToolTip("Export the currently filtered activity logs.");
     connect(m_exportBtn, &QPushButton::clicked, this, &LogViewerPanel::onExportClicked);
     bottomLayout->addWidget(m_exportBtn);
+
+    m_copyDetailsBtn = new QPushButton("Copy Details");
+    m_copyDetailsBtn->setIcon(QIcon(":/icons/copy.svg"));
+    m_copyDetailsBtn->setToolTip("Copy the full selected activity or distribution row details.");
+    m_copyDetailsBtn->setEnabled(false);
+    connect(m_copyDetailsBtn, &QPushButton::clicked, this, &LogViewerPanel::onCopyDetailsClicked);
+    bottomLayout->addWidget(m_copyDetailsBtn);
+
+    m_copyReportBtn = new QPushButton("Copy Report");
+    m_copyReportBtn->setIcon(QIcon(":/icons/clipboard.svg"));
+    m_copyReportBtn->setToolTip("Copy the currently visible table as a tab-separated report.");
+    m_copyReportBtn->setEnabled(false);
+    connect(m_copyReportBtn, &QPushButton::clicked, this, &LogViewerPanel::onCopyReportClicked);
+    bottomLayout->addWidget(m_copyReportBtn);
 
     m_clearBtn = new QPushButton("Clear Logs");
     m_clearBtn->setObjectName("PanelDangerButton");
@@ -380,40 +412,11 @@ void LogViewerPanel::refreshActivityLog() {
         return;
     }
 
-    // Capture filter values for the async task
-    int levelFilter = m_levelFilter;
-    int categoryFilter = m_categoryFilter;
-    QString searchText = m_searchText;
-
-    // Capture date filter values
-    bool dateFilterEnabled = m_dateFilterCheck ? m_dateFilterCheck->isChecked() : false;
-    qint64 startTime = 0;
-    qint64 endTime = 0;
-    if (dateFilterEnabled && m_fromDateEdit && m_toDateEdit) {
-        startTime = m_fromDateEdit->dateTime().toMSecsSinceEpoch();
-        endTime = m_toDateEdit->dateTime().toMSecsSinceEpoch();
-    }
+    LogFilter filter = buildActivityFilter(500);
 
     // Run the log retrieval in a background thread
-    QFuture<std::vector<LogEntry>> future = QtConcurrent::run([levelFilter, categoryFilter, searchText, dateFilterEnabled, startTime, endTime]() {
+    QFuture<std::vector<LogEntry>> future = QtConcurrent::run([filter]() {
         LogManager& logMgr = LogManager::instance();
-        LogFilter filter;
-        filter.limit = 500;
-
-        if (levelFilter >= 0) {
-            filter.minLevel = static_cast<LogLevel>(levelFilter);
-        }
-        if (categoryFilter >= 0) {
-            filter.categories.push_back(static_cast<LogCategory>(categoryFilter));
-        }
-        if (!searchText.isEmpty()) {
-            filter.searchText = searchText.toStdString();
-        }
-        if (dateFilterEnabled && startTime > 0) {
-            filter.startTime = startTime;
-            filter.endTime = endTime;
-        }
-
         return logMgr.getEntries(filter);
     });
 
@@ -473,22 +476,7 @@ void LogViewerPanel::populateActivityTable() {
 
     LogManager& logMgr = LogManager::instance();
 
-    // Build filter
-    LogFilter filter;
-    filter.limit = 500;
-
-    if (m_levelFilter >= 0) {
-        filter.minLevel = static_cast<LogLevel>(m_levelFilter);
-    }
-
-    if (m_categoryFilter >= 0) {
-        filter.categories.push_back(static_cast<LogCategory>(m_categoryFilter));
-    }
-
-    if (!m_searchText.isEmpty()) {
-        filter.searchText = m_searchText.toStdString();
-    }
-
+    LogFilter filter = buildActivityFilter(500);
     std::vector<LogEntry> entries = logMgr.getEntries(filter);
     populateActivityTableFromEntries(entries);
 }
@@ -501,6 +489,7 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
     if (entries.empty()) {
         if (m_countLabel) m_countLabel->setText("Showing 0 entries");
         updateEmptyState();
+        updateCopyButtonStates();
         return;
     }
 
@@ -554,6 +543,7 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
 
     if (m_countLabel) m_countLabel->setText(QString("Showing %1 entries").arg(entries.size()));
     updateEmptyState();
+    updateCopyButtonStates();
 }
 
 void LogViewerPanel::populateDistributionTable() {
@@ -587,22 +577,34 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
 
         // Time
         QTableWidgetItem* timeItem = new QTableWidgetItem(formatTimestamp(record.timestamp));
+        timeItem->setData(Qt::UserRole, formatDistributionRecordDetails(record));
         m_distributionTable->setItem(row, 0, timeItem);
+
+        // Job
+        QString jobId = QString::fromStdString(record.jobId);
+        QString jobDisplay = jobId;
+        if (jobDisplay.length() > 18) {
+            jobDisplay = jobDisplay.left(15) + "...";
+        }
+        QTableWidgetItem* jobItem = new QTableWidgetItem(jobDisplay.isEmpty() ? "-" : jobDisplay);
+        jobItem->setToolTip(jobId);
+        m_distributionTable->setItem(row, 1, jobItem);
 
         // Member
         QTableWidgetItem* memberItem = new QTableWidgetItem(QString::fromStdString(record.memberName));
-        m_distributionTable->setItem(row, 1, memberItem);
+        memberItem->setToolTip(QString::fromStdString(record.memberId));
+        m_distributionTable->setItem(row, 2, memberItem);
 
         // Source file (just filename)
         QString sourcePath = QString::fromStdString(record.sourceFile);
         QString fileName = sourcePath.mid(sourcePath.lastIndexOf('/') + 1);
         QTableWidgetItem* sourceItem = new QTableWidgetItem(fileName);
         sourceItem->setToolTip(sourcePath);
-        m_distributionTable->setItem(row, 2, sourceItem);
+        m_distributionTable->setItem(row, 3, sourceItem);
 
         // Destination
         QTableWidgetItem* destItem = new QTableWidgetItem(QString::fromStdString(record.megaFolder));
-        m_distributionTable->setItem(row, 3, destItem);
+        m_distributionTable->setItem(row, 4, destItem);
 
         // Status
         QString statusStr;
@@ -618,19 +620,19 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
         if (!record.errorMessage.empty()) {
             statusItem->setToolTip(QString::fromStdString(record.errorMessage));
         }
-        m_distributionTable->setItem(row, 4, statusItem);
+        m_distributionTable->setItem(row, 5, statusItem);
 
         // Size
         QTableWidgetItem* sizeItem = new QTableWidgetItem(formatFileSize(record.fileSizeBytes));
-        m_distributionTable->setItem(row, 5, sizeItem);
+        m_distributionTable->setItem(row, 6, sizeItem);
 
         // Watermark time
         QTableWidgetItem* wmTimeItem = new QTableWidgetItem(formatDuration(record.watermarkTimeMs));
-        m_distributionTable->setItem(row, 6, wmTimeItem);
+        m_distributionTable->setItem(row, 7, wmTimeItem);
 
         // Upload time
         QTableWidgetItem* uploadTimeItem = new QTableWidgetItem(formatDuration(record.uploadTimeMs));
-        m_distributionTable->setItem(row, 7, uploadTimeItem);
+        m_distributionTable->setItem(row, 8, uploadTimeItem);
 
         visibleCount++;
     }
@@ -644,6 +646,7 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
         m_countLabel->setText(QString("Showing %1 distributions").arg(visibleCount));
     }
     updateEmptyState();
+    updateCopyButtonStates();
 }
 
 void LogViewerPanel::updateStatsDisplay() {
@@ -683,11 +686,110 @@ void LogViewerPanel::updateEmptyState() {
     m_tabWidget->setVisible(!empty);
 }
 
+void LogViewerPanel::updateCopyButtonStates() {
+    if (!m_copyDetailsBtn || !m_copyReportBtn || !m_tabWidget) return;
+
+    const bool activityActive = m_tabWidget->currentIndex() == 0;
+    QTableWidget* table = activityActive ? m_activityTable : m_distributionTable;
+    const bool hasRows = table && table->rowCount() > 0;
+    const bool hasSelection = table && table->currentRow() >= 0;
+
+    m_copyDetailsBtn->setEnabled(hasSelection);
+    m_copyReportBtn->setEnabled(hasRows);
+
+    if (!hasSelection) {
+        m_copyDetailsBtn->setToolTip(activityActive
+            ? "Select an activity row to copy its full details."
+            : "Select a distribution row to copy its full details.");
+    } else {
+        m_copyDetailsBtn->setToolTip("Copy the full selected activity or distribution row details.");
+    }
+
+    if (!hasRows) {
+        m_copyReportBtn->setToolTip(activityActive
+            ? "No visible activity rows to copy."
+            : "No visible distribution rows to copy.");
+    } else {
+        m_copyReportBtn->setToolTip("Copy the currently visible table as a tab-separated report.");
+    }
+}
+
 void LogViewerPanel::updateLastRefreshedLabel() {
     if (!m_lastRefreshedLabel) return;
 
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
     m_lastRefreshedLabel->setText(QString("Last refreshed: %1").arg(timestamp));
+}
+
+LogFilter LogViewerPanel::buildActivityFilter(int limit) const {
+    LogFilter filter;
+    filter.limit = limit;
+
+    QString quickFilter = m_quickFilterCombo
+        ? m_quickFilterCombo->currentData().toString()
+        : QStringLiteral("all");
+
+    int effectiveLevel = m_levelFilter;
+    if (quickFilter == "issues") {
+        effectiveLevel = qMax(effectiveLevel, static_cast<int>(LogLevel::Warning));
+    } else if (quickFilter == "errors") {
+        effectiveLevel = qMax(effectiveLevel, static_cast<int>(LogLevel::Error));
+    } else if (quickFilter == "debug_system") {
+        effectiveLevel = static_cast<int>(LogLevel::Debug);
+    }
+
+    if (effectiveLevel >= 0) {
+        filter.minLevel = static_cast<LogLevel>(effectiveLevel);
+    }
+
+    if (m_categoryFilter >= 0) {
+        filter.categories.push_back(static_cast<LogCategory>(m_categoryFilter));
+    }
+
+    if (quickFilter == "debug_system") {
+        filter.categories.clear();
+        filter.categories.push_back(LogCategory::System);
+    }
+
+    if (!m_searchText.isEmpty()) {
+        filter.searchText = m_searchText.toStdString();
+    }
+
+    if (quickFilter == "today") {
+        QDateTime startOfDay(QDate::currentDate(), QTime(0, 0));
+        filter.startTime = startOfDay.toMSecsSinceEpoch();
+        filter.endTime = QDateTime::currentDateTime().toMSecsSinceEpoch();
+    } else if (m_dateFilterCheck && m_dateFilterCheck->isChecked() && m_fromDateEdit && m_toDateEdit) {
+        filter.startTime = m_fromDateEdit->dateTime().toMSecsSinceEpoch();
+        filter.endTime = m_toDateEdit->dateTime().toMSecsSinceEpoch();
+    }
+
+    return filter;
+}
+
+QString LogViewerPanel::buildTableReport(QTableWidget* table) const {
+    if (!table || table->rowCount() == 0) return {};
+
+    QStringList lines;
+    QStringList headers;
+    for (int col = 0; col < table->columnCount(); ++col) {
+        if (table->isColumnHidden(col)) continue;
+        QTableWidgetItem* header = table->horizontalHeaderItem(col);
+        headers << (header ? header->text() : QString("Column %1").arg(col + 1));
+    }
+    lines << headers.join("\t");
+
+    for (int row = 0; row < table->rowCount(); ++row) {
+        QStringList cells;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            if (table->isColumnHidden(col)) continue;
+            QTableWidgetItem* item = table->item(row, col);
+            cells << (item ? item->text() : QString());
+        }
+        lines << cells.join("\t");
+    }
+
+    return lines.join("\n");
 }
 
 void LogViewerPanel::onSearchChanged(const QString& text) {
@@ -757,21 +859,7 @@ void LogViewerPanel::onExportClicked() {
 
     LogManager& logMgr = LogManager::instance();
 
-    LogFilter filter;
-    filter.limit = 10000;
-    if (m_levelFilter >= 0) {
-        filter.minLevel = static_cast<LogLevel>(m_levelFilter);
-    }
-    if (m_categoryFilter >= 0) {
-        filter.categories.push_back(static_cast<LogCategory>(m_categoryFilter));
-    }
-    if (!m_searchText.isEmpty()) {
-        filter.searchText = m_searchText.toStdString();
-    }
-    if (m_dateFilterCheck && m_dateFilterCheck->isChecked() && m_fromDateEdit && m_toDateEdit) {
-        filter.startTime = m_fromDateEdit->dateTime().toMSecsSinceEpoch();
-        filter.endTime = m_toDateEdit->dateTime().toMSecsSinceEpoch();
-    }
+    LogFilter filter = buildActivityFilter(10000);
 
     if (logMgr.exportLogs(filePath.toStdString(), filter)) {
         QMessageBox::information(this, "Export Complete",
@@ -797,6 +885,39 @@ void LogViewerPanel::onClearClicked() {
     }
 }
 
+void LogViewerPanel::onQuickFilterChanged(int index) {
+    Q_UNUSED(index);
+    if (!m_activityTable) return;
+    refreshActivityLog();
+}
+
+void LogViewerPanel::onCopyDetailsClicked() {
+    if (!m_tabWidget) return;
+
+    QString details;
+    if (m_tabWidget->currentIndex() == 0) {
+        details = m_activityDetailsText ? m_activityDetailsText->toPlainText() : QString();
+    } else if (m_distributionTable && m_distributionTable->currentRow() >= 0) {
+        QTableWidgetItem* item = m_distributionTable->item(m_distributionTable->currentRow(), 0);
+        details = item ? item->data(Qt::UserRole).toString() : QString();
+    }
+
+    if (details.trimmed().isEmpty()) return;
+    QApplication::clipboard()->setText(details);
+}
+
+void LogViewerPanel::onCopyReportClicked() {
+    if (!m_tabWidget) return;
+
+    QTableWidget* table = (m_tabWidget->currentIndex() == 0)
+        ? m_activityTable
+        : m_distributionTable;
+
+    const QString report = buildTableReport(table);
+    if (report.trimmed().isEmpty()) return;
+    QApplication::clipboard()->setText(report);
+}
+
 void LogViewerPanel::onAutoRefreshToggled(bool enabled) {
     if (!m_refreshTimer) return;  // Guard against early calls
     if (enabled) {
@@ -811,6 +932,7 @@ void LogViewerPanel::onActivityTableSelectionChanged() {
     int row = m_activityTable->currentRow();
     if (row < 0) {
         if (m_activityDetailsText) m_activityDetailsText->clear();
+        updateCopyButtonStates();
         return;
     }
 
@@ -822,17 +944,23 @@ void LogViewerPanel::onActivityTableSelectionChanged() {
     if (!fullDetails.isEmpty()) {
         emit logEntrySelected(fullDetails);
     }
+    updateCopyButtonStates();
 }
 
 void LogViewerPanel::onDistributionTableSelectionChanged() {
     if (!m_distributionTable) return;  // Guard against early calls
     int row = m_distributionTable->currentRow();
-    if (row < 0) return;
-
-    QTableWidgetItem* statusItem = m_distributionTable->item(row, 4);
-    if (statusItem && !statusItem->toolTip().isEmpty()) {
-        emit logEntrySelected(statusItem->toolTip());
+    if (row < 0) {
+        updateCopyButtonStates();
+        return;
     }
+
+    QTableWidgetItem* timeItem = m_distributionTable->item(row, 0);
+    QString fullDetails = timeItem ? timeItem->data(Qt::UserRole).toString() : QString();
+    if (!fullDetails.isEmpty()) {
+        emit logEntrySelected(fullDetails);
+    }
+    updateCopyButtonStates();
 }
 
 void LogViewerPanel::onTabChanged(int index) {
@@ -844,6 +972,7 @@ void LogViewerPanel::onTabChanged(int index) {
     } else {
         m_countLabel->setText(QString("Showing %1 distributions").arg(m_distributionTable->rowCount()));
     }
+    updateCopyButtonStates();
 }
 
 QString LogViewerPanel::formatTimestamp(qint64 timestamp) const {
@@ -885,6 +1014,48 @@ QString LogViewerPanel::formatLogEntryDetails(const LogEntry& entry) const {
     }
     if (!entry.jobId.empty()) {
         stream << "Job ID: " << QString::fromStdString(entry.jobId) << "\n";
+    }
+    return output.trimmed();
+}
+
+QString LogViewerPanel::formatDistributionRecordDetails(const DistributionRecord& record) const {
+    QString statusStr;
+    switch (record.status) {
+        case DistributionRecord::Status::Pending: statusStr = "Pending"; break;
+        case DistributionRecord::Status::Watermarking: statusStr = "Watermarking"; break;
+        case DistributionRecord::Status::Uploading: statusStr = "Uploading"; break;
+        case DistributionRecord::Status::Completed: statusStr = "Completed"; break;
+        case DistributionRecord::Status::Failed: statusStr = "Failed"; break;
+    }
+
+    QString output;
+    QTextStream stream(&output);
+    stream << "Time: " << formatTimestamp(record.timestamp) << "\n";
+    if (!record.jobId.empty()) {
+        stream << "Job ID: " << QString::fromStdString(record.jobId) << "\n";
+    }
+    stream << "Member: " << QString::fromStdString(record.memberName) << "\n";
+    if (!record.memberId.empty()) {
+        stream << "Member ID: " << QString::fromStdString(record.memberId) << "\n";
+    }
+    stream << "Status: " << statusStr << "\n";
+    if (!record.sourceFile.empty()) {
+        stream << "Source: " << QString::fromStdString(record.sourceFile) << "\n";
+    }
+    if (!record.outputFile.empty()) {
+        stream << "Output: " << QString::fromStdString(record.outputFile) << "\n";
+    }
+    if (!record.megaFolder.empty()) {
+        stream << "Destination: " << QString::fromStdString(record.megaFolder) << "\n";
+    }
+    if (!record.megaLink.empty()) {
+        stream << "MEGA Link: " << QString::fromStdString(record.megaLink) << "\n";
+    }
+    stream << "Size: " << formatFileSize(record.fileSizeBytes) << "\n";
+    stream << "Watermark Time: " << formatDuration(record.watermarkTimeMs) << "\n";
+    stream << "Upload Time: " << formatDuration(record.uploadTimeMs) << "\n";
+    if (!record.errorMessage.empty()) {
+        stream << "Error: " << QString::fromStdString(record.errorMessage) << "\n";
     }
     return output.trimmed();
 }
