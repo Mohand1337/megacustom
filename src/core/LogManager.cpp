@@ -6,6 +6,7 @@
 #include <ctime>
 #include <chrono>
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
@@ -51,6 +52,111 @@ static std::string escapeJson(const std::string& str) {
     return ss.str();
 }
 
+static std::string unescapeJson(const std::string& str) {
+    std::string out;
+    out.reserve(str.size());
+
+    for (size_t i = 0; i < str.size(); ++i) {
+        char c = str[i];
+        if (c != '\\' || i + 1 >= str.size()) {
+            out.push_back(c);
+            continue;
+        }
+
+        char escaped = str[++i];
+        switch (escaped) {
+            case '"': out.push_back('"'); break;
+            case '\\': out.push_back('\\'); break;
+            case '/': out.push_back('/'); break;
+            case 'b': out.push_back('\b'); break;
+            case 'f': out.push_back('\f'); break;
+            case 'n': out.push_back('\n'); break;
+            case 'r': out.push_back('\r'); break;
+            case 't': out.push_back('\t'); break;
+            case 'u':
+                // Keep Unicode escapes as-is. Log search/display remain safe,
+                // and this avoids partial UTF-16 decoding in the core logger.
+                out.append("\\u");
+                for (int j = 0; j < 4 && i + 1 < str.size(); ++j) {
+                    out.push_back(str[++i]);
+                }
+                break;
+            default:
+                out.push_back(escaped);
+                break;
+        }
+    }
+
+    return out;
+}
+
+static std::string getJsonValue(const std::string& json, const std::string& key) {
+    std::string searchKey = "\"" + key + "\":";
+    size_t pos = json.find(searchKey);
+    if (pos == std::string::npos) return "";
+
+    pos += searchKey.length();
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) {
+        pos++;
+    }
+
+    if (pos >= json.size()) return "";
+
+    if (json[pos] == '"') {
+        pos++;
+        std::string value;
+        bool escaped = false;
+        for (; pos < json.size(); ++pos) {
+            char c = json[pos];
+            if (escaped) {
+                value.push_back('\\');
+                value.push_back(c);
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                return unescapeJson(value);
+            }
+            value.push_back(c);
+        }
+        return "";
+    }
+
+    size_t end = pos;
+    while (end < json.size() && json[end] != ',' && json[end] != '}') {
+        end++;
+    }
+
+    while (end > pos && std::isspace(static_cast<unsigned char>(json[end - 1]))) {
+        end--;
+    }
+
+    return json.substr(pos, end - pos);
+}
+
+static std::string toLowerCopy(const std::string& value) {
+    std::string out = value;
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
+}
+
+static bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+    if (needle.empty()) return true;
+    return toLowerCopy(haystack).find(toLowerCopy(needle)) != std::string::npos;
+}
+
+static bool isActivityLogFile(const std::filesystem::path& path) {
+    const std::string filename = path.filename().string();
+    return filename.rfind("activity_", 0) == 0 &&
+           (path.extension() == ".log" || path.extension() == ".jsonl");
+}
+
 // ==================== LogEntry ====================
 
 std::string LogEntry::toJson() const {
@@ -72,32 +178,7 @@ std::string LogEntry::toJson() const {
 LogEntry LogEntry::fromJson(const std::string& json) {
     LogEntry entry;
 
-    auto getValue = [&json](const std::string& key) -> std::string {
-        std::string searchKey = "\"" + key + "\":";
-        size_t pos = json.find(searchKey);
-        if (pos == std::string::npos) return "";
-
-        pos += searchKey.length();
-        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '"')) pos++;
-
-        if (pos >= json.size()) return "";
-
-        // Check if it's a number
-        if (isdigit(json[pos]) || json[pos] == '-') {
-            size_t end = pos;
-            while (end < json.size() && (isdigit(json[end]) || json[end] == '-' || json[end] == '.')) {
-                end++;
-            }
-            return json.substr(pos, end - pos);
-        }
-
-        // It's a string
-        size_t end = json.find('"', pos);
-        if (end == std::string::npos) return "";
-        return json.substr(pos, end - pos);
-    };
-
-    std::string tsStr = getValue("timestamp");
+    std::string tsStr = getJsonValue(json, "timestamp");
     if (!tsStr.empty()) {
         try {
             entry.timestamp = std::stoll(tsStr);
@@ -106,14 +187,14 @@ LogEntry LogEntry::fromJson(const std::string& json) {
         }
     }
 
-    entry.level = LogManager::stringToLevel(getValue("level"));
-    entry.category = LogManager::stringToCategory(getValue("category"));
-    entry.action = getValue("action");
-    entry.message = getValue("message");
-    entry.details = getValue("details");
-    entry.memberId = getValue("memberId");
-    entry.filePath = getValue("filePath");
-    entry.jobId = getValue("jobId");
+    entry.level = LogManager::stringToLevel(getJsonValue(json, "level"));
+    entry.category = LogManager::stringToCategory(getJsonValue(json, "category"));
+    entry.action = getJsonValue(json, "action");
+    entry.message = getJsonValue(json, "message");
+    entry.details = getJsonValue(json, "details");
+    entry.memberId = getJsonValue(json, "memberId");
+    entry.filePath = getJsonValue(json, "filePath");
+    entry.jobId = getJsonValue(json, "jobId");
 
     return entry;
 }
@@ -126,6 +207,8 @@ std::string LogEntry::toString() const {
     ss << action << ": " << message;
     if (!memberId.empty()) ss << " (member: " << memberId << ")";
     if (!filePath.empty()) ss << " (file: " << filePath << ")";
+    if (!jobId.empty()) ss << " (job: " << jobId << ")";
+    if (!details.empty()) ss << " details: " << details;
     return ss.str();
 }
 
@@ -154,43 +237,20 @@ std::string DistributionRecord::toJson() const {
 DistributionRecord DistributionRecord::fromJson(const std::string& json) {
     DistributionRecord record;
 
-    auto getValue = [&json](const std::string& key) -> std::string {
-        std::string searchKey = "\"" + key + "\":";
-        size_t pos = json.find(searchKey);
-        if (pos == std::string::npos) return "";
-
-        pos += searchKey.length();
-        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '"')) pos++;
-
-        if (pos >= json.size()) return "";
-
-        if (isdigit(json[pos]) || json[pos] == '-') {
-            size_t end = pos;
-            while (end < json.size() && (isdigit(json[end]) || json[end] == '-' || json[end] == '.')) {
-                end++;
-            }
-            return json.substr(pos, end - pos);
-        }
-
-        size_t end = json.find('"', pos);
-        if (end == std::string::npos) return "";
-        return json.substr(pos, end - pos);
-    };
-
     try {
-        std::string tsStr = getValue("timestamp");
+        std::string tsStr = getJsonValue(json, "timestamp");
         if (!tsStr.empty()) record.timestamp = std::stoll(tsStr);
 
-        record.jobId = getValue("jobId");
-        record.memberId = getValue("memberId");
-        record.memberName = getValue("memberName");
-        record.sourceFile = getValue("sourceFile");
-        record.outputFile = getValue("outputFile");
-        record.megaFolder = getValue("megaFolder");
-        record.megaLink = getValue("megaLink");
-        record.errorMessage = getValue("errorMessage");
+        record.jobId = getJsonValue(json, "jobId");
+        record.memberId = getJsonValue(json, "memberId");
+        record.memberName = getJsonValue(json, "memberName");
+        record.sourceFile = getJsonValue(json, "sourceFile");
+        record.outputFile = getJsonValue(json, "outputFile");
+        record.megaFolder = getJsonValue(json, "megaFolder");
+        record.megaLink = getJsonValue(json, "megaLink");
+        record.errorMessage = getJsonValue(json, "errorMessage");
 
-        std::string statusStr = getValue("status");
+        std::string statusStr = getJsonValue(json, "status");
         if (!statusStr.empty()) {
             int statusVal = std::stoi(statusStr);
             // Validate enum range (0-4 for Status enum)
@@ -199,13 +259,13 @@ DistributionRecord DistributionRecord::fromJson(const std::string& json) {
             }
         }
 
-        std::string wmTime = getValue("watermarkTimeMs");
+        std::string wmTime = getJsonValue(json, "watermarkTimeMs");
         if (!wmTime.empty()) record.watermarkTimeMs = std::stoll(wmTime);
 
-        std::string upTime = getValue("uploadTimeMs");
+        std::string upTime = getJsonValue(json, "uploadTimeMs");
         if (!upTime.empty()) record.uploadTimeMs = std::stoll(upTime);
 
-        std::string sizeStr = getValue("fileSizeBytes");
+        std::string sizeStr = getJsonValue(json, "fileSizeBytes");
         if (!sizeStr.empty()) record.fileSizeBytes = std::stoll(sizeStr);
     } catch (const std::exception&) {
         // Return partially filled record on parse error
@@ -238,6 +298,7 @@ LogManager::LogManager() {
 
     ensureLogDirectory();
     openLogFiles();
+    loadRecentEntries();
     loadDistributionHistory();
 }
 
@@ -251,9 +312,17 @@ LogManager::~LogManager() {
 
 void LogManager::setLogDirectory(const std::string& path) {
     std::lock_guard<std::mutex> lock(m_mutex);
+    flushWriteBuffer();
+    if (m_activityLog.is_open()) m_activityLog.close();
+    if (m_errorLog.is_open()) m_errorLog.close();
     m_logDir = path;
+    m_currentLogDate.clear();
+    m_recentEntries.clear();
+    m_distributionHistory.clear();
     ensureLogDirectory();
     openLogFiles();
+    loadRecentEntries();
+    loadDistributionHistory();
 }
 
 void LogManager::ensureLogDirectory() {
@@ -271,7 +340,7 @@ std::string LogManager::getCurrentDateString() const {
     struct tm tm_now;
     localtime_r(&time_t_now, &tm_now);  // Thread-safe version
 
-    char buffer[16];
+    char buffer[32];
     snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
              tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday);
     return buffer;
@@ -328,7 +397,7 @@ std::string LogManager::formatTimestamp(int64_t timestamp) {
     struct tm tm_info;
     localtime_r(&seconds, &tm_info);  // Thread-safe version
 
-    char buffer[32];
+    char buffer[64];
     snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
              tm_info.tm_year + 1900, tm_info.tm_mon + 1, tm_info.tm_mday,
              tm_info.tm_hour, tm_info.tm_min, tm_info.tm_sec, millis);
@@ -390,14 +459,15 @@ LogCategory LogManager::stringToCategory(const std::string& str) {
 void LogManager::log(LogLevel level, LogCategory category,
                      const std::string& action, const std::string& message,
                      const std::string& details) {
-    logWithContext(level, category, action, message, "", "", "");
+    logWithContext(level, category, action, message, "", "", "", details);
 }
 
 void LogManager::logWithContext(LogLevel level, LogCategory category,
                                 const std::string& action, const std::string& message,
                                 const std::string& memberId,
                                 const std::string& filePath,
-                                const std::string& jobId) {
+                                const std::string& jobId,
+                                const std::string& details) {
     if (level < m_minLevel) return;
 
     LogEntry entry;
@@ -409,6 +479,7 @@ void LogManager::logWithContext(LogLevel level, LogCategory category,
     entry.memberId = memberId;
     entry.filePath = filePath;
     entry.jobId = jobId;
+    entry.details = details;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -443,12 +514,12 @@ void LogManager::writeToFile(const LogEntry& entry) {
     }
 
     // Add to write buffer
-    std::string logLine = entry.toString();
+    std::string logLine = entry.toJson();
     m_writeBuffer.push_back(logLine);
 
-    // Errors always go to error log immediately
+    // Errors also go to a human-readable error log immediately.
     if (entry.level == LogLevel::Error && m_errorLog.is_open()) {
-        m_errorLog << logLine << "\n";
+        m_errorLog << entry.toString() << "\n";
         m_errorLog.flush();
     }
 
@@ -576,6 +647,8 @@ void LogManager::writeDistributionRecord(const DistributionRecord& record) {
 }
 
 void LogManager::loadDistributionHistory() {
+    m_distributionHistory.clear();
+
     std::ifstream file(getDistributionLogPath());
     if (!file.is_open()) return;
 
@@ -599,6 +672,49 @@ void LogManager::saveDistributionHistory() {
 
     for (const auto& record : m_distributionHistory) {
         file << record.toJson() << "\n";
+    }
+}
+
+void LogManager::loadRecentEntries() {
+    m_recentEntries.clear();
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(m_logDir, ec) || !fs::is_directory(m_logDir, ec)) {
+        return;
+    }
+
+    std::vector<fs::path> files;
+    for (const auto& entry : fs::directory_iterator(m_logDir, ec)) {
+        if (ec) break;
+        if (entry.is_regular_file(ec) && isActivityLogFile(entry.path())) {
+            files.push_back(entry.path());
+        }
+        ec.clear();
+    }
+
+    std::sort(files.begin(), files.end());
+
+    for (const auto& path : files) {
+        std::ifstream file(path);
+        if (!file.is_open()) continue;
+
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty() || line[0] != '{') {
+                continue;
+            }
+
+            LogEntry entry = LogEntry::fromJson(line);
+            if (entry.timestamp <= 0 || entry.action.empty()) {
+                continue;
+            }
+
+            m_recentEntries.push_back(entry);
+            if (m_recentEntries.size() > MAX_CACHED_ENTRIES) {
+                m_recentEntries.pop_front();
+            }
+        }
     }
 }
 
@@ -659,8 +775,14 @@ std::vector<LogEntry> LogManager::getEntries(const LogFilter& filter) {
         }
 
         if (!filter.searchText.empty()) {
-            if (it->message.find(filter.searchText) == std::string::npos &&
-                it->action.find(filter.searchText) == std::string::npos) {
+            if (!containsCaseInsensitive(it->message, filter.searchText) &&
+                !containsCaseInsensitive(it->action, filter.searchText) &&
+                !containsCaseInsensitive(it->details, filter.searchText) &&
+                !containsCaseInsensitive(it->memberId, filter.searchText) &&
+                !containsCaseInsensitive(it->filePath, filter.searchText) &&
+                !containsCaseInsensitive(it->jobId, filter.searchText) &&
+                !containsCaseInsensitive(LogManager::categoryToString(it->category), filter.searchText) &&
+                !containsCaseInsensitive(LogManager::levelToString(it->level), filter.searchText)) {
                 continue;
             }
         }
@@ -785,8 +907,14 @@ bool LogManager::exportLogs(const std::string& outputPath, const LogFilter& filt
         return false;
     }
 
+    const std::string lowerPath = toLowerCopy(outputPath);
+    const bool jsonOutput = (lowerPath.size() >= 5 &&
+                             lowerPath.rfind(".json") == lowerPath.size() - 5) ||
+                            (lowerPath.size() >= 6 &&
+                             lowerPath.rfind(".jsonl") == lowerPath.size() - 6);
+
     for (const auto& entry : entries) {
-        file << entry.toString() << "\n";
+        file << (jsonOutput ? entry.toJson() : entry.toString()) << "\n";
         if (file.fail()) {
             std::cerr << "LogManager: Write error during export to: " << outputPath << std::endl;
             return false;
@@ -807,12 +935,27 @@ void LogManager::clearAll() {
 
     m_recentEntries.clear();
     m_distributionHistory.clear();
+    m_writeBuffer.clear();
 
-    // Close and delete files
     if (m_activityLog.is_open()) m_activityLog.close();
     if (m_errorLog.is_open()) m_errorLog.close();
 
-    // Reopen fresh
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::exists(m_logDir, ec) && fs::is_directory(m_logDir, ec)) {
+        for (const auto& entry : fs::directory_iterator(m_logDir, ec)) {
+            if (ec) break;
+            const std::string filename = entry.path().filename().string();
+            if (isActivityLogFile(entry.path()) ||
+                filename == "errors.log" ||
+                filename == "distribution_history.json") {
+                fs::remove(entry.path(), ec);
+                ec.clear();
+            }
+        }
+    }
+
+    m_currentLogDate.clear();
     openLogFiles();
 }
 

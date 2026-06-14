@@ -199,7 +199,8 @@ public:
                         const std::string& action, const std::string& message,
                         const std::string& memberId = "",
                         const std::string& filePath = "",
-                        const std::string& jobId = "");
+                        const std::string& jobId = "",
+                        const std::string& details = "");
 
     // Convenience methods
     void debug(LogCategory cat, const std::string& action, const std::string& msg);
@@ -356,7 +357,7 @@ private:
 
     // In-memory cache for recent entries (deque for O(1) pop_front)
     std::deque<LogEntry> m_recentEntries;
-    static const size_t MAX_CACHED_ENTRIES = 1000;
+    static const size_t MAX_CACHED_ENTRIES = 10000;
 
     // Write buffer for batched disk writes
     std::vector<std::string> m_writeBuffer;

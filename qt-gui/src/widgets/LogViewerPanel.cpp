@@ -15,6 +15,7 @@
 #include <QSplitter>
 #include <QTextEdit>
 #include <QMenu>
+#include <QTextStream>
 #include <QtConcurrent/QtConcurrent>
 
 namespace MegaCustom {
@@ -97,6 +98,7 @@ void LogViewerPanel::setupUI() {
 
     m_searchEdit = new QLineEdit();
     m_searchEdit->setPlaceholderText("Search logs...");
+    m_searchEdit->setToolTip("Search action, message, details, member ID, file path, job ID, level, or category.");
     m_searchEdit->setClearButtonEnabled(true);
     m_searchEdit->setMinimumWidth(200);
     connect(m_searchEdit, &QLineEdit::textChanged, this, &LogViewerPanel::onSearchChanged);
@@ -105,6 +107,7 @@ void LogViewerPanel::setupUI() {
     QLabel* levelLabel = new QLabel("Level:");
     filterLayout->addWidget(levelLabel);
     m_levelCombo = new QComboBox();
+    m_levelCombo->setToolTip("Show entries at this severity or higher.");
     m_levelCombo->addItem("All Levels", -1);
     m_levelCombo->addItem("Debug", 0);
     m_levelCombo->addItem("Info", 1);
@@ -118,6 +121,7 @@ void LogViewerPanel::setupUI() {
     QLabel* catLabel = new QLabel("Category:");
     filterLayout->addWidget(catLabel);
     m_categoryCombo = new QComboBox();
+    m_categoryCombo->setToolTip("Limit activity logs to one operation category.");
     m_categoryCombo->addItem("All Categories", -1);
     m_categoryCombo->addItem("General", 0);
     m_categoryCombo->addItem("Auth", 1);
@@ -143,6 +147,7 @@ void LogViewerPanel::setupUI() {
     dateFilterLayout->setSpacing(8);
 
     m_dateFilterCheck = new QCheckBox("Date Range:");
+    m_dateFilterCheck->setToolTip("Limit activity logs to entries inside the selected time range.");
     m_dateFilterCheck->setChecked(false);
     connect(m_dateFilterCheck, &QCheckBox::toggled, this, &LogViewerPanel::onDateRangeChanged);
     dateFilterLayout->addWidget(m_dateFilterCheck);
@@ -200,6 +205,17 @@ void LogViewerPanel::setupUI() {
             this, &LogViewerPanel::onActivityTableSelectionChanged);
     activityLayout->addWidget(m_activityTable, 1);
 
+    QGroupBox* detailsBox = new QGroupBox("Selected Log Details");
+    QVBoxLayout* detailsLayout = new QVBoxLayout(detailsBox);
+    detailsLayout->setContentsMargins(10, 8, 10, 10);
+    m_activityDetailsText = new QPlainTextEdit();
+    m_activityDetailsText->setReadOnly(true);
+    m_activityDetailsText->setMaximumHeight(150);
+    m_activityDetailsText->setPlaceholderText("Select an activity row to inspect full context.");
+    m_activityDetailsText->setToolTip("Full selected log context. Use the standard copy shortcut to copy it.");
+    detailsLayout->addWidget(m_activityDetailsText);
+    activityLayout->addWidget(detailsBox);
+
     m_tabWidget->addTab(activityTab, "Activity Log");
 
     // =====================================================
@@ -216,6 +232,7 @@ void LogViewerPanel::setupUI() {
 
     distFilterLayout->addWidget(new QLabel("Member:"));
     m_memberFilterCombo = new QComboBox();
+    m_memberFilterCombo->setToolTip("Show distribution history for one member.");
     m_memberFilterCombo->addItem("All Members", "");
     // Populate with members from registry
     MemberRegistry* registry = MemberRegistry::instance();
@@ -230,6 +247,7 @@ void LogViewerPanel::setupUI() {
 
     distFilterLayout->addWidget(new QLabel("Status:"));
     m_statusFilterCombo = new QComboBox();
+    m_statusFilterCombo->setToolTip("Show distribution history by delivery status.");
     m_statusFilterCombo->addItem("All", -1);
     m_statusFilterCombo->addItem("Pending", 0);
     m_statusFilterCombo->addItem("Watermarking", 1);
@@ -290,23 +308,27 @@ void LogViewerPanel::setupUI() {
     bottomLayout->setSpacing(12);
 
     m_autoRefreshCheck = new QCheckBox("Auto-refresh");
+    m_autoRefreshCheck->setToolTip("Refresh logs every 5 seconds while this panel is open.");
     m_autoRefreshCheck->setChecked(false);
     connect(m_autoRefreshCheck, &QCheckBox::toggled, this, &LogViewerPanel::onAutoRefreshToggled);
     bottomLayout->addWidget(m_autoRefreshCheck);
 
     m_refreshBtn = new QPushButton("Refresh");
     m_refreshBtn->setIcon(QIcon(":/icons/refresh-cw.svg"));
+    m_refreshBtn->setToolTip("Reload activity logs, distribution history, and summary counts.");
     connect(m_refreshBtn, &QPushButton::clicked, this, &LogViewerPanel::onRefreshClicked);
     bottomLayout->addWidget(m_refreshBtn);
 
     m_exportBtn = new QPushButton("Export");
     m_exportBtn->setIcon(QIcon(":/icons/download.svg"));
+    m_exportBtn->setToolTip("Export the currently filtered activity logs.");
     connect(m_exportBtn, &QPushButton::clicked, this, &LogViewerPanel::onExportClicked);
     bottomLayout->addWidget(m_exportBtn);
 
     m_clearBtn = new QPushButton("Clear Logs");
     m_clearBtn->setObjectName("PanelDangerButton");
     m_clearBtn->setIcon(QIcon(":/icons/trash-2.svg"));
+    m_clearBtn->setToolTip("Clear persisted activity logs, error logs, and distribution history.");
     connect(m_clearBtn, &QPushButton::clicked, this, &LogViewerPanel::onClearClicked);
     bottomLayout->addWidget(m_clearBtn);
 
@@ -489,6 +511,7 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
 
         // Time
         QTableWidgetItem* timeItem = new QTableWidgetItem(formatTimestamp(entry.timestamp));
+        timeItem->setData(Qt::UserRole, formatLogEntryDetails(entry));
         m_activityTable->setItem(row, 0, timeItem);
 
         // Level
@@ -512,11 +535,20 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
 
         // Details (truncated)
         QString details = QString::fromStdString(entry.details);
+        QString detailsTooltip = QString::fromStdString(entry.details);
+        if (details.isEmpty()) {
+            QStringList context;
+            if (!entry.memberId.empty()) context << "Member: " + QString::fromStdString(entry.memberId);
+            if (!entry.filePath.empty()) context << "File: " + QString::fromStdString(entry.filePath);
+            if (!entry.jobId.empty()) context << "Job: " + QString::fromStdString(entry.jobId);
+            details = context.join(" | ");
+            detailsTooltip = details;
+        }
         if (details.length() > 50) {
             details = details.left(47) + "...";
         }
         QTableWidgetItem* detailsItem = new QTableWidgetItem(details);
-        detailsItem->setToolTip(QString::fromStdString(entry.details));
+        detailsItem->setToolTip(detailsTooltip);
         m_activityTable->setItem(row, 5, detailsItem);
     }
 
@@ -733,6 +765,13 @@ void LogViewerPanel::onExportClicked() {
     if (m_categoryFilter >= 0) {
         filter.categories.push_back(static_cast<LogCategory>(m_categoryFilter));
     }
+    if (!m_searchText.isEmpty()) {
+        filter.searchText = m_searchText.toStdString();
+    }
+    if (m_dateFilterCheck && m_dateFilterCheck->isChecked() && m_fromDateEdit && m_toDateEdit) {
+        filter.startTime = m_fromDateEdit->dateTime().toMSecsSinceEpoch();
+        filter.endTime = m_toDateEdit->dateTime().toMSecsSinceEpoch();
+    }
 
     if (logMgr.exportLogs(filePath.toStdString(), filter)) {
         QMessageBox::information(this, "Export Complete",
@@ -746,7 +785,7 @@ void LogViewerPanel::onExportClicked() {
 void LogViewerPanel::onClearClicked() {
     int ret = QMessageBox::question(this, "Clear Logs",
         "Are you sure you want to clear all logs?\n\n"
-        "This will delete activity logs and distribution history.\n"
+        "This will clear persisted activity logs, error logs, and distribution history.\n"
         "This action cannot be undone.",
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
@@ -770,11 +809,18 @@ void LogViewerPanel::onAutoRefreshToggled(bool enabled) {
 void LogViewerPanel::onActivityTableSelectionChanged() {
     if (!m_activityTable) return;  // Guard against early calls
     int row = m_activityTable->currentRow();
-    if (row < 0) return;
+    if (row < 0) {
+        if (m_activityDetailsText) m_activityDetailsText->clear();
+        return;
+    }
 
-    QTableWidgetItem* detailsItem = m_activityTable->item(row, 5);
-    if (detailsItem) {
-        emit logEntrySelected(detailsItem->toolTip());
+    QTableWidgetItem* timeItem = m_activityTable->item(row, 0);
+    QString fullDetails = timeItem ? timeItem->data(Qt::UserRole).toString() : QString();
+    if (m_activityDetailsText) {
+        m_activityDetailsText->setPlainText(fullDetails);
+    }
+    if (!fullDetails.isEmpty()) {
+        emit logEntrySelected(fullDetails);
     }
 }
 
@@ -818,6 +864,29 @@ QString LogViewerPanel::formatDuration(qint64 ms) const {
     if (ms < 1000) return QString("%1 ms").arg(ms);
     if (ms < 60000) return QString("%1 s").arg(ms / 1000.0, 0, 'f', 1);
     return QString("%1 min").arg(ms / 60000.0, 0, 'f', 1);
+}
+
+QString LogViewerPanel::formatLogEntryDetails(const LogEntry& entry) const {
+    QString output;
+    QTextStream stream(&output);
+    stream << "Time: " << formatTimestamp(entry.timestamp) << "\n";
+    stream << "Level: " << QString::fromStdString(LogManager::levelToString(entry.level)) << "\n";
+    stream << "Category: " << QString::fromStdString(LogManager::categoryToString(entry.category)) << "\n";
+    stream << "Action: " << QString::fromStdString(entry.action) << "\n";
+    stream << "Message: " << QString::fromStdString(entry.message) << "\n";
+    if (!entry.details.empty()) {
+        stream << "Details: " << QString::fromStdString(entry.details) << "\n";
+    }
+    if (!entry.memberId.empty()) {
+        stream << "Member ID: " << QString::fromStdString(entry.memberId) << "\n";
+    }
+    if (!entry.filePath.empty()) {
+        stream << "File Path: " << QString::fromStdString(entry.filePath) << "\n";
+    }
+    if (!entry.jobId.empty()) {
+        stream << "Job ID: " << QString::fromStdString(entry.jobId) << "\n";
+    }
+    return output.trimmed();
 }
 
 QColor LogViewerPanel::getLevelColor(int level) const {

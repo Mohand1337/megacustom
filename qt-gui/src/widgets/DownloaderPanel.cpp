@@ -954,8 +954,19 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
 }
 
 void DownloaderPanel::onWorkerLog(const QString& message) {
-    // Log to LogManager for persistent logging
-    LogManager::instance().logDownload("progress", message.toStdString());
+    const QString lower = message.toLower();
+    if (lower.contains("error") || lower.contains("failed") || lower.contains("timeout")) {
+        LogManager::instance().logError("download_progress_error",
+            message.toStdString());
+    } else if (lower.contains("warning") || lower.contains("warn")) {
+        LogManager::instance().warning(LogCategory::Download,
+            "download_progress_warning",
+            message.toStdString());
+    } else {
+        LogManager::instance().debug(LogCategory::Download,
+            "download_progress",
+            message.toStdString());
+    }
     // Also output to console for debugging
     qDebug() << "Downloader:" << message;
 }

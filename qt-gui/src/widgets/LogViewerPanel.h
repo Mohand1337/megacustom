@@ -13,6 +13,7 @@
 #include <QDateTime>
 #include <QDateTimeEdit>
 #include <QFutureWatcher>
+#include <QPlainTextEdit>
 #include <vector>
 
 class EmptyStateWidget;
@@ -73,6 +74,7 @@ private:
     QString formatTimestamp(qint64 timestamp) const;
     QString formatFileSize(qint64 bytes) const;
     QString formatDuration(qint64 ms) const;
+    QString formatLogEntryDetails(const LogEntry& entry) const;
     QColor getLevelColor(int level) const;
     QColor getStatusColor(int status) const;
 
@@ -84,6 +86,7 @@ private:
     QDateTimeEdit* m_fromDateEdit = nullptr;
     QDateTimeEdit* m_toDateEdit = nullptr;
     QCheckBox* m_dateFilterCheck = nullptr;
+    QPlainTextEdit* m_activityDetailsText = nullptr;
 
     // UI Components - Distribution History Tab
     QTableWidget* m_distributionTable = nullptr;
