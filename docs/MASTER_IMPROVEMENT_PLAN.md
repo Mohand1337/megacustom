@@ -1612,6 +1612,31 @@ Still pending:
 - Persist parent/child job relationships for downloader-to-watermark handoffs.
 - Add open related member/destination/file actions for rows that carry those fields.
 
+### 2026-06-15 Download Retry Contract Pass
+
+Scope:
+
+- Added the first safe retry contract instead of exposing generic retry buttons that cannot rebuild a real run.
+
+Implemented:
+
+- New download jobs persist original URL list and downloader settings in job metadata.
+- Retried download jobs record `retryOfJobId` in the new job metadata.
+- Downloader can rebuild its queue/settings from a selected download job and start the retry.
+- Jobs tab now has a Retry action.
+- Retry is enabled only for completed, failed, or cancelled download jobs; active jobs and unsupported job types remain disabled.
+- MainWindow routes retry requests from the Log Viewer to the Downloader panel.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add watermark retry only after watermark jobs persist selected files, member IDs, templates, output strategy, and auto-upload mode.
+- Add distribution retry only after distribution jobs persist selected tasks, source/destination plan, conflict policy, and move/copy mode.
+- Add cleanup actions for disk-full paused watermark jobs and partial distribution folders.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

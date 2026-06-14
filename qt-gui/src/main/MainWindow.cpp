@@ -779,6 +779,18 @@ void MainWindow::setupUI()
                 onNavigationItemClicked(static_cast<int>(item));
                 updateStatus(QString("Opened %1 for job %2").arg(panelName, jobId));
             });
+    connect(m_logViewerPanel, &LogViewerPanel::retryJobRequested,
+            this, [this](const QString& jobId) {
+                if (!m_downloaderPanel) {
+                    return;
+                }
+                if (m_sidebar) {
+                    m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Downloader);
+                }
+                onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Downloader));
+                m_downloaderPanel->retryJob(jobId);
+                updateStatus(QString("Retry requested for download job %1").arg(jobId));
+            });
 
     // Advanced Search Panel (Tools menu only, no sidebar)
     m_advancedSearchPanel = new AdvancedSearchPanel(this);

@@ -17,6 +17,7 @@
 #include <QScrollArea>
 #include <QMenu>
 #include <QRegularExpression>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
@@ -579,6 +580,95 @@ void DownloaderPanel::refresh() {
     updateStats();
 }
 
+void DownloaderPanel::retryJob(const QString& jobId) {
+    if (m_isRunning) {
+        QMessageBox::warning(this, "Download Running",
+            "A download job is already running. Stop it before retrying another job.");
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(jobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Download) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This job cannot be retried from the Downloader panel.");
+        return;
+    }
+
+    QStringList urls;
+    const QJsonArray urlArray = record.metadata["urls"].toArray();
+    for (const QJsonValue& value : urlArray) {
+        const QString url = value.toString().trimmed();
+        if (!url.isEmpty()) {
+            urls.append(url);
+        }
+    }
+
+    if (urls.isEmpty()) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This download job does not contain retry metadata. New download jobs created after this update can be retried.");
+        return;
+    }
+
+    if (!m_items.isEmpty()) {
+        int reply = QMessageBox::question(this, "Replace Download Queue",
+            "Retrying this job will replace the current download queue. Continue?",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    const QJsonObject metadata = record.metadata;
+    const QString outputDir = metadata["outputDir"].toString();
+    if (!outputDir.isEmpty()) {
+        m_outputDirEdit->setText(outputDir);
+    }
+
+    auto setComboValue = [](QComboBox* combo, const QString& value) {
+        if (!combo || value.isEmpty()) return;
+        const int index = combo->findText(value);
+        if (index >= 0) {
+            combo->setCurrentIndex(index);
+        }
+    };
+
+    setComboValue(m_qualityCombo, metadata["quality"].toString());
+    setComboValue(m_docsFormatCombo, metadata["docsFormat"].toString());
+    if (metadata.contains("parallel")) {
+        m_parallelSpin->setValue(metadata["parallel"].toInt(m_parallelSpin->value()));
+    }
+    if (metadata.contains("skipExisting")) {
+        m_skipExistingCheck->setChecked(metadata["skipExisting"].toBool(m_skipExistingCheck->isChecked()));
+    }
+    if (metadata.contains("downloadSubtitles")) {
+        m_downloadSubtitlesCheck->setChecked(metadata["downloadSubtitles"].toBool(m_downloadSubtitlesCheck->isChecked()));
+    }
+
+    m_items.clear();
+    m_completedFiles.clear();
+    m_currentJobUrls.clear();
+    m_urlInput->setPlainText(urls.join("\n"));
+
+    for (const QString& url : urls) {
+        DownloadItemInfo info;
+        info.url = url;
+        info.sourceType = detectUrlType(url);
+        info.fileName = extractFileName(url, info.sourceType);
+        info.isValid = isValidUrl(url);
+        info.status = info.isValid ? "pending" : "invalid";
+        m_items.append(info);
+    }
+
+    populateTable();
+    updateStats();
+    updateButtonStates();
+    m_retrySourceJobId = record.id;
+    m_statusLabel->setText(QString("Retrying download job %1").arg(record.id));
+
+    onStartDownloads();
+}
+
 void DownloaderPanel::onParseUrls() {
     QString text = m_urlInput->toPlainText();
     if (text.isEmpty()) {
@@ -673,6 +763,7 @@ void DownloaderPanel::onBrowseOutput() {
 
 void DownloaderPanel::onStartDownloads() {
     if (m_items.isEmpty()) {
+        m_retrySourceJobId.clear();
         QMessageBox::warning(this, "No URLs", "Please add URLs to download.");
         return;
     }
@@ -690,6 +781,7 @@ void DownloaderPanel::onStartDownloads() {
     }
 
     if (urls.isEmpty()) {
+        m_retrySourceJobId.clear();
         QMessageBox::warning(this, "No Valid URLs", "No valid pending URLs to download.");
         return;
     }
@@ -719,11 +811,20 @@ void DownloaderPanel::onStartDownloads() {
     metadata["skipExisting"] = m_skipExistingCheck->isChecked();
     metadata["downloadSubtitles"] = m_downloadSubtitlesCheck->isChecked();
     metadata["docsFormat"] = m_docsFormatCombo->currentText();
+    QJsonArray urlsArray;
+    for (const QString& url : urls) {
+        urlsArray.append(url);
+    }
+    metadata["urls"] = urlsArray;
+    if (!m_retrySourceJobId.isEmpty()) {
+        metadata["retryOfJobId"] = m_retrySourceJobId;
+    }
     m_currentJobId = OperationJobStore::instance().createJob(
         OperationJobType::Download,
         QString("Download %1 %2").arg(urls.size()).arg(urls.size() == 1 ? "item" : "items"),
         urls.size(),
         metadata);
+    m_retrySourceJobId.clear();
     m_currentJobCancelled = false;
 
     // Create worker thread

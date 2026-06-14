@@ -138,6 +138,13 @@ void LogViewerPanel::setupUI() {
     connect(m_showJobActivityBtn, &QPushButton::clicked, this, &LogViewerPanel::onShowJobActivityClicked);
     jobsFilterLayout->addWidget(m_showJobActivityBtn);
 
+    m_retryJobBtn = new QPushButton("Retry");
+    m_retryJobBtn->setIcon(QIcon(":/icons/refresh-cw.svg"));
+    m_retryJobBtn->setToolTip("Retry the selected job when the operation supports safe retry.");
+    m_retryJobBtn->setEnabled(false);
+    connect(m_retryJobBtn, &QPushButton::clicked, this, &LogViewerPanel::onRetryJobClicked);
+    jobsFilterLayout->addWidget(m_retryJobBtn);
+
     m_openRelatedPanelBtn = new QPushButton("Open Panel");
     m_openRelatedPanelBtn->setIcon(QIcon(":/icons/chevron-right.svg"));
     m_openRelatedPanelBtn->setToolTip("Open the panel that owns the selected job.");
@@ -645,6 +652,7 @@ void LogViewerPanel::populateJobsTableFromRecords(const QList<OperationJobRecord
         updatedItem->setData(Qt::UserRole, details);
         updatedItem->setData(Qt::UserRole + 1, record.id);
         updatedItem->setData(Qt::UserRole + 2, OperationJobStore::typeToString(record.type));
+        updatedItem->setData(Qt::UserRole + 3, OperationJobStore::statusToString(record.status));
         m_jobsTable->setItem(row, 0, updatedItem);
 
         QTableWidgetItem* statusItem = new QTableWidgetItem(formatJobStatus(record.status));
@@ -949,6 +957,12 @@ void LogViewerPanel::updateCopyButtonStates() {
 void LogViewerPanel::updateJobActionStates() {
     const bool hasJob = !m_selectedJobId.isEmpty();
     const bool hasPanel = !panelKeyForJobType(m_selectedJobType).isEmpty();
+    const bool activeJob = m_selectedJobStatus == OperationJobStatus::Queued
+        || m_selectedJobStatus == OperationJobStatus::Running
+        || m_selectedJobStatus == OperationJobStatus::Paused;
+    const bool canRetry = hasJob
+        && m_selectedJobType == OperationJobType::Download
+        && !activeJob;
 
     if (m_copyJobIdBtn) {
         m_copyJobIdBtn->setEnabled(hasJob);
@@ -961,6 +975,12 @@ void LogViewerPanel::updateJobActionStates() {
         m_showJobActivityBtn->setToolTip(hasJob
             ? "Switch to Activity and show log events for the selected job."
             : "Select a job to show its related activity.");
+    }
+    if (m_retryJobBtn) {
+        m_retryJobBtn->setEnabled(canRetry);
+        m_retryJobBtn->setToolTip(canRetry
+            ? "Retry this download job using its saved URLs and settings."
+            : "Retry is currently available for completed, failed, or cancelled download jobs with saved metadata.");
     }
     if (m_openRelatedPanelBtn) {
         m_openRelatedPanelBtn->setEnabled(hasJob && hasPanel);
@@ -1218,6 +1238,11 @@ void LogViewerPanel::onShowJobActivityClicked() {
     m_tabWidget->setCurrentIndex(1);
 }
 
+void LogViewerPanel::onRetryJobClicked() {
+    if (m_selectedJobId.isEmpty()) return;
+    emit retryJobRequested(m_selectedJobId);
+}
+
 void LogViewerPanel::onOpenRelatedPanelClicked() {
     if (m_selectedJobId.isEmpty()) return;
 
@@ -1242,6 +1267,7 @@ void LogViewerPanel::onJobsTableSelectionChanged() {
     if (row < 0) {
         m_selectedJobId.clear();
         m_selectedJobType = OperationJobType::Unknown;
+        m_selectedJobStatus = OperationJobStatus::Queued;
         if (m_jobDetailsText) m_jobDetailsText->clear();
         updateCopyButtonStates();
         return;
@@ -1251,8 +1277,10 @@ void LogViewerPanel::onJobsTableSelectionChanged() {
     const QString fullDetails = updatedItem ? updatedItem->data(Qt::UserRole).toString() : QString();
     const QString jobId = updatedItem ? updatedItem->data(Qt::UserRole + 1).toString() : QString();
     const QString type = updatedItem ? updatedItem->data(Qt::UserRole + 2).toString() : QString();
+    const QString status = updatedItem ? updatedItem->data(Qt::UserRole + 3).toString() : QString();
     m_selectedJobId = jobId;
     m_selectedJobType = OperationJobStore::typeFromString(type);
+    m_selectedJobStatus = OperationJobStore::statusFromString(status);
 
     if (m_jobDetailsText) {
         m_jobDetailsText->setPlainText(fullDetails);

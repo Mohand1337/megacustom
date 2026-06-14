@@ -125,6 +125,7 @@ signals:
 
 public slots:
     void refresh();
+    void retryJob(const QString& jobId);
 
 private slots:
     // URL input
@@ -220,6 +221,7 @@ private:
     QStringList m_completedFiles;  // Files ready to send to watermark
     QSet<QString> m_currentJobUrls;
     QString m_currentJobId;
+    QString m_retrySourceJobId;
     bool m_isRunning = false;
     bool m_currentJobCancelled = false;
 

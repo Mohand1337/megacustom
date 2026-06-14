@@ -40,6 +40,7 @@ public:
 signals:
     void logEntrySelected(const QString& details);
     void openRelatedPanelRequested(const QString& panelKey, const QString& jobId);
+    void retryJobRequested(const QString& jobId);
 
 public slots:
     void refresh();
@@ -65,6 +66,7 @@ private slots:
     void onCopyReportClicked();
     void onCopyJobIdClicked();
     void onShowJobActivityClicked();
+    void onRetryJobClicked();
     void onOpenRelatedPanelClicked();
     void onAutoRefreshToggled(bool enabled);
     void onJobsTableSelectionChanged();
@@ -112,6 +114,7 @@ private:
     QPlainTextEdit* m_jobDetailsText = nullptr;
     QPushButton* m_copyJobIdBtn = nullptr;
     QPushButton* m_showJobActivityBtn = nullptr;
+    QPushButton* m_retryJobBtn = nullptr;
     QPushButton* m_openRelatedPanelBtn = nullptr;
 
     // UI Components - Activity Log Tab
@@ -161,6 +164,7 @@ private:
     QString m_searchText;
     QString m_selectedJobId;
     OperationJobType m_selectedJobType = OperationJobType::Unknown;
+    OperationJobStatus m_selectedJobStatus = OperationJobStatus::Queued;
     int m_levelFilter = -1;      // -1 = all
     int m_categoryFilter = -1;   // -1 = all
     QString m_memberFilter;
