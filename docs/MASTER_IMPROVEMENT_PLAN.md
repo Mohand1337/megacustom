@@ -1585,9 +1585,32 @@ Verification completed:
 
 Still pending:
 
-- Add a richer Job Center with retry failed, cleanup required, resume, and open-related-panel actions.
+- Add a richer Job Center with retry failed, cleanup required, and resume actions.
 - Persist parent/child job relationships for downloader-to-watermark handoffs.
-- Add distribution-history filtering directly by selected job ID.
+
+### 2026-06-15 Job Actions Pass
+
+Scope:
+
+- Continued the Job Center path by making selected jobs actionable, not only readable.
+
+Implemented:
+
+- Added selected-job actions to the Jobs tab: Copy Job ID, Show Activity, and Open Panel.
+- `Open Panel` routes download jobs to Downloader, watermark jobs to Watermark, and distribution jobs to Distribution through the existing sidebar/content stack.
+- `Show Activity` switches to Activity and keeps the selected job ID as the activity search.
+- Distribution History now has a job ID filter.
+- Selecting a distribution job fills the Distribution History job filter automatically.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add retry failed, cleanup required, and resume controls once operation-specific resume contracts exist.
+- Persist parent/child job relationships for downloader-to-watermark handoffs.
+- Add open related member/destination/file actions for rows that carry those fields.
 
 ## Non-Goals
 

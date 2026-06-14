@@ -123,6 +123,28 @@ void LogViewerPanel::setupUI() {
     connect(m_jobStatusCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &LogViewerPanel::onJobStatusFilterChanged);
     jobsFilterLayout->addWidget(m_jobStatusCombo);
+
+    m_copyJobIdBtn = new QPushButton("Copy Job ID");
+    m_copyJobIdBtn->setIcon(QIcon(":/icons/copy.svg"));
+    m_copyJobIdBtn->setToolTip("Copy the selected job ID.");
+    m_copyJobIdBtn->setEnabled(false);
+    connect(m_copyJobIdBtn, &QPushButton::clicked, this, &LogViewerPanel::onCopyJobIdClicked);
+    jobsFilterLayout->addWidget(m_copyJobIdBtn);
+
+    m_showJobActivityBtn = new QPushButton("Show Activity");
+    m_showJobActivityBtn->setIcon(QIcon(":/icons/search.svg"));
+    m_showJobActivityBtn->setToolTip("Switch to Activity and show log events for the selected job.");
+    m_showJobActivityBtn->setEnabled(false);
+    connect(m_showJobActivityBtn, &QPushButton::clicked, this, &LogViewerPanel::onShowJobActivityClicked);
+    jobsFilterLayout->addWidget(m_showJobActivityBtn);
+
+    m_openRelatedPanelBtn = new QPushButton("Open Panel");
+    m_openRelatedPanelBtn->setIcon(QIcon(":/icons/chevron-right.svg"));
+    m_openRelatedPanelBtn->setToolTip("Open the panel that owns the selected job.");
+    m_openRelatedPanelBtn->setEnabled(false);
+    connect(m_openRelatedPanelBtn, &QPushButton::clicked, this, &LogViewerPanel::onOpenRelatedPanelClicked);
+    jobsFilterLayout->addWidget(m_openRelatedPanelBtn);
+
     jobsFilterLayout->addStretch();
     jobsLayout->addLayout(jobsFilterLayout);
 
@@ -358,6 +380,16 @@ void LogViewerPanel::setupUI() {
     connect(m_statusFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &LogViewerPanel::onStatusFilterChanged);
     distFilterLayout->addWidget(m_statusFilterCombo);
+
+    distFilterLayout->addWidget(new QLabel("Job:"));
+    m_distributionJobFilterEdit = new QLineEdit();
+    m_distributionJobFilterEdit->setPlaceholderText("Filter by job ID");
+    m_distributionJobFilterEdit->setToolTip("Show distribution records for one job ID. Selecting a distribution job fills this automatically.");
+    m_distributionJobFilterEdit->setClearButtonEnabled(true);
+    m_distributionJobFilterEdit->setMinimumWidth(180);
+    connect(m_distributionJobFilterEdit, &QLineEdit::textChanged,
+            this, &LogViewerPanel::refreshDistributionHistory);
+    distFilterLayout->addWidget(m_distributionJobFilterEdit);
 
     distFilterLayout->addStretch();
     distLayout->addLayout(distFilterLayout);
@@ -612,6 +644,7 @@ void LogViewerPanel::populateJobsTableFromRecords(const QList<OperationJobRecord
                 : "-");
         updatedItem->setData(Qt::UserRole, details);
         updatedItem->setData(Qt::UserRole + 1, record.id);
+        updatedItem->setData(Qt::UserRole + 2, OperationJobStore::typeToString(record.type));
         m_jobsTable->setItem(row, 0, updatedItem);
 
         QTableWidgetItem* statusItem = new QTableWidgetItem(formatJobStatus(record.status));
@@ -745,10 +778,17 @@ void LogViewerPanel::populateDistributionTableFromRecords(const std::vector<Dist
 
     // Apply status filter
     int statusFilter = m_statusFilterCombo ? m_statusFilterCombo->currentData().toInt() : -1;
+    const QString jobFilter = m_distributionJobFilterEdit
+        ? m_distributionJobFilterEdit->text().trimmed()
+        : QString();
 
     int visibleCount = 0;
     for (const DistributionRecord& record : records) {
         if (statusFilter >= 0 && static_cast<int>(record.status) != statusFilter) {
+            continue;
+        }
+        if (!jobFilter.isEmpty()
+            && QString::fromStdString(record.jobId).compare(jobFilter, Qt::CaseInsensitive) != 0) {
             continue;
         }
 
@@ -879,6 +919,7 @@ void LogViewerPanel::updateCopyButtonStates() {
 
     m_copyDetailsBtn->setEnabled(hasSelection);
     m_copyReportBtn->setEnabled(hasRows);
+    updateJobActionStates();
 
     if (!hasSelection) {
         if (m_tabWidget->currentIndex() == 0) {
@@ -902,6 +943,30 @@ void LogViewerPanel::updateCopyButtonStates() {
         }
     } else {
         m_copyReportBtn->setToolTip("Copy the currently visible table as a tab-separated report.");
+    }
+}
+
+void LogViewerPanel::updateJobActionStates() {
+    const bool hasJob = !m_selectedJobId.isEmpty();
+    const bool hasPanel = !panelKeyForJobType(m_selectedJobType).isEmpty();
+
+    if (m_copyJobIdBtn) {
+        m_copyJobIdBtn->setEnabled(hasJob);
+        m_copyJobIdBtn->setToolTip(hasJob
+            ? "Copy the selected job ID."
+            : "Select a job to copy its ID.");
+    }
+    if (m_showJobActivityBtn) {
+        m_showJobActivityBtn->setEnabled(hasJob);
+        m_showJobActivityBtn->setToolTip(hasJob
+            ? "Switch to Activity and show log events for the selected job."
+            : "Select a job to show its related activity.");
+    }
+    if (m_openRelatedPanelBtn) {
+        m_openRelatedPanelBtn->setEnabled(hasJob && hasPanel);
+        m_openRelatedPanelBtn->setToolTip(hasPanel
+            ? "Open the panel that owns the selected job."
+            : "This job type does not have a related panel yet.");
     }
 }
 
@@ -1136,6 +1201,31 @@ void LogViewerPanel::onCopyReportClicked() {
     QApplication::clipboard()->setText(report);
 }
 
+void LogViewerPanel::onCopyJobIdClicked() {
+    if (m_selectedJobId.isEmpty()) return;
+    QApplication::clipboard()->setText(m_selectedJobId);
+}
+
+void LogViewerPanel::onShowJobActivityClicked() {
+    if (m_selectedJobId.isEmpty() || !m_tabWidget) return;
+
+    if (m_searchEdit) {
+        QSignalBlocker blocker(m_searchEdit);
+        m_searchEdit->setText(m_selectedJobId);
+    }
+    m_searchText = m_selectedJobId;
+    refreshActivityLog();
+    m_tabWidget->setCurrentIndex(1);
+}
+
+void LogViewerPanel::onOpenRelatedPanelClicked() {
+    if (m_selectedJobId.isEmpty()) return;
+
+    const QString panelKey = panelKeyForJobType(m_selectedJobType);
+    if (panelKey.isEmpty()) return;
+    emit openRelatedPanelRequested(panelKey, m_selectedJobId);
+}
+
 void LogViewerPanel::onAutoRefreshToggled(bool enabled) {
     if (!m_refreshTimer) return;  // Guard against early calls
     if (enabled) {
@@ -1150,6 +1240,8 @@ void LogViewerPanel::onJobsTableSelectionChanged() {
 
     int row = m_jobsTable->currentRow();
     if (row < 0) {
+        m_selectedJobId.clear();
+        m_selectedJobType = OperationJobType::Unknown;
         if (m_jobDetailsText) m_jobDetailsText->clear();
         updateCopyButtonStates();
         return;
@@ -1158,6 +1250,9 @@ void LogViewerPanel::onJobsTableSelectionChanged() {
     QTableWidgetItem* updatedItem = m_jobsTable->item(row, 0);
     const QString fullDetails = updatedItem ? updatedItem->data(Qt::UserRole).toString() : QString();
     const QString jobId = updatedItem ? updatedItem->data(Qt::UserRole + 1).toString() : QString();
+    const QString type = updatedItem ? updatedItem->data(Qt::UserRole + 2).toString() : QString();
+    m_selectedJobId = jobId;
+    m_selectedJobType = OperationJobStore::typeFromString(type);
 
     if (m_jobDetailsText) {
         m_jobDetailsText->setPlainText(fullDetails);
@@ -1187,6 +1282,12 @@ void LogViewerPanel::onJobsTableSelectionChanged() {
             m_searchEdit->setText(jobId);
         }
         refreshActivityLog();
+    }
+
+    if (m_distributionJobFilterEdit && m_selectedJobType == OperationJobType::Distribution) {
+        QSignalBlocker blocker(m_distributionJobFilterEdit);
+        m_distributionJobFilterEdit->setText(jobId);
+        refreshDistributionHistory();
     }
 
     updateCopyButtonStates();
@@ -1345,6 +1446,20 @@ QString LogViewerPanel::formatJobStatus(OperationJobStatus status) const {
         case OperationJobStatus::Cancelled: return "Cancelled";
         case OperationJobStatus::CleanupRequired: return "Cleanup Required";
         default: return "Queued";
+    }
+}
+
+QString LogViewerPanel::panelKeyForJobType(OperationJobType type) const {
+    switch (type) {
+        case OperationJobType::Download:
+            return "downloader";
+        case OperationJobType::Watermark:
+            return "watermark";
+        case OperationJobType::Distribution:
+            return "distribution";
+        case OperationJobType::Unknown:
+        default:
+            return {};
     }
 }
 

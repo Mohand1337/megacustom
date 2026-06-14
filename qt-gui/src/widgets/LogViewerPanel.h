@@ -39,6 +39,7 @@ public:
 
 signals:
     void logEntrySelected(const QString& details);
+    void openRelatedPanelRequested(const QString& panelKey, const QString& jobId);
 
 public slots:
     void refresh();
@@ -62,6 +63,9 @@ private slots:
     void onQuickFilterChanged(int index);
     void onCopyDetailsClicked();
     void onCopyReportClicked();
+    void onCopyJobIdClicked();
+    void onShowJobActivityClicked();
+    void onOpenRelatedPanelClicked();
     void onAutoRefreshToggled(bool enabled);
     void onJobsTableSelectionChanged();
     void onActivityTableSelectionChanged();
@@ -82,6 +86,7 @@ private:
     void setLoadingState(bool loading);
     void updateEmptyState();
     void updateCopyButtonStates();
+    void updateJobActionStates();
     void updateLastRefreshedLabel();
     QTableWidget* currentVisibleTable() const;
     LogFilter buildActivityFilter(int limit) const;
@@ -93,6 +98,7 @@ private:
     QString formatJobProgress(const OperationJobRecord& record) const;
     QString formatJobType(OperationJobType type) const;
     QString formatJobStatus(OperationJobStatus status) const;
+    QString panelKeyForJobType(OperationJobType type) const;
     QString formatLogEntryDetails(const LogEntry& entry) const;
     QString formatDistributionRecordDetails(const DistributionRecord& record) const;
     QColor getLevelColor(int level) const;
@@ -104,6 +110,9 @@ private:
     QComboBox* m_jobTypeCombo = nullptr;
     QComboBox* m_jobStatusCombo = nullptr;
     QPlainTextEdit* m_jobDetailsText = nullptr;
+    QPushButton* m_copyJobIdBtn = nullptr;
+    QPushButton* m_showJobActivityBtn = nullptr;
+    QPushButton* m_openRelatedPanelBtn = nullptr;
 
     // UI Components - Activity Log Tab
     QTableWidget* m_activityTable = nullptr;
@@ -120,6 +129,7 @@ private:
     QTableWidget* m_distributionTable = nullptr;
     QComboBox* m_memberFilterCombo = nullptr;
     QComboBox* m_statusFilterCombo = nullptr;
+    QLineEdit* m_distributionJobFilterEdit = nullptr;
 
     // Empty state
     EmptyStateWidget* m_emptyState = nullptr;
@@ -149,6 +159,8 @@ private:
 
     // Current filters
     QString m_searchText;
+    QString m_selectedJobId;
+    OperationJobType m_selectedJobType = OperationJobType::Unknown;
     int m_levelFilter = -1;      // -1 = all
     int m_categoryFilter = -1;   // -1 = all
     QString m_memberFilter;

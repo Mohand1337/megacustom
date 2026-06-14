@@ -758,6 +758,27 @@ void MainWindow::setupUI()
             this, [this](const QString& details) {
                 statusBar()->showMessage(details, 5000);
             });
+    connect(m_logViewerPanel, &LogViewerPanel::openRelatedPanelRequested,
+            this, [this](const QString& panelKey, const QString& jobId) {
+                MegaSidebar::NavigationItem item = MegaSidebar::NavigationItem::LogViewer;
+                QString panelName = "Activity Log";
+                if (panelKey == "downloader") {
+                    item = MegaSidebar::NavigationItem::Downloader;
+                    panelName = "Downloader";
+                } else if (panelKey == "watermark") {
+                    item = MegaSidebar::NavigationItem::Watermark;
+                    panelName = "Watermark";
+                } else if (panelKey == "distribution") {
+                    item = MegaSidebar::NavigationItem::Distribution;
+                    panelName = "Distribution";
+                }
+
+                if (m_sidebar) {
+                    m_sidebar->setActiveItem(item);
+                }
+                onNavigationItemClicked(static_cast<int>(item));
+                updateStatus(QString("Opened %1 for job %2").arg(panelName, jobId));
+            });
 
     // Advanced Search Panel (Tools menu only, no sidebar)
     m_advancedSearchPanel = new AdvancedSearchPanel(this);
