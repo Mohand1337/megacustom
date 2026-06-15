@@ -92,6 +92,10 @@ void WatermarkWorker::setMetricsStore(MetricsStore* store) {
     m_metricsStore = store;
 }
 
+void WatermarkWorker::setResumeTasks(const QList<WatermarkResumeTask>& tasks) {
+    m_resumeTasks = tasks;
+}
+
 // Helper: expand templates for a member and apply to watermarker config
 static void applyMemberTemplates(Watermarker& watermarker, const WatermarkConfig& baseConfig,
                                   const QString& memberId, const QString& primaryTpl,
@@ -200,6 +204,224 @@ bool WatermarkWorker::isDiskSpaceError(const WatermarkResult& result) const {
         || error.contains("device full");
 }
 
+WatermarkResult WatermarkWorker::watermarkInput(Watermarker& watermarker,
+                                                const WatermarkConfig& baseConfig,
+                                                const QString& inputPath,
+                                                const QString& memberId,
+                                                const std::string& outputDir) {
+    const std::string inputStd = inputPath.toStdString();
+    WatermarkResult result;
+
+    if (!memberId.isEmpty()) {
+        applyMemberTemplates(watermarker, baseConfig, memberId,
+                             m_rawPrimaryTemplate, m_rawSecondaryTemplate);
+
+        const QString outputBaseDir = m_outputDir.isEmpty()
+            ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+            : m_outputDir;
+        if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
+            result.success = false;
+            result.inputFile = inputStd;
+            result.error = "Paused: insufficient disk space";
+            return result;
+        }
+
+        const std::string outPath = watermarker.buildMemberOutputPath(
+            inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
+        if (Watermarker::isVideoFile(inputStd)) {
+            result = watermarker.watermarkVideo(inputStd, outPath);
+        } else if (Watermarker::isPdfFile(inputStd)) {
+            result = watermarker.watermarkPdf(inputStd, outPath);
+        } else if (Watermarker::isAudioFile(inputStd)) {
+            result = watermarker.watermarkAudio(inputStd, outPath);
+        } else {
+            QFile sourceFile(inputPath);
+            if (sourceFile.copy(QString::fromStdString(outPath))) {
+                result.success = true;
+                result.inputFile = inputStd;
+                result.outputFile = outPath;
+            } else {
+                result.success = false;
+                result.inputFile = inputStd;
+                result.error = QString("Failed to copy passthrough file: %1")
+                                   .arg(sourceFile.errorString()).toStdString();
+            }
+        }
+    } else {
+        watermarker.setConfig(baseConfig);
+        const QString outputBaseDir = outputDir.empty()
+            ? QFileInfo(inputPath).absolutePath()
+            : QString::fromStdString(outputDir);
+        if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
+            result.success = false;
+            result.inputFile = inputStd;
+            result.error = "Paused: insufficient disk space";
+            return result;
+        }
+
+        std::string outputPath;
+        if (!outputDir.empty()) {
+            outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
+        }
+        result = watermarker.watermarkFile(inputStd, outputPath);
+    }
+
+    if (m_metricsStore && !inputPath.isEmpty()) {
+        const QString ext = QFileInfo(inputPath).suffix().toLower();
+        m_metricsStore->recordWatermark(
+            ext,
+            memberId,
+            result.inputSizeBytes,
+            result.outputSizeBytes,
+            result.processingTimeMs,
+            result.success,
+            QString::fromStdString(result.error));
+    }
+
+    return result;
+}
+
+void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
+                                         const WatermarkConfig& baseConfig,
+                                         const std::string& outputDir,
+                                         int& successCount,
+                                         int& failCount) {
+    int totalWatermarkTasks = 0;
+    for (const WatermarkResumeTask& task : m_resumeTasks) {
+        if (task.watermarkNeeded) {
+            ++totalWatermarkTasks;
+        }
+    }
+
+    QString activeMemberId;
+    QStringList memberOutputFiles;
+    int processedWatermarkTasks = 0;
+
+    auto flushMemberUploads = [&](const QString& memberId) {
+        if (!m_autoUpload || !m_megaApi || m_cancelled || memberId.isEmpty()
+            || memberOutputFiles.isEmpty()) {
+            memberOutputFiles.clear();
+            return;
+        }
+
+        mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
+        MemberInfo memberInfo = MemberRegistry::instance()->getMember(memberId);
+        const QString uploadDest = m_customUploadPath.isEmpty()
+            ? memberInfo.distributionFolder
+            : m_customUploadPath;
+
+        if (uploadDest.isEmpty()) {
+            emit memberAutoUploadSkipped(memberId, "No distribution folder configured");
+            memberOutputFiles.clear();
+            return;
+        }
+
+        int uploadOk = 0;
+        int uploadFail = 0;
+        int deleted = 0;
+
+        for (int f = 0; f < memberOutputFiles.size() && !m_cancelled; ++f) {
+            emit memberBatchUploading(memberId, f + 1,
+                memberOutputFiles.size(), QFileInfo(memberOutputFiles[f]).fileName());
+
+            QElapsedTimer uploadTimer;
+            uploadTimer.start();
+            std::string error;
+            qint64 fileSize = QFileInfo(memberOutputFiles[f]).size();
+            const QString nativeLocal = QDir::toNativeSeparators(memberOutputFiles[f]);
+
+            bool ok = megaApiUpload(api, nativeLocal.toStdString(),
+                                    uploadDest.toStdString(), error);
+
+            qint64 uploadMs = uploadTimer.elapsed();
+            qint64 speed = (uploadMs > 0) ? (fileSize * 1000 / uploadMs) : 0;
+            if (m_metricsStore) {
+                QString ext = QFileInfo(memberOutputFiles[f]).suffix().toLower();
+                m_metricsStore->recordUpload(ext, memberId, fileSize, uploadMs,
+                                              speed, ok, QString::fromStdString(error));
+            }
+
+            if (ok) {
+                uploadOk++;
+                if (QFile::remove(memberOutputFiles[f])) {
+                    deleted++;
+                }
+            } else {
+                uploadFail++;
+                qWarning() << "Auto-upload failed during resume:" << memberId
+                           << memberOutputFiles[f] << QString::fromStdString(error);
+            }
+        }
+
+        if (deleted > 0 && deleted == memberOutputFiles.size()) {
+            QDir().rmdir(QFileInfo(memberOutputFiles.first()).path());
+        }
+
+        emit memberBatchCleanedUp(memberId, uploadOk, uploadFail, deleted);
+        memberOutputFiles.clear();
+    };
+
+    for (const WatermarkResumeTask& task : m_resumeTasks) {
+        if (m_cancelled) {
+            break;
+        }
+
+        if (activeMemberId.isEmpty()) {
+            activeMemberId = task.memberId;
+        } else if (task.memberId != activeMemberId) {
+            flushMemberUploads(activeMemberId);
+            activeMemberId = task.memberId;
+        }
+
+        if (!task.watermarkNeeded) {
+            if (!task.existingOutputPath.isEmpty() && QFileInfo::exists(task.existingOutputPath)) {
+                memberOutputFiles.append(task.existingOutputPath);
+            }
+            continue;
+        }
+
+        const int currentIdx = processedWatermarkTasks;
+        const QString label = task.memberId.isEmpty()
+            ? QFileInfo(task.filePath).fileName()
+            : QString("%1 [%2]").arg(QFileInfo(task.filePath).fileName(), task.memberId);
+        emit progress(currentIdx, totalWatermarkTasks, label, 0);
+
+        watermarker.setProgressCallback([this, totalWatermarkTasks, currentIdx](const WatermarkProgress& progress) {
+            emit this->progress(currentIdx, totalWatermarkTasks,
+                                QString::fromStdString(progress.currentFile),
+                                static_cast<int>(progress.percentComplete));
+        });
+
+        WatermarkResult result = watermarkInput(
+            watermarker, baseConfig, task.filePath, task.memberId, outputDir);
+
+        if (result.success) {
+            successCount++;
+            const QString outFile = QString::fromStdString(result.outputFile);
+            if (!task.memberId.isEmpty()) {
+                memberOutputFiles.append(outFile);
+            }
+        } else {
+            failCount++;
+        }
+
+        emit fileCompleted(currentIdx, result.success,
+                           QString::fromStdString(result.outputFile),
+                           QString::fromStdString(result.error));
+        processedWatermarkTasks++;
+
+        if (!result.success && isDiskSpaceError(result)) {
+            const QString outputBaseDir = outputDir.empty()
+                ? QFileInfo(task.filePath).absolutePath()
+                : QString::fromStdString(outputDir);
+            pauseForDiskSpace(task.filePath, outputBaseDir);
+            break;
+        }
+    }
+
+    flushMemberUploads(activeMemberId);
+}
+
 void WatermarkWorker::process() {
     emit started();
 
@@ -215,6 +437,13 @@ void WatermarkWorker::process() {
     }
 
     std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
+
+    if (!m_resumeTasks.isEmpty()) {
+        processResumeTasks(watermarker, baseConfig, outputDir, successCount, failCount);
+        emit finished(successCount, failCount);
+        emit finishedWithMapping(successCount, failCount, {});
+        return;
+    }
 
     // All-members mode: iterate members x files (finish all files for one member before next)
     if (!m_memberIds.isEmpty()) {
@@ -1493,6 +1722,10 @@ void WatermarkPanel::onRemoveSelected() {
 
 void WatermarkPanel::onClearAll() {
     m_files.clear();
+    m_pausedForDiskSpace = false;
+    m_diskSpacePauseMessage.clear();
+    m_pausedJobId.clear();
+    m_currentJobId.clear();
     populateTable();
     updateStats();
     updateButtonStates();
@@ -1507,6 +1740,11 @@ void WatermarkPanel::onBrowseOutput() {
 
 void WatermarkPanel::onStartWatermark() {
     if (m_isRunning) return;
+
+    if (m_pausedForDiskSpace) {
+        onResumePausedWatermark();
+        return;
+    }
 
     if (m_files.isEmpty()) {
         QMessageBox::warning(this, "No Files", "Please add files to watermark.");
@@ -1799,6 +2037,7 @@ void WatermarkPanel::onStartWatermark() {
         plannedCount,
         metadata);
     m_retrySourceJobId.clear();
+    m_pausedJobId.clear();
     m_currentJobCancelled = false;
 
     // Create worker thread
@@ -1919,6 +2158,319 @@ void WatermarkPanel::onStartWatermark() {
         QString("Watermarking %1 %2")
             .arg(plannedCount)
             .arg(plannedCount == 1 ? "file" : "files"));
+    m_workerThread->start();
+}
+
+void WatermarkPanel::onResumePausedWatermark() {
+    if (m_isRunning) {
+        return;
+    }
+
+    if (m_files.isEmpty()) {
+        QMessageBox::warning(this, "No Files", "No paused watermark rows are available to resume.");
+        return;
+    }
+
+    QList<WatermarkResumeTask> tasks;
+    QStringList missingSources;
+    QStringList removedPartialOutputs;
+    int watermarkTaskCount = 0;
+    int uploadOnlyCount = 0;
+    int skippedCompleteCount = 0;
+
+    m_workerIdxToRow.clear();
+    for (int row = 0; row < m_files.size(); ++row) {
+        WatermarkFileInfo& info = m_files[row];
+        if (info.isHeader) {
+            continue;
+        }
+
+        const int headerRow = findMemberHeaderRow(info.memberId);
+        const bool memberUploaded = headerRow >= 0 && m_files[headerRow].status == "uploaded";
+        const bool complete = info.status == "complete" || info.status == "uploaded";
+
+        if (memberUploaded) {
+            skippedCompleteCount++;
+            continue;
+        }
+
+        if (complete) {
+            skippedCompleteCount++;
+            if (m_autoUploadCheck && m_autoUploadCheck->isChecked()
+                && !info.memberId.isEmpty()
+                && !info.outputPath.isEmpty()
+                && QFileInfo::exists(info.outputPath)) {
+                WatermarkResumeTask task;
+                task.filePath = info.filePath;
+                task.memberId = info.memberId;
+                task.rowIndex = row;
+                task.existingOutputPath = info.outputPath;
+                task.watermarkNeeded = false;
+                tasks.append(task);
+                uploadOnlyCount++;
+            }
+            continue;
+        }
+
+        if (!QFileInfo::exists(info.filePath)) {
+            missingSources.append(info.filePath);
+            info.status = "error";
+            info.error = "Source file missing during resume";
+            updateSingleRow(row);
+            continue;
+        }
+
+        if (!info.outputPath.isEmpty() && QFileInfo::exists(info.outputPath)) {
+            if (QFile::remove(info.outputPath)) {
+                removedPartialOutputs.append(info.outputPath);
+            }
+        }
+
+        info.status = "pending";
+        info.outputPath.clear();
+        info.error.clear();
+        info.progressPercent = 0;
+        updateSingleRow(row);
+
+        WatermarkResumeTask task;
+        task.filePath = info.filePath;
+        task.memberId = info.memberId;
+        task.rowIndex = row;
+        task.watermarkNeeded = true;
+        m_workerIdxToRow[watermarkTaskCount] = row;
+        tasks.append(task);
+        watermarkTaskCount++;
+    }
+
+    for (int row = 0; row < m_files.size(); ++row) {
+        if (m_files[row].isHeader) {
+            updateMemberHeader(row);
+        }
+    }
+    updateStats();
+
+    if (!missingSources.isEmpty()) {
+        QMessageBox::warning(this, "Missing Sources",
+            QString("%1 source file(s) are missing and cannot be resumed:\n\n%2")
+                .arg(missingSources.size())
+                .arg(missingSources.join("\n")));
+    }
+
+    if (tasks.isEmpty()) {
+        m_pausedForDiskSpace = false;
+        m_diskSpacePauseMessage.clear();
+        if (!m_pausedJobId.isEmpty()) {
+            OperationJobStore::instance().markCompleted(
+                m_pausedJobId,
+                skippedCompleteCount,
+                0,
+                0,
+                "Paused watermark job already has no pending work");
+        }
+        m_pausedJobId.clear();
+        m_currentJobId.clear();
+        m_statusLabel->setText("No pending watermark work remains.");
+        updateButtonStates();
+        return;
+    }
+
+    QString confirmText = QString(
+        "Resume this paused watermark job?\n\n"
+        "Pending rows to watermark: %1\n"
+        "Existing completed outputs to upload: %2\n"
+        "Completed rows skipped: %3")
+        .arg(watermarkTaskCount)
+        .arg(uploadOnlyCount)
+        .arg(skippedCompleteCount);
+    if (!removedPartialOutputs.isEmpty()) {
+        confirmText += QString("\n\nRemoved %1 partial output file(s) before retrying those rows.")
+            .arg(removedPartialOutputs.size());
+    }
+
+    if (QMessageBox::question(this, "Resume Watermarking",
+            confirmText,
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::Yes) != QMessageBox::Yes) {
+        updateButtonStates();
+        return;
+    }
+
+    WatermarkConfig config = buildConfig();
+    QString outputDir;
+    if (!m_sameAsInputCheck->isChecked() && !m_outputDirEdit->text().isEmpty()) {
+        outputDir = m_outputDirEdit->text();
+    }
+
+    if (m_autoUploadCheck && m_autoUploadCheck->isChecked()) {
+        bool useCustomPath = m_customPathCheck && m_customPathCheck->isChecked()
+            && m_customPathEdit && !m_customPathEdit->text().isEmpty();
+        if (m_customPathCheck && m_customPathCheck->isChecked() && !useCustomPath) {
+            QMessageBox::warning(this, "Missing Path",
+                "Custom upload path is enabled but no path specified.\n"
+                "Enter a MEGA cloud path or disable the custom path option.");
+            return;
+        }
+
+        if (!useCustomPath) {
+            QStringList membersWithoutFolder;
+            QSet<QString> memberIds;
+            for (const WatermarkResumeTask& task : tasks) {
+                if (!task.memberId.isEmpty()) {
+                    memberIds.insert(task.memberId);
+                }
+            }
+            for (const QString& memberId : memberIds) {
+                MemberInfo mi = m_registry->getMember(memberId);
+                if (mi.distributionFolder.isEmpty()) {
+                    membersWithoutFolder << (mi.displayName.isEmpty() ? memberId : mi.displayName);
+                }
+            }
+            if (!membersWithoutFolder.isEmpty()) {
+                QMessageBox::warning(this, "Missing Distribution Folders",
+                    QString("Auto-upload is enabled but these members have no distribution folder:\n\n%1")
+                        .arg(membersWithoutFolder.join("\n")));
+                return;
+            }
+        }
+    }
+
+    m_currentJobId = m_pausedJobId.isEmpty() ? m_currentJobId : m_pausedJobId;
+    if (m_currentJobId.isEmpty()) {
+        QJsonObject metadata;
+        metadata["resumeMode"] = "disk_full";
+        metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
+        metadata["resumeUploadOnlyCount"] = uploadOnlyCount;
+        m_currentJobId = OperationJobStore::instance().createJob(
+            OperationJobType::Watermark,
+            QString("Resume paused watermark %1 rows").arg(watermarkTaskCount),
+            watermarkTaskCount + skippedCompleteCount,
+            metadata);
+    } else {
+        OperationJobRecord record = OperationJobStore::instance().job(m_currentJobId);
+        QJsonObject metadata = record.metadata;
+        metadata["resumeMode"] = "disk_full";
+        metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
+        metadata["resumeUploadOnlyCount"] = uploadOnlyCount;
+        metadata["resumeSkippedCompleteCount"] = skippedCompleteCount;
+        metadata["lastResumeAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        OperationJobStore::instance().createJob(
+            OperationJobType::Watermark,
+            record.title.isEmpty()
+                ? QString("Resume paused watermark %1 rows").arg(watermarkTaskCount)
+                : record.title,
+            qMax(record.plannedCount, watermarkTaskCount + skippedCompleteCount),
+            metadata,
+            m_currentJobId);
+    }
+
+    m_workerThread = new QThread();
+    m_worker = new WatermarkWorker();
+    m_worker->moveToThread(m_workerThread);
+    m_worker->setFiles({});
+    m_worker->setOutputDir(outputDir);
+    m_worker->setConfig(config);
+    m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
+    m_worker->setRootDir(m_sourceRootDir);
+    m_worker->setResumeTasks(tasks);
+
+    if (m_autoUploadCheck && m_autoUploadCheck->isChecked() && m_megaApi) {
+        m_worker->setAutoUpload(true, m_megaApi);
+        if (m_customPathCheck && m_customPathCheck->isChecked()
+            && m_customPathEdit && !m_customPathEdit->text().isEmpty()) {
+            m_worker->setCustomUploadPath(m_customPathEdit->text());
+        }
+    }
+    if (m_metricsStore) {
+        m_worker->setMetricsStore(m_metricsStore);
+    }
+
+    connect(m_workerThread, &QThread::started, m_worker, &WatermarkWorker::process);
+    connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);
+    connect(m_worker, &WatermarkWorker::fileCompleted, this, &WatermarkPanel::onWorkerFileCompleted);
+    connect(m_worker, &WatermarkWorker::finished, this, &WatermarkPanel::onWorkerFinished);
+    connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
+            [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
+                if (m_pausedForDiskSpace || memberFileMap.isEmpty()) {
+                    return;
+                }
+                if (m_autoUploadCheck && m_autoUploadCheck->isChecked()) {
+                    m_lastMemberFileMap.clear();
+                    m_sendToDistBtn->setEnabled(false);
+                } else {
+                    m_lastMemberFileMap = memberFileMap;
+                    m_sendToDistBtn->setEnabled(true);
+                }
+            });
+    connect(m_worker, &WatermarkWorker::memberBatchUploading, this,
+        [this](const QString& memberId, int fileIdx, int totalFiles, const QString& fileName) {
+            m_statusLabel->setText(QString("Uploading %1 to %2 (%3/%4)...")
+                .arg(fileName).arg(memberId).arg(fileIdx).arg(totalFiles));
+            int hdr = findMemberHeaderRow(memberId);
+            if (hdr >= 0) {
+                m_files[hdr].status = "uploading";
+                updateMemberHeader(hdr);
+            }
+        });
+    connect(m_worker, &WatermarkWorker::memberBatchCleanedUp, this,
+        [this](const QString& memberId, int uploaded, int failed, int deleted) {
+            qDebug() << "Smart resume pipeline:" << memberId
+                     << "uploaded:" << uploaded << "failed:" << failed << "cleaned:" << deleted;
+            int hdr = findMemberHeaderRow(memberId);
+            if (hdr >= 0) {
+                m_files[hdr].status = failed > 0 ? "error" : "uploaded";
+                if (failed > 0) {
+                    m_files[hdr].error = QString("%1 upload(s) failed during resume").arg(failed);
+                }
+                updateMemberHeader(hdr);
+            }
+        });
+    connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
+        [this](qint64 available, qint64 needed) {
+            qWarning() << "Low disk space during resume! Available:" << available << "Needed:" << needed;
+            m_pausedForDiskSpace = true;
+            m_diskSpacePauseMessage = QString("Paused: disk is still full (%1 free, %2 needed). Free space and resume again.")
+                .arg(formatFileSize(available))
+                .arg(formatFileSize(needed));
+            m_statusLabel->setText(m_diskSpacePauseMessage);
+            OperationJobStore::instance().markPaused(m_currentJobId, m_diskSpacePauseMessage);
+        });
+    connect(m_worker, &WatermarkWorker::memberAutoUploadSkipped, this,
+        [this](const QString& memberId, const QString& reason) {
+            qWarning() << "Auto-upload skipped during resume for" << memberId << ":" << reason;
+            m_statusLabel->setText(QString("Skipped upload for %1: %2").arg(memberId).arg(reason));
+            int hdr = findMemberHeaderRow(memberId);
+            if (hdr >= 0) {
+                m_files[hdr].status = "error";
+                m_files[hdr].error = reason;
+                updateMemberHeader(hdr);
+            }
+        });
+
+    connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);
+    connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
+    connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+    connect(m_workerThread, &QThread::finished, this, [this]() {
+        m_workerThread = nullptr;
+        m_worker = nullptr;
+    });
+
+    m_pausedForDiskSpace = false;
+    m_diskSpacePauseMessage.clear();
+    m_pausedJobId.clear();
+    m_currentJobCancelled = false;
+    m_isRunning = true;
+    m_sendToDistBtn->setEnabled(false);
+    updateButtonStates();
+    m_progressBar->setValue(0);
+    m_statusLabel->setText(QString("Resuming paused watermark job: %1 row(s) pending...")
+        .arg(watermarkTaskCount));
+
+    emit watermarkStarted();
+    OperationJobStore::instance().markRunning(
+        m_currentJobId,
+        QString("Resuming paused watermark job: %1 row(s) pending, %2 existing output(s) queued for upload")
+            .arg(watermarkTaskCount)
+            .arg(uploadOnlyCount));
     m_workerThread->start();
 }
 
@@ -2219,54 +2771,74 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     m_isRunning = false;
     updateButtonStates();
 
-    emit watermarkCompleted(successCount, failCount);
-
     if (m_pausedForDiskSpace) {
+        emit watermarkCompleted(successCount, failCount);
         const QString message = m_diskSpacePauseMessage.isEmpty()
             ? "Paused: disk is full. Free space and start again."
             : m_diskSpacePauseMessage;
         m_statusLabel->setText(message);
         OperationJobStore::instance().markPaused(m_currentJobId, message);
+        m_pausedJobId = m_currentJobId;
         QMessageBox::warning(this, "Watermarking Paused",
-            QString("%1\n\nNo more files or member folders will be created until you restart the job.")
+            QString("%1\n\nNo more files or member folders will be created. Free space, then click Resume Watermarking to continue only unfinished rows.")
                 .arg(message));
         m_currentJobId.clear();
         m_currentJobCancelled = false;
+        updateButtonStates();
         return;
     }
 
+    int finalSuccessCount = 0;
+    int finalFailCount = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            continue;
+        }
+        if (info.status == "complete" || info.status == "uploaded") {
+            ++finalSuccessCount;
+        } else if (info.status == "error") {
+            ++finalFailCount;
+        }
+    }
+    if (finalSuccessCount == 0 && finalFailCount == 0) {
+        finalSuccessCount = successCount;
+        finalFailCount = failCount;
+    }
+
+    emit watermarkCompleted(finalSuccessCount, finalFailCount);
+
     AnimationHelper::animateProgress(m_progressBar, 100);
-    m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(successCount).arg(failCount));
+    m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(finalSuccessCount).arg(finalFailCount));
 
     if (!m_currentJobId.isEmpty()) {
         if (m_currentJobCancelled) {
             OperationJobStore::instance().markCancelled(
                 m_currentJobId,
                 QString("Watermark cancelled: %1 completed, %2 failed")
-                    .arg(successCount).arg(failCount));
-        } else if (failCount > 0) {
+                    .arg(finalSuccessCount).arg(finalFailCount));
+        } else if (finalFailCount > 0) {
             OperationJobStore::instance().markFailed(
                 m_currentJobId,
-                QString("Watermark completed with %1 failed").arg(failCount),
-                successCount,
-                failCount);
+                QString("Watermark completed with %1 failed").arg(finalFailCount),
+                finalSuccessCount,
+                finalFailCount);
         } else {
             OperationJobStore::instance().markCompleted(
                 m_currentJobId,
-                successCount,
-                failCount,
+                finalSuccessCount,
+                finalFailCount,
                 0,
-                QString("Watermark complete: %1 succeeded").arg(successCount));
+                QString("Watermark complete: %1 succeeded").arg(finalSuccessCount));
         }
     }
 
-    if (failCount == 0) {
+    if (finalFailCount == 0) {
         QMessageBox::information(this, "Complete",
-            QString("Successfully watermarked %1 %2.").arg(successCount).arg(successCount == 1 ? "file" : "files"));
+            QString("Successfully watermarked %1 %2.").arg(finalSuccessCount).arg(finalSuccessCount == 1 ? "file" : "files"));
     } else {
         QMessageBox::warning(this, "Complete with Errors",
             QString("Completed: %1 success, %2 failed.\n\nCheck the table for error details.")
-                .arg(successCount).arg(failCount));
+                .arg(finalSuccessCount).arg(finalFailCount));
     }
 
     m_currentJobId.clear();
@@ -2535,6 +3107,7 @@ void WatermarkPanel::updateStats() {
 void WatermarkPanel::updateButtonStates() {
     bool hasFiles = !m_files.isEmpty();
     bool hasSelection = m_fileTable->selectionModel()->hasSelection();
+    const bool pausedForDisk = m_pausedForDiskSpace && !m_isRunning;
 
     // Count completed files for distribution button
     int completedCount = 0;
@@ -2544,28 +3117,60 @@ void WatermarkPanel::updateButtonStates() {
         }
     }
 
-    m_removeBtn->setEnabled(hasSelection && !m_isRunning);
+    m_startBtn->setText(pausedForDisk ? "Resume Watermarking" : "Start Watermarking");
+    m_startBtn->setToolTip(pausedForDisk
+        ? "Resume only unfinished rows from the paused disk-full job."
+        : "Start watermarking the selected files with the current settings.");
+
+    m_removeBtn->setEnabled(hasSelection && !m_isRunning && !pausedForDisk);
     m_clearBtn->setEnabled(hasFiles && !m_isRunning);
     m_startBtn->setEnabled(hasFiles && !m_isRunning);
     m_stopBtn->setEnabled(m_isRunning);
-    m_sendToDistBtn->setEnabled(completedCount > 0 && !m_isRunning);
+    m_sendToDistBtn->setEnabled(completedCount > 0 && !m_isRunning && !pausedForDisk);
 
-    m_addFilesBtn->setEnabled(!m_isRunning);
-    m_addFolderBtn->setEnabled(!m_isRunning);
-    m_modeCombo->setEnabled(!m_isRunning);
-    m_memberListWidget->setEnabled(!m_isRunning);
-    m_selectAllMembersBtn->setEnabled(!m_isRunning);
-    m_deselectAllMembersBtn->setEnabled(!m_isRunning);
-    m_groupQuickSelectCombo->setEnabled(!m_isRunning);
-    m_memberSearchEdit->setEnabled(!m_isRunning);
-    m_primaryTextEdit->setEnabled(!m_isRunning);
-    m_secondaryTextEdit->setEnabled(!m_isRunning);
-    m_presetCombo->setEnabled(!m_isRunning);
-    m_crfSpin->setEnabled(!m_isRunning);
-    m_intervalSpin->setEnabled(!m_isRunning);
-    m_durationSpin->setEnabled(!m_isRunning);
-    m_embedMetadataCheck->setEnabled(!m_isRunning);
-    bool metaEnabled = !m_isRunning && m_embedMetadataCheck->isChecked();
+    m_addFilesBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_addFolderBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_outputDirEdit->setEnabled(!m_isRunning && !pausedForDisk && !m_sameAsInputCheck->isChecked());
+    m_browseOutputBtn->setEnabled(!m_isRunning && !pausedForDisk && !m_sameAsInputCheck->isChecked());
+    m_sameAsInputCheck->setEnabled(!m_isRunning && !pausedForDisk);
+    m_modeCombo->setEnabled(!m_isRunning && !pausedForDisk);
+    m_memberListWidget->setEnabled(!m_isRunning && !pausedForDisk);
+    m_selectAllMembersBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_deselectAllMembersBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_groupQuickSelectCombo->setEnabled(!m_isRunning && !pausedForDisk);
+    m_memberSearchEdit->setEnabled(!m_isRunning && !pausedForDisk);
+    m_primaryTextEdit->setEnabled(!m_isRunning && !pausedForDisk);
+    m_secondaryTextEdit->setEnabled(!m_isRunning && !pausedForDisk);
+    m_presetCombo->setEnabled(!m_isRunning && !pausedForDisk);
+    m_crfSpin->setEnabled(!m_isRunning && !pausedForDisk);
+    m_intervalSpin->setEnabled(!m_isRunning && !pausedForDisk);
+    m_durationSpin->setEnabled(!m_isRunning && !pausedForDisk);
+    m_settingsBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_presetNameCombo->setEnabled(!m_isRunning && !pausedForDisk);
+    m_savePresetBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_deletePresetBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_watermarkHelpBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    m_watermarkPreviewBtn->setEnabled(!m_isRunning && !pausedForDisk);
+    if (m_autoUploadCheck) {
+        const bool memberMode = m_modeCombo->currentData().toString() != "global";
+        m_autoUploadCheck->setEnabled(!m_isRunning && !pausedForDisk && memberMode);
+    }
+    if (m_customPathCheck) {
+        m_customPathCheck->setEnabled(!m_isRunning && !pausedForDisk
+            && m_autoUploadCheck && m_autoUploadCheck->isChecked());
+    }
+    if (m_customPathEdit) {
+        m_customPathEdit->setEnabled(!m_isRunning && !pausedForDisk
+            && m_autoUploadCheck && m_autoUploadCheck->isChecked()
+            && m_customPathCheck && m_customPathCheck->isChecked());
+    }
+    if (m_browseCustomPathBtn) {
+        m_browseCustomPathBtn->setEnabled(!m_isRunning && !pausedForDisk
+            && m_autoUploadCheck && m_autoUploadCheck->isChecked()
+            && m_customPathCheck && m_customPathCheck->isChecked());
+    }
+    m_embedMetadataCheck->setEnabled(!m_isRunning && !pausedForDisk);
+    bool metaEnabled = !m_isRunning && !pausedForDisk && m_embedMetadataCheck->isChecked();
     m_metaTitleEdit->setEnabled(metaEnabled);
     m_metaAuthorEdit->setEnabled(metaEnabled);
     m_metaCommentEdit->setEnabled(metaEnabled);

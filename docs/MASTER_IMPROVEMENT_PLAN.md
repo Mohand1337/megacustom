@@ -1684,6 +1684,34 @@ Still pending:
 - Add cleanup actions for disk-full paused watermark jobs and partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-16 Watermark Disk-Full Resume Pass
+
+Scope:
+
+- Fixed the unsafe runtime resume path after a disk-full watermark pause. This is separate from Jobs-tab retry: resume continues the paused table state, while retry rebuilds a new run from saved metadata.
+
+Implemented:
+
+- A disk-full pause now preserves the paused watermark job ID for the next resume attempt.
+- The Start button changes to `Resume Watermarking` while a disk-full pause is active.
+- Resume builds an explicit row checkpoint plan from the current table instead of rebuilding all selected files and members from scratch.
+- Completed/uploaded rows are skipped during resume.
+- Existing completed local outputs are carried into the member auto-upload batch so partial-member resumes do not strand already-created files.
+- Pending/error rows are retried only if their source file still exists.
+- Partial failed output files are removed before retrying that row, reducing numbered duplicate outputs caused by existing partial files.
+- Mutable controls are locked while a disk-full pause is active, so source files, members, templates, output paths, and auto-upload settings cannot drift before resume.
+- Final job completion counts are derived from the table state, not only the rows processed after clicking Resume.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add explicit cleanup actions for cloud folders or local partial artifacts that already existed before this pass.
+- Add cleanup actions for partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

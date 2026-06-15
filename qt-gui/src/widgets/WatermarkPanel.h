@@ -48,6 +48,14 @@ struct WatermarkFileInfo {
     bool isHeader = false;  // true for member section header rows
 };
 
+struct WatermarkResumeTask {
+    QString filePath;
+    QString memberId;
+    int rowIndex = -1;
+    QString existingOutputPath;
+    bool watermarkNeeded = true;
+};
+
 /**
  * Worker thread for watermarking operations
  */
@@ -66,6 +74,7 @@ public:
     void setCustomUploadPath(const QString& path);
     void setRootDir(const QString& rootDir);
     void setMetricsStore(MetricsStore* store);
+    void setResumeTasks(const QList<WatermarkResumeTask>& tasks);
 
 public slots:
     void process();
@@ -88,6 +97,16 @@ private:
     bool ensureDiskSpaceForNextOutput(const QString& inputPath, const QString& outputBaseDir);
     void pauseForDiskSpace(const QString& inputPath, const QString& outputBaseDir);
     bool isDiskSpaceError(const WatermarkResult& result) const;
+    WatermarkResult watermarkInput(Watermarker& watermarker,
+                                   const WatermarkConfig& baseConfig,
+                                   const QString& inputPath,
+                                   const QString& memberId,
+                                   const std::string& outputDir);
+    void processResumeTasks(Watermarker& watermarker,
+                            const WatermarkConfig& baseConfig,
+                            const std::string& outputDir,
+                            int& successCount,
+                            int& failCount);
 
     QStringList m_files;
     QString m_outputDir;
@@ -102,6 +121,7 @@ private:
     QString m_customUploadPath;
     QString m_rootDir;
     MetricsStore* m_metricsStore = nullptr;
+    QList<WatermarkResumeTask> m_resumeTasks;
 };
 
 /**
@@ -168,6 +188,7 @@ private:
     void updateStats();
     void updateButtonStates();
     void updateCurrentJobProgress(const QString& summary = {});
+    void onResumePausedWatermark();
     void loadMembers();
     QStringList getSelectedMemberIds() const;
     WatermarkConfig buildConfig() const;
@@ -245,6 +266,7 @@ private:
     bool m_pausedForDiskSpace = false;
     QString m_diskSpacePauseMessage;
     QString m_currentJobId;
+    QString m_pausedJobId;
     QString m_retrySourceJobId;
     bool m_currentJobCancelled = false;
     QString m_sourceRootDir;  // Root folder from "Add Folder" for subfolder structure
