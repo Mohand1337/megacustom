@@ -70,6 +70,102 @@ struct FolderCopyTask {
     bool isLocalSource = false;
 };
 
+static QJsonArray stringListToJsonArray(const QStringList& values) {
+    QJsonArray array;
+    for (const QString& value : values) {
+        array.append(value);
+    }
+    return array;
+}
+
+static QStringList stringListFromJsonArray(const QJsonArray& array) {
+    QStringList values;
+    for (const QJsonValue& value : array) {
+        const QString text = value.toString().trimmed();
+        if (!text.isEmpty()) {
+            values.append(text);
+        }
+    }
+    return values;
+}
+
+static QJsonObject folderCopyTaskToJson(const FolderCopyTask& task) {
+    QJsonObject object;
+    object["index"] = task.index;
+    object["sourcePath"] = task.sourcePath;
+    object["destPath"] = task.destPath;
+    object["memberId"] = task.memberId;
+    object["copyFolderItself"] = task.copyFolderItself;
+    object["isSmartRouteChild"] = task.isSmartRouteChild;
+    object["individualFiles"] = stringListToJsonArray(task.individualFiles);
+    object["contentTypeLabel"] = task.contentTypeLabel;
+    object["isLocalSource"] = task.isLocalSource;
+    return object;
+}
+
+static FolderCopyTask folderCopyTaskFromJson(const QJsonObject& object, int fallbackIndex) {
+    FolderCopyTask task;
+    task.index = object["index"].toInt(fallbackIndex);
+    task.sourcePath = object["sourcePath"].toString();
+    task.destPath = object["destPath"].toString();
+    task.memberId = object["memberId"].toString();
+    task.copyFolderItself = object["copyFolderItself"].toBool(false);
+    task.isSmartRouteChild = object["isSmartRouteChild"].toBool(false);
+    task.individualFiles = stringListFromJsonArray(object["individualFiles"].toArray());
+    task.contentTypeLabel = object["contentTypeLabel"].toString();
+    task.isLocalSource = object["isLocalSource"].toBool(false);
+    return task;
+}
+
+static QJsonArray folderCopyTasksToJson(const QList<FolderCopyTask>& tasks) {
+    QJsonArray array;
+    for (const FolderCopyTask& task : tasks) {
+        array.append(folderCopyTaskToJson(task));
+    }
+    return array;
+}
+
+static QList<FolderCopyTask> folderCopyTasksFromJson(const QJsonArray& array) {
+    QList<FolderCopyTask> tasks;
+    for (int i = 0; i < array.size(); ++i) {
+        if (!array[i].isObject()) {
+            continue;
+        }
+        tasks.append(folderCopyTaskFromJson(array[i].toObject(), i));
+    }
+    return tasks;
+}
+
+static QJsonArray memberFileMapToJson(const QMap<QString, QStringList>& memberFileMap) {
+    QJsonArray array;
+    for (auto it = memberFileMap.constBegin(); it != memberFileMap.constEnd(); ++it) {
+        QJsonObject object;
+        object["memberId"] = it.key();
+        object["files"] = stringListToJsonArray(it.value());
+        array.append(object);
+    }
+    return array;
+}
+
+static QMap<QString, QStringList> memberFileMapFromJson(const QJsonArray& array) {
+    QMap<QString, QStringList> memberFileMap;
+    for (const QJsonValue& value : array) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject object = value.toObject();
+        const QString memberId = object["memberId"].toString().trimmed();
+        if (memberId.isEmpty()) {
+            continue;
+        }
+        const QStringList files = stringListFromJsonArray(object["files"].toArray());
+        if (!files.isEmpty()) {
+            memberFileMap[memberId] = files;
+        }
+    }
+    return memberFileMap;
+}
+
 // ==================== FolderCopyWorker ====================
 
 class FolderCopyWorker : public QObject {
@@ -469,12 +565,22 @@ void DistributionPanel::setDistributionController(DistributionController* contro
         connect(m_distController, &DistributionController::distributionStarted,
                 this, [this](const QString& jobId) {
             if (!m_controllerActive) return;
+
+            QJsonObject metadata;
+            QString preferredId = jobId;
+            if (!m_currentJobId.isEmpty()) {
+                OperationJobRecord existing = OperationJobStore::instance().job(m_currentJobId);
+                metadata = existing.metadata;
+                preferredId = m_currentJobId;
+            }
+            metadata["controllerJobId"] = jobId;
+
             m_currentJobId = OperationJobStore::instance().createJob(
                 OperationJobType::Distribution,
                 QString("Upload to %1 member folders").arg(m_currentJobPlannedCount),
                 m_currentJobPlannedCount,
-                QJsonObject{},
-                jobId);
+                metadata,
+                preferredId);
             m_currentJobCancelled = false;
             OperationJobStore::instance().markRunning(
                 m_currentJobId,
@@ -1032,6 +1138,358 @@ void DistributionPanel::addFilesFromWatermark(const QStringList& filePaths) {
     // on MEGA for the scan to find them. The all-members/group pipeline handles
     // this automatically via sendToDistributionMapped + DistributionController.
     onScanWmFolder();
+}
+
+void DistributionPanel::retryJob(const QString& jobId) {
+    if (m_isRunning || (m_distController && m_distController->isRunning())) {
+        QMessageBox::warning(this, "Distribution Running",
+            "A distribution job is already running. Stop it before retrying another job.");
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(jobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Distribution) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This job cannot be retried from the Distribution panel.");
+        return;
+    }
+
+    QJsonObject metadata = record.metadata;
+    QString retryMode = metadata["retryMode"].toString();
+    if (retryMode.isEmpty()) {
+        if (metadata.contains("memberFileMap")) {
+            retryMode = "direct_upload";
+        } else if (metadata.contains("tasks")) {
+            retryMode = "folder_tasks";
+        }
+    }
+
+    if (retryMode.isEmpty()) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This distribution job does not contain retry metadata. New distribution jobs created after this update can be retried.");
+        return;
+    }
+
+    if (m_memberTable->rowCount() > 0 || !m_wmFolders.isEmpty() || !m_pendingMemberFileMap.isEmpty()) {
+        int reply = QMessageBox::question(this, "Replace Distribution Table",
+            "Retrying this job will replace the current distribution table. Continue?",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    if (retryMode == "direct_upload") {
+        if (!m_distController) {
+            QMessageBox::warning(this, "Retry Unavailable",
+                "The upload controller is not available for this distribution retry.");
+            return;
+        }
+
+        QMap<QString, QStringList> memberFileMap =
+            memberFileMapFromJson(metadata["memberFileMap"].toArray());
+        if (memberFileMap.isEmpty()) {
+            QMessageBox::warning(this, "Retry Unavailable",
+                "This upload job does not contain saved member file mappings.");
+            return;
+        }
+
+        QMap<QString, QStringList> runnableMap;
+        QStringList missingFiles;
+        for (auto it = memberFileMap.constBegin(); it != memberFileMap.constEnd(); ++it) {
+            QStringList existingFiles;
+            for (const QString& path : it.value()) {
+                if (QFileInfo::exists(path)) {
+                    existingFiles.append(path);
+                } else {
+                    missingFiles.append(path);
+                }
+            }
+            if (!existingFiles.isEmpty()) {
+                runnableMap[it.key()] = existingFiles;
+            }
+        }
+
+        if (!missingFiles.isEmpty()) {
+            QMessageBox::warning(this, "Missing Files",
+                QString("%1 local file(s) from this upload job no longer exist and will be skipped:\n\n%2")
+                    .arg(missingFiles.size())
+                    .arg(missingFiles.join("\n")));
+        }
+
+        if (runnableMap.isEmpty()) {
+            QMessageBox::warning(this, "Retry Unavailable",
+                "None of the original upload files are still available.");
+            return;
+        }
+
+        m_retrySourceJobId = record.id;
+        prepareForUpload(runnableMap);
+        m_statusLabel->setText(QString("Retrying upload job %1. Confirm to start.")
+            .arg(record.id));
+        onStartDistribution();
+        return;
+    }
+
+    if (retryMode != "folder_tasks") {
+        QMessageBox::warning(this, "Retry Unavailable",
+            QString("Unsupported distribution retry mode: %1").arg(retryMode));
+        return;
+    }
+
+    QList<FolderCopyTask> tasks = folderCopyTasksFromJson(metadata["tasks"].toArray());
+    if (tasks.isEmpty()) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "This distribution job does not contain saved source-to-destination tasks.");
+        return;
+    }
+
+    QList<FolderCopyTask> runnableTasks;
+    QStringList skippedSources;
+    for (FolderCopyTask task : tasks) {
+        if (task.isLocalSource) {
+            if (!task.individualFiles.isEmpty()) {
+                QStringList existingFiles;
+                for (const QString& path : task.individualFiles) {
+                    if (QFileInfo::exists(path)) {
+                        existingFiles.append(path);
+                    } else {
+                        skippedSources.append(path);
+                    }
+                }
+                task.individualFiles = existingFiles;
+                if (task.individualFiles.isEmpty()) {
+                    continue;
+                }
+            } else if (!QFileInfo::exists(task.sourcePath)) {
+                skippedSources.append(task.sourcePath);
+                continue;
+            }
+        }
+
+        if (task.sourcePath.trimmed().isEmpty() && task.individualFiles.isEmpty()) {
+            skippedSources.append(QString("Task for %1").arg(task.memberId));
+            continue;
+        }
+        if (task.destPath.trimmed().isEmpty()) {
+            skippedSources.append(QString("%1 has no destination").arg(task.memberId));
+            continue;
+        }
+
+        task.index = runnableTasks.size();
+        runnableTasks.append(task);
+    }
+
+    if (!skippedSources.isEmpty()) {
+        QMessageBox::warning(this, "Skipped Tasks",
+            QString("%1 saved source(s) are no longer available or complete and will be skipped:\n\n%2")
+                .arg(skippedSources.size())
+                .arg(skippedSources.join("\n")));
+    }
+
+    if (runnableTasks.isEmpty()) {
+        QMessageBox::warning(this, "Retry Unavailable",
+            "No saved distribution tasks are still runnable.");
+        return;
+    }
+
+    const bool moveMode = metadata["moveFiles"].toBool(metadata["operation"].toString() == "move");
+    const bool copyFolderItself = metadata["copyFolderItself"].toBool(false);
+
+    if (m_sourceTypeCombo) {
+        const QString sourceType = metadata["sourceType"].toString();
+        const int sourceIndex = m_sourceTypeCombo->findData(sourceType);
+        if (sourceIndex >= 0) {
+            m_sourceTypeCombo->setCurrentIndex(sourceIndex);
+        }
+    }
+    m_wmPathEdit->setText(metadata["sourcePath"].toString());
+    m_destTemplateEdit->setText(metadata["templatePath"].toString(m_destTemplateEdit->text()));
+    if (m_monthCombo) {
+        const QString month = metadata["month"].toString();
+        const int monthIndex = m_monthCombo->findText(month);
+        if (monthIndex >= 0) {
+            m_monthCombo->setCurrentIndex(monthIndex);
+        }
+    }
+    if (m_broadcastCheck) {
+        m_broadcastCheck->setChecked(metadata["broadcast"].toBool(false));
+    }
+    if (m_smartRouteCheck) {
+        m_smartRouteCheck->setChecked(metadata["smartRoute"].toBool(false));
+    }
+    if (m_createDestFolderCheck) {
+        m_createDestFolderCheck->setChecked(metadata["createDestFolder"].toBool(true));
+    }
+    if (m_copyContentsOnlyCheck) {
+        m_copyContentsOnlyCheck->setChecked(!copyFolderItself);
+    }
+    if (m_skipExistingCheck) {
+        m_skipExistingCheck->setChecked(metadata["skipExisting"].toBool(
+            metadata["conflictMode"].toString() == "skip_existing"));
+    }
+    if (m_moveFilesCheck) {
+        m_moveFilesCheck->setChecked(moveMode);
+    }
+    if (m_removeWatermarkSuffixCheck) {
+        m_removeWatermarkSuffixCheck->setChecked(metadata["removeWatermarkSuffix"].toBool(true));
+    }
+
+    m_controllerActive = false;
+    m_pendingMemberFileMap.clear();
+    m_memberRowMap.clear();
+    m_routeMap.clear();
+    m_wmFolders.clear();
+    m_uploadBanner->setVisible(false);
+    m_modeIndicator->setText("Mode: Distribution Retry");
+    m_modeIndicator->setProperty("mode", "active");
+    m_modeIndicator->style()->polish(m_modeIndicator);
+
+    m_memberTable->setRowCount(0);
+    m_memberTable->setRowCount(runnableTasks.size());
+    auto& tm = ThemeManager::instance();
+    for (int row = 0; row < runnableTasks.size(); ++row) {
+        const FolderCopyTask& task = runnableTasks[row];
+
+        QCheckBox* check = new QCheckBox();
+        check->setChecked(true);
+        check->setEnabled(false);
+        QWidget* checkWidget = new QWidget();
+        QHBoxLayout* checkLayout = new QHBoxLayout(checkWidget);
+        checkLayout->addWidget(check);
+        checkLayout->setAlignment(Qt::AlignCenter);
+        checkLayout->setContentsMargins(0, 0, 0, 0);
+        m_memberTable->setCellWidget(row, COL_CHECK, checkWidget);
+
+        QString sourceLabel = task.sourcePath.isEmpty()
+            ? QString("%1 saved file(s)").arg(task.individualFiles.size())
+            : QFileInfo(task.sourcePath).fileName();
+        if (sourceLabel.isEmpty()) {
+            sourceLabel = task.sourcePath;
+        }
+        auto* sourceItem = new QTableWidgetItem(sourceLabel);
+        sourceItem->setToolTip(task.individualFiles.isEmpty()
+            ? task.sourcePath
+            : task.individualFiles.join("\n"));
+        m_memberTable->setItem(row, COL_SOURCE_FOLDER, sourceItem);
+
+        MemberInfo memberInfo = m_registry->getMember(task.memberId);
+        QString memberDisplay = memberInfo.displayName.isEmpty()
+            ? task.memberId
+            : QString("%1 (%2)").arg(memberInfo.displayName, task.memberId);
+        auto* memberItem = new QTableWidgetItem(memberDisplay);
+        memberItem->setForeground(tm.supportSuccess());
+        m_memberTable->setItem(row, COL_MATCHED_MEMBER, memberItem);
+
+        auto* matchItem = new QTableWidgetItem(task.contentTypeLabel.isEmpty()
+            ? "Retry"
+            : task.contentTypeLabel);
+        matchItem->setTextAlignment(Qt::AlignCenter);
+        matchItem->setForeground(tm.supportInfo());
+        m_memberTable->setItem(row, COL_MATCH_TYPE, matchItem);
+
+        auto* destItem = new QTableWidgetItem(task.destPath);
+        destItem->setToolTip(task.destPath);
+        m_memberTable->setItem(row, COL_DESTINATION, destItem);
+
+        auto* statusItem = new QTableWidgetItem("Pending");
+        statusItem->setTextAlignment(Qt::AlignCenter);
+        statusItem->setForeground(tm.textSecondary());
+        m_memberTable->setItem(row, COL_STATUS, statusItem);
+    }
+
+    updateEmptyState();
+    m_progressBar->setValue(0);
+    m_progressBar->setMaximum(runnableTasks.size());
+    m_successCount = 0;
+    m_failCount = 0;
+    m_currentJobCancelled = false;
+    m_currentJobPlannedCount = runnableTasks.size();
+    m_statusLabel->setText(QString("Ready to retry distribution job %1 with %2 task(s).")
+        .arg(record.id)
+        .arg(runnableTasks.size()));
+    m_statsLabel->setText(QString("Retry tasks: %1 | Operation: %2")
+        .arg(runnableTasks.size())
+        .arg(moveMode ? "Move" : "Copy"));
+
+    if (moveMode) {
+        QMessageBox::StandardButton reply = QMessageBox::warning(
+            this,
+            "Confirm Move Retry",
+            QString("This retries a MOVE distribution job. Source files that already moved may be missing, and remaining source files will be deleted after transfer.\n\nRetry %1 task(s)?")
+                .arg(runnableTasks.size()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    } else {
+        int reply = QMessageBox::question(this, "Confirm Distribution Retry",
+            QString("Retry %1 saved distribution task(s)?\n\nConflict handling: %2")
+                .arg(runnableTasks.size())
+                .arg((m_skipExistingCheck && m_skipExistingCheck->isChecked()) ? "Skip existing" : "Overwrite existing"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    metadata["retryMode"] = "folder_tasks";
+    metadata["tasks"] = folderCopyTasksToJson(runnableTasks);
+    metadata["retryOfJobId"] = record.id;
+    metadata["retriedTaskCount"] = runnableTasks.size();
+
+    m_currentJobId = OperationJobStore::instance().createJob(
+        OperationJobType::Distribution,
+        QString("%1 retry %2 distribution %3")
+            .arg(moveMode ? "Move" : "Copy")
+            .arg(runnableTasks.size())
+            .arg(runnableTasks.size() == 1 ? "task" : "tasks"),
+        runnableTasks.size(),
+        metadata);
+
+    m_isRunning = true;
+    m_isPaused = false;
+    m_startBtn->setEnabled(false);
+    m_pauseBtn->setEnabled(true);
+    m_stopBtn->setEnabled(true);
+    AnimationHelper::smoothShow(m_progressBar);
+    emit distributionStarted();
+    OperationJobStore::instance().markRunning(
+        m_currentJobId,
+        QString("Retrying %1 distribution %2")
+            .arg(moveMode ? "move" : "copy")
+            .arg(runnableTasks.size() == 1 ? "task" : "tasks"));
+
+    cleanupWorkerThread();
+    m_workerThread = new QThread(this);
+    m_copyWorker = new FolderCopyWorker();
+    m_copyWorker->moveToThread(m_workerThread);
+
+    m_copyWorker->setTasks(runnableTasks);
+    m_copyWorker->setCloudCopier(m_cloudCopier.get());
+    m_copyWorker->setMegaApi(m_megaApi);
+    m_copyWorker->setSkipExisting(m_skipExistingCheck && m_skipExistingCheck->isChecked());
+    m_copyWorker->setCreateDestFolder(m_createDestFolderCheck && m_createDestFolderCheck->isChecked());
+    m_copyWorker->setMoveMode(moveMode);
+    m_isMoving = moveMode;
+
+    connect(m_workerThread, &QThread::started, m_copyWorker, &FolderCopyWorker::process);
+    connect(m_copyWorker, &FolderCopyWorker::taskStarted,
+            this, &DistributionPanel::onWorkerTaskStarted, Qt::QueuedConnection);
+    connect(m_copyWorker, &FolderCopyWorker::taskCompleted,
+            this, &DistributionPanel::onWorkerTaskCompleted, Qt::QueuedConnection);
+    connect(m_copyWorker, &FolderCopyWorker::allCompleted,
+            this, &DistributionPanel::onWorkerAllCompleted, Qt::QueuedConnection);
+    connect(m_copyWorker, &FolderCopyWorker::progress,
+            this, &DistributionPanel::onWorkerProgress, Qt::QueuedConnection);
+    connect(m_copyWorker, &FolderCopyWorker::allCompleted,
+            m_workerThread, &QThread::quit, Qt::QueuedConnection);
+    connect(m_workerThread, &QThread::finished, m_copyWorker, &QObject::deleteLater);
+
+    m_workerThread->start();
 }
 
 void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& memberFileMap) {
@@ -2430,11 +2888,33 @@ void DistributionPanel::onStartDistribution() {
             QString("Upload %1 files to %2 member folders?")
                 .arg(totalFiles).arg(m_pendingMemberFileMap.size()),
             QMessageBox::Yes | QMessageBox::No);
-        if (ret != QMessageBox::Yes) return;
+        if (ret != QMessageBox::Yes) {
+            m_retrySourceJobId.clear();
+            return;
+        }
 
-        m_currentJobId.clear();
         m_currentJobCancelled = false;
         m_currentJobPlannedCount = m_pendingMemberFileMap.size();
+
+        QJsonObject metadata;
+        metadata["retryMode"] = "direct_upload";
+        metadata["operation"] = "upload";
+        metadata["memberFileMap"] = memberFileMapToJson(m_pendingMemberFileMap);
+        metadata["memberCount"] = m_pendingMemberFileMap.size();
+        metadata["totalFiles"] = totalFiles;
+        metadata["source"] = "watermark_auto_upload";
+        if (!m_retrySourceJobId.isEmpty()) {
+            metadata["retryOfJobId"] = m_retrySourceJobId;
+        }
+        m_currentJobId = OperationJobStore::instance().createJob(
+            OperationJobType::Distribution,
+            QString("Upload %1 files to %2 member folders")
+                .arg(totalFiles)
+                .arg(m_pendingMemberFileMap.size()),
+            m_currentJobPlannedCount,
+            metadata);
+        m_retrySourceJobId.clear();
+
         m_isRunning = true;
         m_startBtn->setEnabled(false);
         m_pauseBtn->setEnabled(true);
@@ -2716,13 +3196,26 @@ void DistributionPanel::onStartDistribution() {
     m_currentJobPlannedCount = tasks.size();
 
     QJsonObject metadata;
+    metadata["retryMode"] = "folder_tasks";
     metadata["operation"] = moveMode ? "move" : "copy";
     metadata["copyFolderItself"] = copyFolderItself;
     metadata["conflictMode"] = m_skipExistingCheck->isChecked() ? "skip_existing" : "overwrite_existing";
+    metadata["skipExisting"] = m_skipExistingCheck && m_skipExistingCheck->isChecked();
+    metadata["createDestFolder"] = m_createDestFolderCheck && m_createDestFolderCheck->isChecked();
+    metadata["copyContentsOnly"] = m_copyContentsOnlyCheck && m_copyContentsOnlyCheck->isChecked();
+    metadata["moveFiles"] = m_moveFilesCheck && m_moveFilesCheck->isChecked();
+    metadata["removeWatermarkSuffix"] = m_removeWatermarkSuffixCheck && m_removeWatermarkSuffixCheck->isChecked();
     metadata["templatePath"] = templatePath;
     metadata["sourcePath"] = m_wmPathEdit->text();
+    metadata["sourceType"] = m_sourceTypeCombo ? m_sourceTypeCombo->currentData().toString() : QString("cloud");
+    metadata["month"] = m_monthCombo ? m_monthCombo->currentText() : QString();
+    metadata["groupId"] = m_groupCombo ? m_groupCombo->itemData(m_groupCombo->currentIndex()).toString() : QString();
     metadata["broadcast"] = m_broadcastCheck && m_broadcastCheck->isChecked();
     metadata["smartRoute"] = m_smartRouteCheck && m_smartRouteCheck->isChecked();
+    metadata["tasks"] = folderCopyTasksToJson(tasks);
+    if (!m_retrySourceJobId.isEmpty()) {
+        metadata["retryOfJobId"] = m_retrySourceJobId;
+    }
     m_currentJobId = OperationJobStore::instance().createJob(
         OperationJobType::Distribution,
         QString("%1 %2 distribution %3")
@@ -2731,6 +3224,7 @@ void DistributionPanel::onStartDistribution() {
             .arg(tasks.size() == 1 ? "task" : "tasks"),
         tasks.size(),
         metadata);
+    m_retrySourceJobId.clear();
 
     emit distributionStarted();
     OperationJobStore::instance().markRunning(

@@ -1656,7 +1656,31 @@ Verification completed:
 
 Still pending:
 
-- Add distribution retry only after distribution jobs persist selected tasks, source/destination plan, conflict policy, and move/copy mode.
+- Add cleanup actions for disk-full paused watermark jobs and partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
+### 2026-06-16 Distribution Retry Contract Pass
+
+Scope:
+
+- Completed the third safe retry contract by persisting exact distribution run plans before exposing Distribution retry through the Jobs tab.
+
+Implemented:
+
+- Normal cloud/local distribution jobs now persist exact source-to-destination tasks, member IDs, move/copy mode, conflict handling, destination creation setting, source type, source path, month, group, broadcast state, Smart Route state, and watermark-suffix cleanup setting.
+- Direct watermark-to-distribution upload jobs now persist the member-to-local-file upload map before the controller handoff starts.
+- Retried distribution jobs record `retryOfJobId` in the new job metadata.
+- Distribution panel can retry saved direct-upload jobs and saved folder copy/move task jobs from the Jobs tab.
+- Retry skips missing local files/tasks with a warning instead of launching broken empty work.
+- MainWindow routes Distribution retry requests from Log Viewer to the Distribution panel.
+- Jobs tab Retry is now enabled for terminal download, watermark, and distribution jobs with saved metadata.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
 - Add cleanup actions for disk-full paused watermark jobs and partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 

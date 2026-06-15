@@ -801,6 +801,15 @@ void MainWindow::setupUI()
                     updateStatus(QString("Retry requested for watermark job %1").arg(jobId));
                     return;
                 }
+                if (record.type == OperationJobType::Distribution && m_distributionPanel) {
+                    if (m_sidebar) {
+                        m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Distribution);
+                    }
+                    onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Distribution));
+                    m_distributionPanel->retryJob(jobId);
+                    updateStatus(QString("Retry requested for distribution job %1").arg(jobId));
+                    return;
+                }
                 updateStatus(QString("Retry is not available for job %1").arg(jobId));
             });
 

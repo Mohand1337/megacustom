@@ -962,7 +962,8 @@ void LogViewerPanel::updateJobActionStates() {
         || m_selectedJobStatus == OperationJobStatus::Paused;
     const bool canRetry = hasJob
         && (m_selectedJobType == OperationJobType::Download
-            || m_selectedJobType == OperationJobType::Watermark)
+            || m_selectedJobType == OperationJobType::Watermark
+            || m_selectedJobType == OperationJobType::Distribution)
         && !activeJob;
 
     if (m_copyJobIdBtn) {
@@ -981,7 +982,7 @@ void LogViewerPanel::updateJobActionStates() {
         m_retryJobBtn->setEnabled(canRetry);
         m_retryJobBtn->setToolTip(canRetry
             ? "Retry this job using its saved run plan."
-            : "Retry is currently available for completed, failed, or cancelled download/watermark jobs with saved metadata.");
+            : "Retry is currently available for completed, failed, or cancelled download/watermark/distribution jobs with saved metadata.");
     }
     if (m_openRelatedPanelBtn) {
         m_openRelatedPanelBtn->setEnabled(hasJob && hasPanel);

@@ -76,6 +76,7 @@ signals:
 public slots:
     void refresh();
     void addFilesFromWatermark(const QStringList& filePaths);
+    void retryJob(const QString& jobId);
 
     /**
      * Prepare the table for a direct upload operation.
@@ -223,6 +224,7 @@ private:
     bool m_isMoving = false;
     bool m_controllerActive = false;  // True when DistributionController is driving the UI
     QString m_currentJobId;
+    QString m_retrySourceJobId;
     bool m_currentJobCancelled = false;
     int m_currentJobPlannedCount = 0;
     int m_successCount = 0;
