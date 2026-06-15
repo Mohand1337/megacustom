@@ -145,6 +145,13 @@ void LogViewerPanel::setupUI() {
     connect(m_retryJobBtn, &QPushButton::clicked, this, &LogViewerPanel::onRetryJobClicked);
     jobsFilterLayout->addWidget(m_retryJobBtn);
 
+    m_cleanupJobBtn = new QPushButton("Cleanup");
+    m_cleanupJobBtn->setIcon(QIcon(":/icons/trash-2.svg"));
+    m_cleanupJobBtn->setToolTip("Preview and remove safe local artifacts for supported jobs.");
+    m_cleanupJobBtn->setEnabled(false);
+    connect(m_cleanupJobBtn, &QPushButton::clicked, this, &LogViewerPanel::onCleanupJobClicked);
+    jobsFilterLayout->addWidget(m_cleanupJobBtn);
+
     m_openRelatedPanelBtn = new QPushButton("Open Panel");
     m_openRelatedPanelBtn->setIcon(QIcon(":/icons/chevron-right.svg"));
     m_openRelatedPanelBtn->setToolTip("Open the panel that owns the selected job.");
@@ -965,6 +972,11 @@ void LogViewerPanel::updateJobActionStates() {
             || m_selectedJobType == OperationJobType::Watermark
             || m_selectedJobType == OperationJobType::Distribution)
         && !activeJob;
+    const bool canCleanup = hasJob
+        && m_selectedJobType == OperationJobType::Watermark
+        && (m_selectedJobStatus == OperationJobStatus::Paused
+            || m_selectedJobStatus == OperationJobStatus::Failed
+            || m_selectedJobStatus == OperationJobStatus::CleanupRequired);
 
     if (m_copyJobIdBtn) {
         m_copyJobIdBtn->setEnabled(hasJob);
@@ -983,6 +995,12 @@ void LogViewerPanel::updateJobActionStates() {
         m_retryJobBtn->setToolTip(canRetry
             ? "Retry this job using its saved run plan."
             : "Retry is currently available for completed, failed, or cancelled download/watermark/distribution jobs with saved metadata.");
+    }
+    if (m_cleanupJobBtn) {
+        m_cleanupJobBtn->setEnabled(canCleanup);
+        m_cleanupJobBtn->setToolTip(canCleanup
+            ? "Preview and remove safe local artifacts for this watermark job."
+            : "Cleanup is currently available for paused, failed, or cleanup-required watermark jobs.");
     }
     if (m_openRelatedPanelBtn) {
         m_openRelatedPanelBtn->setEnabled(hasJob && hasPanel);
@@ -1243,6 +1261,11 @@ void LogViewerPanel::onShowJobActivityClicked() {
 void LogViewerPanel::onRetryJobClicked() {
     if (m_selectedJobId.isEmpty()) return;
     emit retryJobRequested(m_selectedJobId);
+}
+
+void LogViewerPanel::onCleanupJobClicked() {
+    if (m_selectedJobId.isEmpty()) return;
+    emit cleanupJobRequested(m_selectedJobId);
 }
 
 void LogViewerPanel::onOpenRelatedPanelClicked() {

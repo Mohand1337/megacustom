@@ -35,6 +35,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 
 namespace MegaCustom {
@@ -1531,6 +1532,397 @@ void WatermarkPanel::retryJob(const QString& jobId) {
     m_statusLabel->setText(QString("Retrying watermark job %1").arg(record.id));
 
     onStartWatermark();
+}
+
+void WatermarkPanel::cleanupJob(const QString& jobId) {
+    if (m_isRunning) {
+        QMessageBox::warning(this, "Watermark Running",
+            "Cleanup is not available while watermarking is running.");
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(jobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Watermark) {
+        QMessageBox::warning(this, "Cleanup Unavailable",
+            "This job cannot be cleaned up from the Watermark panel.");
+        return;
+    }
+
+    const bool cleanupStatus = record.status == OperationJobStatus::Paused
+        || record.status == OperationJobStatus::Failed
+        || record.status == OperationJobStatus::CleanupRequired;
+    if (!cleanupStatus) {
+        QMessageBox::information(this, "Cleanup Not Needed",
+            "Cleanup is only available for paused, failed, or cleanup-required watermark jobs.");
+        return;
+    }
+
+    bool liveTableMatchesJob = (jobId == m_pausedJobId || jobId == m_currentJobId);
+    if (!liveTableMatchesJob && !m_files.isEmpty()) {
+        QSet<QString> jobSourcePaths;
+        const QJsonArray filePathArray = record.metadata["filePaths"].toArray();
+        for (const QJsonValue& value : filePathArray) {
+            const QString path = QDir::cleanPath(value.toString());
+            if (!path.isEmpty()) {
+                jobSourcePaths.insert(path);
+            }
+        }
+        for (const WatermarkFileInfo& info : m_files) {
+            if (info.isHeader) {
+                continue;
+            }
+            if (jobSourcePaths.contains(QDir::cleanPath(info.filePath))) {
+                liveTableMatchesJob = true;
+                break;
+            }
+        }
+    }
+
+    if (!liveTableMatchesJob) {
+        QMessageBox::warning(this, "Cleanup Needs Live State",
+            "This job does not have enough live cleanup state in the Watermark panel.\n\n"
+            "Cleanup is currently safe for paused/failed watermark jobs while their table rows are still loaded. "
+            "Older jobs or jobs after app restart need persisted per-row cleanup metadata before automatic cleanup can be safe.");
+        return;
+    }
+
+    struct CleanupCandidate {
+        QString path;
+        QString reason;
+        bool directory = false;
+    };
+
+    auto appendUniqueCandidate = [](QList<CleanupCandidate>& candidates,
+                                    QSet<QString>& seen,
+                                    const QString& path,
+                                    const QString& reason,
+                                    bool directory) {
+        const QString cleaned = QDir::cleanPath(path);
+        if (cleaned.isEmpty() || seen.contains(cleaned)) {
+            return;
+        }
+        seen.insert(cleaned);
+        CleanupCandidate candidate;
+        candidate.path = cleaned;
+        candidate.reason = reason;
+        candidate.directory = directory;
+        candidates.append(candidate);
+    };
+
+    auto expectedMemberOutputDir = [this](const WatermarkFileInfo& info) {
+        if (info.memberId.isEmpty() || info.filePath.isEmpty()) {
+            return QString();
+        }
+
+        const QFileInfo sourceInfo(info.filePath);
+        QString baseDir;
+        if (!m_sameAsInputCheck->isChecked() && !m_outputDirEdit->text().trimmed().isEmpty()) {
+            baseDir = m_outputDirEdit->text().trimmed();
+        } else if (!m_sourceRootDir.trimmed().isEmpty()) {
+            baseDir = m_sourceRootDir.trimmed();
+        } else {
+            baseDir = sourceInfo.absolutePath();
+        }
+
+        QString relativeSubdir;
+        if (!m_sourceRootDir.trimmed().isEmpty()) {
+            const QDir rootDir(m_sourceRootDir.trimmed());
+            const QString relative = rootDir.relativeFilePath(sourceInfo.absolutePath());
+            if (!relative.isEmpty() && relative != "." && !relative.startsWith("..")) {
+                relativeSubdir = relative;
+            }
+        }
+
+        QString memberDir = QDir(baseDir).filePath(info.memberId);
+        if (!relativeSubdir.isEmpty()) {
+            memberDir = QDir(memberDir).filePath(relativeSubdir);
+        }
+        return QDir::cleanPath(memberDir);
+    };
+
+    QList<CleanupCandidate> fileCandidates;
+    QList<CleanupCandidate> dirCandidates;
+    QSet<QString> seenFiles;
+    QSet<QString> seenDirs;
+    QMap<QString, QList<int>> fileRows;
+
+    for (int row = 0; row < m_files.size(); ++row) {
+        const WatermarkFileInfo& info = m_files[row];
+        if (info.isHeader) {
+            continue;
+        }
+
+        const bool keepOutput = info.status == "complete" || info.status == "uploaded";
+        if (!keepOutput && !info.outputPath.trimmed().isEmpty() && QFileInfo::exists(info.outputPath)) {
+            const QString cleaned = QDir::cleanPath(info.outputPath);
+            appendUniqueCandidate(fileCandidates, seenFiles, cleaned,
+                QString("%1 row partial output").arg(info.status.isEmpty() ? "unfinished" : info.status),
+                false);
+            fileRows[cleaned].append(row);
+        }
+
+        if (!keepOutput) {
+            const QString expectedDir = expectedMemberOutputDir(info);
+            if (!expectedDir.isEmpty() && QFileInfo(expectedDir).isDir()) {
+                appendUniqueCandidate(dirCandidates, seenDirs, expectedDir,
+                    "empty member output folder", true);
+            }
+        }
+
+        if (!keepOutput && !info.outputPath.trimmed().isEmpty()) {
+            const QFileInfo outputInfo(info.outputPath);
+            const QString parentDir = outputInfo.absolutePath();
+            if (QFileInfo(parentDir).isDir()) {
+                appendUniqueCandidate(dirCandidates, seenDirs, parentDir,
+                    "empty output folder after partial file cleanup", true);
+            }
+        }
+    }
+
+    QSet<QString> fileCandidateSet;
+    for (const CleanupCandidate& candidate : fileCandidates) {
+        fileCandidateSet.insert(QDir::cleanPath(candidate.path));
+    }
+
+    auto dirContainsOnlyCleanupFiles = [&fileCandidateSet](const QString& dirPath) {
+        QFileInfo dirInfo(dirPath);
+        if (!dirInfo.isDir()) {
+            return false;
+        }
+        QDirIterator it(dirPath,
+            QDir::AllEntries | QDir::NoDotAndDotDot,
+            QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            const QFileInfo item = it.fileInfo();
+            if (item.isDir()) {
+                continue;
+            }
+            if (!fileCandidateSet.contains(QDir::cleanPath(item.absoluteFilePath()))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    QList<CleanupCandidate> safeDirCandidates;
+    QSet<QString> safeDirSeen;
+    for (const CleanupCandidate& candidate : dirCandidates) {
+        if (dirContainsOnlyCleanupFiles(candidate.path)) {
+            appendUniqueCandidate(safeDirCandidates, safeDirSeen,
+                candidate.path, candidate.reason, true);
+        }
+    }
+    dirCandidates = safeDirCandidates;
+
+    if (fileCandidates.isEmpty() && dirCandidates.isEmpty()) {
+        QMessageBox::information(this, "No Cleanup Needed",
+            "No safe local watermark cleanup candidates were found for the loaded job state.");
+        return;
+    }
+
+    auto previewLines = [](const QList<CleanupCandidate>& candidates, int maxLines) {
+        QStringList lines;
+        for (int i = 0; i < candidates.size() && i < maxLines; ++i) {
+            const CleanupCandidate& candidate = candidates[i];
+            lines.append(QString("%1 %2\n   %3")
+                .arg(candidate.directory ? "[folder]" : "[file]",
+                     candidate.path,
+                     candidate.reason));
+        }
+        if (candidates.size() > maxLines) {
+            lines.append(QString("...and %1 more").arg(candidates.size() - maxLines));
+        }
+        return lines;
+    };
+
+    QStringList preview;
+    if (!fileCandidates.isEmpty()) {
+        preview << QString("Files to delete (%1):").arg(fileCandidates.size());
+        preview << previewLines(fileCandidates, 20);
+    }
+    if (!dirCandidates.isEmpty()) {
+        if (!preview.isEmpty()) {
+            preview << "";
+        }
+        preview << QString("Empty folders to remove (%1):").arg(dirCandidates.size());
+        preview << previewLines(dirCandidates, 20);
+    }
+
+    if (QMessageBox::warning(this, "Preview Watermark Cleanup",
+            QString("Cleanup will delete only the local files/folders listed below. "
+                    "Completed outputs are kept, and MEGA cloud folders are not deleted in this pass.\n\n%1\n\nContinue?")
+                .arg(preview.join("\n")),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
+
+    QJsonObject startedDetails;
+    startedDetails["plannedFiles"] = fileCandidates.size();
+    startedDetails["plannedDirs"] = dirCandidates.size();
+    LogManager::instance().logWithContext(
+        LogLevel::Info,
+        LogCategory::Watermark,
+        "cleanup.started",
+        QString("Watermark cleanup started for job %1").arg(jobId).toStdString(),
+        "",
+        "",
+        jobId.toStdString(),
+        QString::fromUtf8(QJsonDocument(startedDetails).toJson(QJsonDocument::Compact)).toStdString());
+
+    int removedFiles = 0;
+    int failedFiles = 0;
+    QStringList removedFilePaths;
+    QStringList failedFilePaths;
+
+    for (const CleanupCandidate& candidate : fileCandidates) {
+        QFileInfo info(candidate.path);
+        if (!info.exists()) {
+            continue;
+        }
+        if (QFile::remove(candidate.path)) {
+            removedFiles++;
+            removedFilePaths.append(candidate.path);
+            const QList<int> rows = fileRows.value(QDir::cleanPath(candidate.path));
+            for (int row : rows) {
+                if (row >= 0 && row < m_files.size()) {
+                    m_files[row].outputPath.clear();
+                    if (m_files[row].status == "error" || m_files[row].status == "processing") {
+                        m_files[row].error = "Partial output cleaned. Resume will recreate this row.";
+                        updateSingleRow(row);
+                    }
+                }
+            }
+        } else {
+            failedFiles++;
+            failedFilePaths.append(candidate.path);
+        }
+    }
+
+    auto removeEmptyDirAndChildren = [](const QString& path, QStringList* removed, QStringList* failed) {
+        QFileInfo rootInfo(path);
+        if (!rootInfo.isDir()) {
+            return;
+        }
+
+        QStringList dirs;
+        QDirIterator it(path,
+            QDir::Dirs | QDir::NoDotAndDotDot,
+            QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            dirs.append(QDir::cleanPath(it.next()));
+        }
+        std::sort(dirs.begin(), dirs.end(), [](const QString& a, const QString& b) {
+            return a.count('/') > b.count('/');
+        });
+        dirs.append(QDir::cleanPath(path));
+
+        for (const QString& dirPath : dirs) {
+            QFileInfo dirInfo(dirPath);
+            if (!dirInfo.isDir()) {
+                continue;
+            }
+
+            QDir dir(dirPath);
+            const bool empty = dir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty();
+            if (!empty) {
+                continue;
+            }
+
+            QDir parent(dirInfo.absolutePath());
+            if (parent.rmdir(dirInfo.fileName())) {
+                removed->append(dirPath);
+            } else {
+                failed->append(dirPath);
+            }
+        }
+    };
+
+    QStringList removedDirPaths;
+    QStringList failedDirPaths;
+    std::sort(dirCandidates.begin(), dirCandidates.end(), [](const CleanupCandidate& a, const CleanupCandidate& b) {
+        return a.path.count('/') > b.path.count('/');
+    });
+    for (const CleanupCandidate& candidate : dirCandidates) {
+        removeEmptyDirAndChildren(candidate.path, &removedDirPaths, &failedDirPaths);
+    }
+    removedDirPaths.removeDuplicates();
+    failedDirPaths.removeDuplicates();
+
+    updateStats();
+    updateButtonStates();
+
+    OperationJobRecord latestRecord = OperationJobStore::instance().job(jobId);
+    QJsonObject metadata = latestRecord.metadata;
+    QJsonArray cleanupRuns = metadata["cleanupRuns"].toArray();
+    QJsonObject cleanupRun;
+    cleanupRun["at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    cleanupRun["removedFiles"] = removedFiles;
+    cleanupRun["removedDirs"] = removedDirPaths.size();
+    cleanupRun["failedFiles"] = failedFiles;
+    cleanupRun["failedDirs"] = failedDirPaths.size();
+    cleanupRun["scope"] = "local_watermark_artifacts";
+
+    auto appendPathArray = [](const QStringList& paths) {
+        QJsonArray array;
+        const int maxPaths = qMin(paths.size(), 100);
+        for (int i = 0; i < maxPaths; ++i) {
+            array.append(paths[i]);
+        }
+        if (paths.size() > maxPaths) {
+            array.append(QString("...and %1 more").arg(paths.size() - maxPaths));
+        }
+        return array;
+    };
+
+    cleanupRun["removedFilePaths"] = appendPathArray(removedFilePaths);
+    cleanupRun["removedDirPaths"] = appendPathArray(removedDirPaths);
+    cleanupRun["failedFilePaths"] = appendPathArray(failedFilePaths);
+    cleanupRun["failedDirPaths"] = appendPathArray(failedDirPaths);
+    cleanupRuns.append(cleanupRun);
+    metadata["cleanupRuns"] = cleanupRuns;
+    metadata["lastCleanupAt"] = cleanupRun["at"];
+    metadata["lastCleanupRemovedFiles"] = removedFiles;
+    metadata["lastCleanupRemovedDirs"] = removedDirPaths.size();
+    metadata["lastCleanupFailedFiles"] = failedFiles;
+    metadata["lastCleanupFailedDirs"] = failedDirPaths.size();
+
+    OperationJobStore::instance().createJob(
+        OperationJobType::Watermark,
+        latestRecord.title,
+        latestRecord.plannedCount,
+        metadata,
+        jobId);
+
+    const int cleanupFailures = failedFiles + failedDirPaths.size();
+    const QString summary = QString("Cleanup removed %1 partial file(s) and %2 empty folder(s)%3")
+        .arg(removedFiles)
+        .arg(removedDirPaths.size())
+        .arg(cleanupFailures > 0
+            ? QString("; %1 item(s) failed").arg(cleanupFailures)
+            : QString());
+
+    QJsonObject completedDetails = cleanupRun;
+    completedDetails["summary"] = summary;
+    LogManager::instance().logWithContext(
+        cleanupFailures > 0 ? LogLevel::Error : LogLevel::Info,
+        LogCategory::Watermark,
+        cleanupFailures > 0 ? "cleanup.failed" : "cleanup.completed",
+        summary.toStdString(),
+        "",
+        "",
+        jobId.toStdString(),
+        QString::fromUtf8(QJsonDocument(completedDetails).toJson(QJsonDocument::Compact)).toStdString());
+
+    if (cleanupFailures > 0) {
+        OperationJobStore::instance().markCleanupRequired(jobId, summary);
+    } else if (latestRecord.status == OperationJobStatus::Paused) {
+        OperationJobStore::instance().markPaused(jobId, summary + ". Resume when ready.");
+    }
+
+    m_statusLabel->setText(summary);
+    QMessageBox::information(this, "Cleanup Complete", summary);
 }
 
 void WatermarkPanel::loadMembers() {

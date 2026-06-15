@@ -41,6 +41,7 @@ signals:
     void logEntrySelected(const QString& details);
     void openRelatedPanelRequested(const QString& panelKey, const QString& jobId);
     void retryJobRequested(const QString& jobId);
+    void cleanupJobRequested(const QString& jobId);
 
 public slots:
     void refresh();
@@ -67,6 +68,7 @@ private slots:
     void onCopyJobIdClicked();
     void onShowJobActivityClicked();
     void onRetryJobClicked();
+    void onCleanupJobClicked();
     void onOpenRelatedPanelClicked();
     void onAutoRefreshToggled(bool enabled);
     void onJobsTableSelectionChanged();
@@ -115,6 +117,7 @@ private:
     QPushButton* m_copyJobIdBtn = nullptr;
     QPushButton* m_showJobActivityBtn = nullptr;
     QPushButton* m_retryJobBtn = nullptr;
+    QPushButton* m_cleanupJobBtn = nullptr;
     QPushButton* m_openRelatedPanelBtn = nullptr;
 
     // UI Components - Activity Log Tab

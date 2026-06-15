@@ -1708,7 +1708,38 @@ Verification completed:
 
 Still pending:
 
-- Add explicit cleanup actions for cloud folders or local partial artifacts that already existed before this pass.
+- Add explicit cleanup actions for cloud folders that already existed before this pass.
+- Add cleanup actions for partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
+### 2026-06-16 Watermark Local Cleanup Pass
+
+Scope:
+
+- Added the first preview-first cleanup action for Watermark jobs. This cleanup is intentionally local-only and conservative: it deletes only files/folders the loaded Watermark table can prove are partial artifacts from the selected job.
+
+Implemented:
+
+- Jobs tab now includes a `Cleanup` action.
+- Cleanup is enabled for paused, failed, or cleanup-required Watermark jobs.
+- MainWindow routes cleanup requests to the Watermark panel.
+- Watermark cleanup requires live loaded table state for the selected job; older jobs after restart show a clear "not enough cleanup metadata" warning instead of risky deletes.
+- Cleanup previews partial local output files and empty local member/output folders before deleting anything.
+- Completed/uploaded outputs are kept.
+- MEGA cloud folders are not deleted in this pass.
+- Cleanup removes only local partial files from unfinished/error rows and empty folders that contain no non-cleanup files.
+- Cleanup writes a compact `cleanupRuns` history into job metadata.
+- Cleanup logs `cleanup.started`, `cleanup.completed`, or `cleanup.failed` with the job ID.
+- Failed cleanup marks the job as `cleanup_required`; successful cleanup on paused jobs keeps the job paused so the user can resume.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Persist per-row cleanup checkpoints so cleanup can work safely after app restart.
+- Add explicit cleanup actions for cloud folders that already existed before this pass.
 - Add cleanup actions for partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
