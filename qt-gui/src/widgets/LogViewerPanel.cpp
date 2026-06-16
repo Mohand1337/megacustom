@@ -981,20 +981,32 @@ void LogViewerPanel::updateJobActionStates() {
             || m_selectedJobType == OperationJobType::Distribution)
         && !activeJob;
     bool hasWatermarkCheckpoint = false;
+    bool hasDistributionCleanupProof = false;
     if (hasJob && m_selectedJobType == OperationJobType::Watermark) {
         const OperationJobRecord record = OperationJobStore::instance().job(m_selectedJobId);
         hasWatermarkCheckpoint = record.metadata["watermarkRows"].isArray()
             && !record.metadata["watermarkRows"].toArray().isEmpty();
+    } else if (hasJob && m_selectedJobType == OperationJobType::Distribution) {
+        const OperationJobRecord record = OperationJobStore::instance().job(m_selectedJobId);
+        hasDistributionCleanupProof = record.metadata["distributionCreatedRemoteFolders"].isArray()
+            && !record.metadata["distributionCreatedRemoteFolders"].toArray().isEmpty();
     }
     const bool canResume = hasJob
         && m_selectedJobType == OperationJobType::Watermark
         && m_selectedJobStatus == OperationJobStatus::Paused
         && hasWatermarkCheckpoint;
-    const bool canCleanup = hasJob
+    const bool canCleanupWatermark = hasJob
         && m_selectedJobType == OperationJobType::Watermark
         && (m_selectedJobStatus == OperationJobStatus::Paused
             || m_selectedJobStatus == OperationJobStatus::Failed
             || m_selectedJobStatus == OperationJobStatus::CleanupRequired);
+    const bool canCleanupDistribution = hasJob
+        && m_selectedJobType == OperationJobType::Distribution
+        && (m_selectedJobStatus == OperationJobStatus::Failed
+            || m_selectedJobStatus == OperationJobStatus::Cancelled
+            || m_selectedJobStatus == OperationJobStatus::CleanupRequired)
+        && hasDistributionCleanupProof;
+    const bool canCleanup = canCleanupWatermark || canCleanupDistribution;
 
     if (m_copyJobIdBtn) {
         m_copyJobIdBtn->setEnabled(hasJob);
@@ -1022,9 +1034,14 @@ void LogViewerPanel::updateJobActionStates() {
     }
     if (m_cleanupJobBtn) {
         m_cleanupJobBtn->setEnabled(canCleanup);
-        m_cleanupJobBtn->setToolTip(canCleanup
-            ? "Preview and remove safe local artifacts for this watermark job."
-            : "Cleanup is currently available for paused, failed, or cleanup-required watermark jobs.");
+        if (canCleanupWatermark) {
+            m_cleanupJobBtn->setToolTip("Preview and remove safe local artifacts for this watermark job.");
+        } else if (canCleanupDistribution) {
+            m_cleanupJobBtn->setToolTip("Preview and move app-created remote distribution folders to the MEGA rubbish bin.");
+        } else {
+            m_cleanupJobBtn->setToolTip(
+                "Cleanup is available for Watermark recovery jobs, or failed/cancelled Distribution jobs with app-created folder evidence.");
+        }
     }
     if (m_openRelatedPanelBtn) {
         m_openRelatedPanelBtn->setEnabled(hasJob && hasPanel);

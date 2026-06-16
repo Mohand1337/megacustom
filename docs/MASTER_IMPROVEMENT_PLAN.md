@@ -1854,6 +1854,32 @@ Still pending:
 - Add cleanup actions for partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-17 Distribution Cleanup Evidence Pass
+
+Scope:
+
+- Added the ownership evidence needed for safe Distribution cleanup, then exposed cleanup for eligible Distribution jobs in the Jobs tab.
+
+Implemented:
+
+- Distribution jobs now persist `distributionRows` checkpoints with source, member, destination, status, error, and owning job ID.
+- Distribution checkpoints are written when jobs are created, tasks start, tasks complete/fail, cancellation is requested, and jobs finish.
+- Folder-copy/upload workers now report remote destination folders that did not exist before the task and were created by the app.
+- Distribution job metadata now stores app-created remote folders in `distributionCreatedRemoteFolders`.
+- Jobs-tab Cleanup now enables for failed/cancelled/cleanup-required Distribution jobs only when recorded app-created remote-folder evidence exists.
+- Distribution cleanup is preview-first and moves only recorded app-created remote folders to the MEGA rubbish bin after confirmation.
+- Existing member folders are not guessed from destination paths and are not touched without app-created folder evidence.
+- Cleanup runs are appended to job metadata under `cleanupRuns` and logged as Distribution cleanup events.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add richer per-file remote upload evidence for deleting individual partial files inside pre-existing folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

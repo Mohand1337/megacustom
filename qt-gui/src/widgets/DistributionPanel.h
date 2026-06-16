@@ -13,6 +13,7 @@
 #include <QList>
 #include <QThread>
 #include <QVariantMap>
+#include <QJsonArray>
 #include <memory>
 
 #include "utils/ContentRouter.h"
@@ -77,6 +78,7 @@ public slots:
     void refresh();
     void addFilesFromWatermark(const QStringList& filePaths);
     void retryJob(const QString& jobId);
+    void cleanupJob(const QString& jobId);
 
     /**
      * Prepare the table for a direct upload operation.
@@ -141,6 +143,9 @@ private:
     QString buildDistributionAudit(bool includeDetails = true, int* blockerCount = nullptr, int* warningCount = nullptr);
     bool confirmDistributionAudit();
     void updateCurrentJobProgress(const QString& summary = {});
+    void saveDistributionCheckpoint(const QString& reason, const QString& jobId = {});
+    QJsonArray serializeDistributionRows() const;
+    void recordDistributionCreatedFolder(int taskIndex, const QString& path);
 
     // UI Components - Configuration
     QComboBox* m_sourceTypeCombo = nullptr;  // "Cloud" or "Local"

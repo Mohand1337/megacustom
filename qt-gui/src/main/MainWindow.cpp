@@ -838,6 +838,15 @@ void MainWindow::setupUI()
                     updateStatus(QString("Cleanup requested for watermark job %1").arg(jobId));
                     return;
                 }
+                if (record.type == OperationJobType::Distribution && m_distributionPanel) {
+                    if (m_sidebar) {
+                        m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Distribution);
+                    }
+                    onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Distribution));
+                    m_distributionPanel->cleanupJob(jobId);
+                    updateStatus(QString("Cleanup requested for distribution job %1").arg(jobId));
+                    return;
+                }
                 updateStatus(QString("Cleanup is not available for job %1").arg(jobId));
             });
 
