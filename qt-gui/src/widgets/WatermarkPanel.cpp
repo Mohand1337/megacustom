@@ -2581,7 +2581,6 @@ void WatermarkPanel::onResumePausedWatermark() {
     int skippedExternalMemberCount = 0;
     int rebuildMemberCount = 0;
 
-    const bool autoUploadEnabled = m_autoUploadCheck && m_autoUploadCheck->isChecked();
     QMap<QString, QList<int>> memberRows;
     for (int row = 0; row < m_files.size(); ++row) {
         const WatermarkFileInfo& info = m_files[row];
@@ -2592,48 +2591,46 @@ void WatermarkPanel::onResumePausedWatermark() {
 
     QSet<QString> suspectIncompleteMembers;
     QStringList suspectMemberDescriptions;
-    if (autoUploadEnabled) {
-        for (auto it = memberRows.constBegin(); it != memberRows.constEnd(); ++it) {
-            const QString& memberId = it.key();
-            const int headerRow = findMemberHeaderRow(memberId);
-            if (headerRow >= 0 && m_files[headerRow].status == "uploaded") {
+    for (auto it = memberRows.constBegin(); it != memberRows.constEnd(); ++it) {
+        const QString& memberId = it.key();
+        const int headerRow = findMemberHeaderRow(memberId);
+        if (headerRow >= 0 && m_files[headerRow].status == "uploaded") {
+            continue;
+        }
+
+        int missingCompletedOutputs = 0;
+        int existingCompletedOutputs = 0;
+        int unfinishedRows = 0;
+        QString memberName;
+
+        for (int row : it.value()) {
+            const WatermarkFileInfo& info = m_files[row];
+            if (memberName.isEmpty()) {
+                memberName = info.memberName.isEmpty() ? memberId : info.memberName;
+            }
+
+            const bool complete = info.status == "complete" || info.status == "uploaded";
+            if (!complete) {
+                ++unfinishedRows;
                 continue;
             }
 
-            int missingCompletedOutputs = 0;
-            int existingCompletedOutputs = 0;
-            int unfinishedRows = 0;
-            QString memberName;
-
-            for (int row : it.value()) {
-                const WatermarkFileInfo& info = m_files[row];
-                if (memberName.isEmpty()) {
-                    memberName = info.memberName.isEmpty() ? memberId : info.memberName;
-                }
-
-                const bool complete = info.status == "complete" || info.status == "uploaded";
-                if (!complete) {
-                    ++unfinishedRows;
-                    continue;
-                }
-
-                const bool hasLocalOutput = !info.outputPath.trimmed().isEmpty()
-                    && QFileInfo::exists(info.outputPath);
-                if (hasLocalOutput) {
-                    ++existingCompletedOutputs;
-                } else {
-                    ++missingCompletedOutputs;
-                }
+            const bool hasLocalOutput = !info.outputPath.trimmed().isEmpty()
+                && QFileInfo::exists(info.outputPath);
+            if (hasLocalOutput) {
+                ++existingCompletedOutputs;
+            } else {
+                ++missingCompletedOutputs;
             }
+        }
 
-            if (missingCompletedOutputs > 0 && unfinishedRows > 0) {
-                suspectIncompleteMembers.insert(memberId);
-                suspectMemberDescriptions << QString("%1: %2 completed output(s) missing, %3 local output(s) still present, %4 unfinished row(s)")
-                    .arg(memberName.isEmpty() ? memberId : memberName)
-                    .arg(missingCompletedOutputs)
-                    .arg(existingCompletedOutputs)
-                    .arg(unfinishedRows);
-            }
+        if (missingCompletedOutputs > 0 && unfinishedRows > 0) {
+            suspectIncompleteMembers.insert(memberId);
+            suspectMemberDescriptions << QString("%1: %2 completed output(s) missing, %3 local output(s) still present, %4 unfinished row(s)")
+                .arg(memberName.isEmpty() ? memberId : memberName)
+                .arg(missingCompletedOutputs)
+                .arg(existingCompletedOutputs)
+                .arg(unfinishedRows);
         }
     }
 
@@ -2652,7 +2649,7 @@ void WatermarkPanel::onResumePausedWatermark() {
         dialog.setText(
             "Some member batches have completed rows whose local output files are missing while other rows are still unfinished.");
         dialog.setInformativeText(
-            "This usually means those member folders were uploaded or removed outside the app to free disk space.\n\n"
+            "This usually means those member folders were manually uploaded, removed, or cleaned up outside the app to free disk space.\n\n"
             "Skipping marks the whole member batch as already handled and prevents the app from recreating that member folder with only leftover files.\n"
             "Rebuilding retries every source file for those members so the batch is complete again.");
         dialog.setDetailedText(preview);
@@ -2676,7 +2673,7 @@ void WatermarkPanel::onResumePausedWatermark() {
             for (const QString& memberId : skipExternalMembers) {
                 markMemberRowsUploaded(
                     memberId,
-                    "Skipped on resume: member folder was already uploaded or removed outside the app.");
+                    "Skipped on resume: member folder was already uploaded, removed, or cleaned up outside the app.");
             }
         }
     }

@@ -1751,7 +1751,7 @@ Scope:
 
 Implemented:
 
-- Resume now preflights member batches in auto-upload mode before creating row-level resume tasks.
+- Resume now preflights member batches before creating row-level resume tasks, whether the user uploads manually or uses auto-upload.
 - If a member has completed rows whose local output files are missing and still has unfinished rows, the app no longer silently retries only the leftover rows.
 - The user gets a clear choice:
   - Skip those members as already handled, marking the whole member batch `Uploaded` so no new local member folder is created.
