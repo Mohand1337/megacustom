@@ -812,6 +812,20 @@ void MainWindow::setupUI()
                 }
                 updateStatus(QString("Retry is not available for job %1").arg(jobId));
             });
+    connect(m_logViewerPanel, &LogViewerPanel::resumeJobRequested,
+            this, [this](const QString& jobId) {
+                OperationJobRecord record = OperationJobStore::instance().job(jobId);
+                if (record.type == OperationJobType::Watermark && m_watermarkPanel) {
+                    if (m_sidebar) {
+                        m_sidebar->setActiveItem(MegaSidebar::NavigationItem::Watermark);
+                    }
+                    onNavigationItemClicked(static_cast<int>(MegaSidebar::NavigationItem::Watermark));
+                    m_watermarkPanel->resumeJob(jobId);
+                    updateStatus(QString("Resume requested for watermark job %1").arg(jobId));
+                    return;
+                }
+                updateStatus(QString("Resume is not available for job %1").arg(jobId));
+            });
     connect(m_logViewerPanel, &LogViewerPanel::cleanupJobRequested,
             this, [this](const QString& jobId) {
                 OperationJobRecord record = OperationJobStore::instance().job(jobId);

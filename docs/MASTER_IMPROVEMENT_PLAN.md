@@ -1829,6 +1829,31 @@ Still pending:
 - Add cleanup actions for partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-17 Jobs-Tab Watermark Resume Pass
+
+Scope:
+
+- Added the direct Jobs-tab resume path for paused Watermark jobs backed by persisted row checkpoints.
+
+Implemented:
+
+- Added a `Resume` action beside Retry/Cleanup in the Activity Logs Jobs tab.
+- Resume is enabled only for paused Watermark jobs that contain saved `watermarkRows` checkpoint metadata.
+- Jobs-tab Resume switches to the Watermark panel, restores the saved checkpoint when needed, and then runs the existing guarded disk-full resume flow.
+- If another Watermark table is currently loaded, the app asks before replacing it with the selected job checkpoint.
+- Older paused Watermark jobs without checkpoint rows stay blocked from automatic Jobs-tab resume and show the existing safe-state warning path instead.
+- The Resume button has an explicit tooltip explaining that it restores a paused Watermark checkpoint and runs the member-batch safety check.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add explicit cleanup actions for cloud folders that already existed before this pass.
+- Add cleanup actions for partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

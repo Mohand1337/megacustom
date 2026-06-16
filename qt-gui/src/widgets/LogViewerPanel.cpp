@@ -13,6 +13,7 @@
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QCheckBox>
+#include <QJsonArray>
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QSplitter>
@@ -144,6 +145,13 @@ void LogViewerPanel::setupUI() {
     m_retryJobBtn->setEnabled(false);
     connect(m_retryJobBtn, &QPushButton::clicked, this, &LogViewerPanel::onRetryJobClicked);
     jobsFilterLayout->addWidget(m_retryJobBtn);
+
+    m_resumeJobBtn = new QPushButton("Resume");
+    m_resumeJobBtn->setIcon(QIcon(":/icons/play.svg"));
+    m_resumeJobBtn->setToolTip("Restore and resume a paused Watermark job from its saved checkpoint.");
+    m_resumeJobBtn->setEnabled(false);
+    connect(m_resumeJobBtn, &QPushButton::clicked, this, &LogViewerPanel::onResumeJobClicked);
+    jobsFilterLayout->addWidget(m_resumeJobBtn);
 
     m_cleanupJobBtn = new QPushButton("Cleanup");
     m_cleanupJobBtn->setIcon(QIcon(":/icons/trash-2.svg"));
@@ -972,6 +980,16 @@ void LogViewerPanel::updateJobActionStates() {
             || m_selectedJobType == OperationJobType::Watermark
             || m_selectedJobType == OperationJobType::Distribution)
         && !activeJob;
+    bool hasWatermarkCheckpoint = false;
+    if (hasJob && m_selectedJobType == OperationJobType::Watermark) {
+        const OperationJobRecord record = OperationJobStore::instance().job(m_selectedJobId);
+        hasWatermarkCheckpoint = record.metadata["watermarkRows"].isArray()
+            && !record.metadata["watermarkRows"].toArray().isEmpty();
+    }
+    const bool canResume = hasJob
+        && m_selectedJobType == OperationJobType::Watermark
+        && m_selectedJobStatus == OperationJobStatus::Paused
+        && hasWatermarkCheckpoint;
     const bool canCleanup = hasJob
         && m_selectedJobType == OperationJobType::Watermark
         && (m_selectedJobStatus == OperationJobStatus::Paused
@@ -995,6 +1013,12 @@ void LogViewerPanel::updateJobActionStates() {
         m_retryJobBtn->setToolTip(canRetry
             ? "Retry this job using its saved run plan."
             : "Retry is currently available for completed, failed, or cancelled download/watermark/distribution jobs with saved metadata.");
+    }
+    if (m_resumeJobBtn) {
+        m_resumeJobBtn->setEnabled(canResume);
+        m_resumeJobBtn->setToolTip(canResume
+            ? "Restore this paused Watermark checkpoint and resume with the member-batch safety check."
+            : "Resume is available only for paused Watermark jobs that contain saved row checkpoints.");
     }
     if (m_cleanupJobBtn) {
         m_cleanupJobBtn->setEnabled(canCleanup);
@@ -1261,6 +1285,11 @@ void LogViewerPanel::onShowJobActivityClicked() {
 void LogViewerPanel::onRetryJobClicked() {
     if (m_selectedJobId.isEmpty()) return;
     emit retryJobRequested(m_selectedJobId);
+}
+
+void LogViewerPanel::onResumeJobClicked() {
+    if (m_selectedJobId.isEmpty()) return;
+    emit resumeJobRequested(m_selectedJobId);
 }
 
 void LogViewerPanel::onCleanupJobClicked() {

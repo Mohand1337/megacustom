@@ -156,6 +156,7 @@ public slots:
     void addFilesFromDownloader(const QStringList& filePaths);
     void selectMember(const QString& memberId);
     void retryJob(const QString& jobId);
+    void resumeJob(const QString& jobId);
     void cleanupJob(const QString& jobId);
 
 private slots:

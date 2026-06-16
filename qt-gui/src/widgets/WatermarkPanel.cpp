@@ -1540,6 +1540,70 @@ void WatermarkPanel::retryJob(const QString& jobId) {
     onStartWatermark();
 }
 
+void WatermarkPanel::resumeJob(const QString& jobId) {
+    if (m_isRunning) {
+        QMessageBox::warning(this, "Watermark Running",
+            "Wait for the current watermark job to finish before resuming another job.");
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(jobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Watermark) {
+        QMessageBox::warning(this, "Resume Unavailable",
+            "The selected job is not a saved Watermark job.");
+        return;
+    }
+    if (record.status != OperationJobStatus::Paused) {
+        QMessageBox::warning(this, "Resume Unavailable",
+            "Only paused Watermark jobs can be resumed from the Jobs tab.");
+        return;
+    }
+    if (!record.metadata["watermarkRows"].isArray()
+        || record.metadata["watermarkRows"].toArray().isEmpty()) {
+        QMessageBox::warning(this, "Resume Needs Checkpoint",
+            "This paused Watermark job does not contain saved row checkpoints.\n\n"
+            "Jobs created before checkpoint persistence still need the live Watermark table state.");
+        return;
+    }
+
+    bool sameJobLoaded = jobId == m_pausedJobId || jobId == m_currentJobId;
+    if (!sameJobLoaded) {
+        for (const WatermarkFileInfo& info : m_files) {
+            if (info.jobId == jobId) {
+                sameJobLoaded = true;
+                break;
+            }
+        }
+    }
+
+    if (!sameJobLoaded && !m_files.isEmpty()) {
+        const int reply = QMessageBox::question(this, "Restore Watermark Checkpoint",
+            "Resume needs to load this job's saved Watermark checkpoint, replacing the current Watermark table. Continue?",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    if (!sameJobLoaded && !restoreWatermarkRowsFromJob(record)) {
+        QMessageBox::warning(this, "Resume Failed",
+            "The saved Watermark checkpoint could not be restored.");
+        return;
+    }
+
+    if (sameJobLoaded && !m_pausedForDiskSpace) {
+        m_pausedJobId = jobId;
+        m_pausedForDiskSpace = true;
+        m_diskSpacePauseMessage = record.summary.isEmpty()
+            ? "Paused watermark job restored from Jobs."
+            : record.summary;
+        updateButtonStates();
+    }
+
+    onResumePausedWatermark();
+}
+
 QJsonArray WatermarkPanel::serializeWatermarkRows() const {
     QJsonArray rows;
     for (int row = 0; row < m_files.size(); ++row) {
