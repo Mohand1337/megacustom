@@ -1743,6 +1743,35 @@ Still pending:
 - Add cleanup actions for partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-16 Watermark Member-Batch Resume Guard Pass
+
+Scope:
+
+- Fixed the remaining unsafe resume case where a disk-full pause left one member partially complete, then the completed local member folder was manually uploaded or removed to free space before clicking Resume.
+
+Implemented:
+
+- Resume now preflights member batches in auto-upload mode before creating row-level resume tasks.
+- If a member has completed rows whose local output files are missing and still has unfinished rows, the app no longer silently retries only the leftover rows.
+- The user gets a clear choice:
+  - Skip those members as already handled, marking the whole member batch `Uploaded` so no new local member folder is created.
+  - Rebuild those members from the source files, retrying every file for that member so the recreated batch is complete.
+  - Cancel the resume.
+- Successful member auto-upload cleanup now marks the child rows as `Uploaded`, clears stale local output paths, and shows a cleanup note in the table instead of leaving rows that look locally complete but point to deleted files.
+- Upload cleanup failures no longer mark the member header as uploaded.
+- The Resume button tooltip and disk-full pause message now describe the member-batch safety check instead of claiming a simple row-only resume.
+
+Verification completed:
+
+- Qt GUI build with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Persist per-row cleanup checkpoints so the same member-batch resume evidence can survive app restart.
+- Add explicit cleanup actions for cloud folders that already existed before this pass.
+- Add cleanup actions for partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

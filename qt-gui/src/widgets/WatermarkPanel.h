@@ -199,6 +199,7 @@ private:
     void updateSmartEstimate();
     void updateSingleRow(int row);
     void updateMemberHeader(int headerRow);
+    void markMemberRowsUploaded(const QString& memberId, const QString& note = {});
     int findMemberHeaderRow(const QString& memberId) const;
 
     // Empty state

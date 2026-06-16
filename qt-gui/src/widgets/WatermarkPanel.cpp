@@ -2503,8 +2503,17 @@ void WatermarkPanel::onStartWatermark() {
                      << "— uploaded:" << uploaded << "failed:" << failed << "cleaned:" << deleted;
             int hdr = findMemberHeaderRow(memberId);
             if (hdr >= 0) {
-                m_files[hdr].status = "uploaded";
-                updateMemberHeader(hdr);
+                if (failed > 0) {
+                    m_files[hdr].status = "error";
+                    m_files[hdr].error = QString("%1 upload(s) failed").arg(failed);
+                    updateMemberHeader(hdr);
+                } else {
+                    markMemberRowsUploaded(
+                        memberId,
+                        QString("Uploaded to MEGA (%1 file(s)); cleaned up %2 local file(s)")
+                            .arg(uploaded)
+                            .arg(deleted));
+                }
             }
         });
     connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
@@ -2569,6 +2578,108 @@ void WatermarkPanel::onResumePausedWatermark() {
     int watermarkTaskCount = 0;
     int uploadOnlyCount = 0;
     int skippedCompleteCount = 0;
+    int skippedExternalMemberCount = 0;
+    int rebuildMemberCount = 0;
+
+    const bool autoUploadEnabled = m_autoUploadCheck && m_autoUploadCheck->isChecked();
+    QMap<QString, QList<int>> memberRows;
+    for (int row = 0; row < m_files.size(); ++row) {
+        const WatermarkFileInfo& info = m_files[row];
+        if (!info.isHeader && !info.memberId.isEmpty()) {
+            memberRows[info.memberId].append(row);
+        }
+    }
+
+    QSet<QString> suspectIncompleteMembers;
+    QStringList suspectMemberDescriptions;
+    if (autoUploadEnabled) {
+        for (auto it = memberRows.constBegin(); it != memberRows.constEnd(); ++it) {
+            const QString& memberId = it.key();
+            const int headerRow = findMemberHeaderRow(memberId);
+            if (headerRow >= 0 && m_files[headerRow].status == "uploaded") {
+                continue;
+            }
+
+            int missingCompletedOutputs = 0;
+            int existingCompletedOutputs = 0;
+            int unfinishedRows = 0;
+            QString memberName;
+
+            for (int row : it.value()) {
+                const WatermarkFileInfo& info = m_files[row];
+                if (memberName.isEmpty()) {
+                    memberName = info.memberName.isEmpty() ? memberId : info.memberName;
+                }
+
+                const bool complete = info.status == "complete" || info.status == "uploaded";
+                if (!complete) {
+                    ++unfinishedRows;
+                    continue;
+                }
+
+                const bool hasLocalOutput = !info.outputPath.trimmed().isEmpty()
+                    && QFileInfo::exists(info.outputPath);
+                if (hasLocalOutput) {
+                    ++existingCompletedOutputs;
+                } else {
+                    ++missingCompletedOutputs;
+                }
+            }
+
+            if (missingCompletedOutputs > 0 && unfinishedRows > 0) {
+                suspectIncompleteMembers.insert(memberId);
+                suspectMemberDescriptions << QString("%1: %2 completed output(s) missing, %3 local output(s) still present, %4 unfinished row(s)")
+                    .arg(memberName.isEmpty() ? memberId : memberName)
+                    .arg(missingCompletedOutputs)
+                    .arg(existingCompletedOutputs)
+                    .arg(unfinishedRows);
+            }
+        }
+    }
+
+    QSet<QString> skipExternalMembers;
+    QSet<QString> rebuildMembers;
+    if (!suspectIncompleteMembers.isEmpty()) {
+        QString preview = suspectMemberDescriptions.mid(0, 12).join("\n");
+        if (suspectMemberDescriptions.size() > 12) {
+            preview += QString("\n... and %1 more member(s)")
+                .arg(suspectMemberDescriptions.size() - 12);
+        }
+
+        QMessageBox dialog(this);
+        dialog.setIcon(QMessageBox::Warning);
+        dialog.setWindowTitle("Resume Member Batches");
+        dialog.setText(
+            "Some member batches have completed rows whose local output files are missing while other rows are still unfinished.");
+        dialog.setInformativeText(
+            "This usually means those member folders were uploaded or removed outside the app to free disk space.\n\n"
+            "Skipping marks the whole member batch as already handled and prevents the app from recreating that member folder with only leftover files.\n"
+            "Rebuilding retries every source file for those members so the batch is complete again.");
+        dialog.setDetailedText(preview);
+        QPushButton* skipButton = dialog.addButton("Skip these members", QMessageBox::AcceptRole);
+        QPushButton* rebuildButton = dialog.addButton("Rebuild these members", QMessageBox::DestructiveRole);
+        QPushButton* cancelButton = dialog.addButton(QMessageBox::Cancel);
+        dialog.setDefaultButton(skipButton);
+        dialog.exec();
+
+        if (dialog.clickedButton() == cancelButton) {
+            updateButtonStates();
+            return;
+        }
+
+        if (dialog.clickedButton() == rebuildButton) {
+            rebuildMembers = suspectIncompleteMembers;
+            rebuildMemberCount = rebuildMembers.size();
+        } else {
+            skipExternalMembers = suspectIncompleteMembers;
+            skippedExternalMemberCount = skipExternalMembers.size();
+            for (const QString& memberId : skipExternalMembers) {
+                markMemberRowsUploaded(
+                    memberId,
+                    "Skipped on resume: member folder was already uploaded or removed outside the app.");
+            }
+        }
+    }
 
     m_workerIdxToRow.clear();
     for (int row = 0; row < m_files.size(); ++row) {
@@ -2579,7 +2690,9 @@ void WatermarkPanel::onResumePausedWatermark() {
 
         const int headerRow = findMemberHeaderRow(info.memberId);
         const bool memberUploaded = headerRow >= 0 && m_files[headerRow].status == "uploaded";
-        const bool complete = info.status == "complete" || info.status == "uploaded";
+        const bool forceRebuildMember = rebuildMembers.contains(info.memberId);
+        const bool complete = !forceRebuildMember
+            && (info.status == "complete" || info.status == "uploaded");
 
         if (memberUploaded) {
             skippedCompleteCount++;
@@ -2674,6 +2787,14 @@ void WatermarkPanel::onResumePausedWatermark() {
         .arg(watermarkTaskCount)
         .arg(uploadOnlyCount)
         .arg(skippedCompleteCount);
+    if (skippedExternalMemberCount > 0) {
+        confirmText += QString("\nMember batches skipped as already handled: %1")
+            .arg(skippedExternalMemberCount);
+    }
+    if (rebuildMemberCount > 0) {
+        confirmText += QString("\nMember batches being rebuilt from source: %1")
+            .arg(rebuildMemberCount);
+    }
     if (!removedPartialOutputs.isEmpty()) {
         confirmText += QString("\n\nRemoved %1 partial output file(s) before retrying those rows.")
             .arg(removedPartialOutputs.size());
@@ -2732,6 +2853,8 @@ void WatermarkPanel::onResumePausedWatermark() {
         metadata["resumeMode"] = "disk_full";
         metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
         metadata["resumeUploadOnlyCount"] = uploadOnlyCount;
+        metadata["resumeSkippedExternalMemberCount"] = skippedExternalMemberCount;
+        metadata["resumeRebuildMemberCount"] = rebuildMemberCount;
         m_currentJobId = OperationJobStore::instance().createJob(
             OperationJobType::Watermark,
             QString("Resume paused watermark %1 rows").arg(watermarkTaskCount),
@@ -2744,6 +2867,8 @@ void WatermarkPanel::onResumePausedWatermark() {
         metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
         metadata["resumeUploadOnlyCount"] = uploadOnlyCount;
         metadata["resumeSkippedCompleteCount"] = skippedCompleteCount;
+        metadata["resumeSkippedExternalMemberCount"] = skippedExternalMemberCount;
+        metadata["resumeRebuildMemberCount"] = rebuildMemberCount;
         metadata["lastResumeAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         OperationJobStore::instance().createJob(
             OperationJobType::Watermark,
@@ -2809,11 +2934,17 @@ void WatermarkPanel::onResumePausedWatermark() {
                      << "uploaded:" << uploaded << "failed:" << failed << "cleaned:" << deleted;
             int hdr = findMemberHeaderRow(memberId);
             if (hdr >= 0) {
-                m_files[hdr].status = failed > 0 ? "error" : "uploaded";
                 if (failed > 0) {
+                    m_files[hdr].status = "error";
                     m_files[hdr].error = QString("%1 upload(s) failed during resume").arg(failed);
+                    updateMemberHeader(hdr);
+                } else {
+                    markMemberRowsUploaded(
+                        memberId,
+                        QString("Uploaded to MEGA during resume (%1 file(s)); cleaned up %2 local file(s)")
+                            .arg(uploaded)
+                            .arg(deleted));
                 }
-                updateMemberHeader(hdr);
             }
         });
     connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
@@ -3172,7 +3303,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         OperationJobStore::instance().markPaused(m_currentJobId, message);
         m_pausedJobId = m_currentJobId;
         QMessageBox::warning(this, "Watermarking Paused",
-            QString("%1\n\nNo more files or member folders will be created. Free space, then click Resume Watermarking to continue only unfinished rows.")
+            QString("%1\n\nNo more files or member folders will be created. Free space, then click Resume Watermarking to run the member-batch resume check.")
                 .arg(message));
         m_currentJobId.clear();
         m_currentJobCancelled = false;
@@ -3347,6 +3478,12 @@ void WatermarkPanel::updateSingleRow(int row) {
     } else if (info.status == "complete") {
         statusItem->setText("Complete");
         statusItem->setForeground(tm.supportSuccess());
+    } else if (info.status == "uploaded") {
+        statusItem->setText("Uploaded");
+        statusItem->setForeground(tm.supportSuccess());
+        if (!info.error.isEmpty()) {
+            statusItem->setToolTip(info.error);
+        }
     } else if (info.status == "error") {
         statusItem->setText("Error");
         statusItem->setForeground(tm.supportError());
@@ -3360,6 +3497,11 @@ void WatermarkPanel::updateSingleRow(int row) {
     if (info.status == "error" && !info.error.isEmpty()) {
         outputItem->setText(info.error);
         outputItem->setForeground(tm.supportError());
+    } else if (info.status == "uploaded") {
+        outputItem->setText(info.error.isEmpty()
+            ? "Uploaded to MEGA; local copy cleaned up"
+            : info.error);
+        outputItem->setForeground(tm.supportSuccess());
     }
     m_fileTable->setItem(row, 5, outputItem);
 
@@ -3368,7 +3510,7 @@ void WatermarkPanel::updateSingleRow(int row) {
         QColor errorBg = tm.supportError(); errorBg.setAlpha(30);
         for (int c = 0; c < 6; ++c)
             if (auto* item = m_fileTable->item(row, c)) item->setBackground(errorBg);
-    } else if (info.status == "complete") {
+    } else if (info.status == "complete" || info.status == "uploaded") {
         QColor successBg = tm.supportSuccess(); successBg.setAlpha(30);
         for (int c = 0; c < 6; ++c)
             if (auto* item = m_fileTable->item(row, c)) item->setBackground(successBg);
@@ -3387,7 +3529,7 @@ void WatermarkPanel::updateMemberHeader(int headerRow) {
     int totalFiles = 0, completeCount = 0, errorCount = 0, processingCount = 0;
     for (int r = headerRow + 1; r < m_files.size() && !m_files[r].isHeader; ++r) {
         totalFiles++;
-        if (m_files[r].status == "complete") completeCount++;
+        if (m_files[r].status == "complete" || m_files[r].status == "uploaded") completeCount++;
         else if (m_files[r].status == "error") errorCount++;
         else if (m_files[r].status == "processing") processingCount++;
     }
@@ -3432,6 +3574,32 @@ void WatermarkPanel::updateMemberHeader(int headerRow) {
     }
 }
 
+void WatermarkPanel::markMemberRowsUploaded(const QString& memberId, const QString& note) {
+    const int headerRow = findMemberHeaderRow(memberId);
+    if (headerRow < 0) {
+        return;
+    }
+
+    m_files[headerRow].status = "uploaded";
+    m_files[headerRow].error = note;
+
+    for (int row = headerRow + 1; row < m_files.size() && !m_files[row].isHeader; ++row) {
+        if (m_files[row].memberId != memberId) {
+            continue;
+        }
+
+        m_files[row].status = "uploaded";
+        m_files[row].progressPercent = 100;
+        m_files[row].outputPath.clear();
+        m_files[row].error = note;
+        updateSingleRow(row);
+    }
+
+    updateMemberHeader(headerRow);
+    updateStats();
+    updateButtonStates();
+}
+
 int WatermarkPanel::findMemberHeaderRow(const QString& memberId) const {
     for (int i = 0; i < m_files.size(); ++i) {
         if (m_files[i].isHeader && m_files[i].memberId == memberId)
@@ -3447,7 +3615,7 @@ void WatermarkPanel::updateEmptyState() {
 }
 
 void WatermarkPanel::updateStats() {
-    int videoCount = 0, pdfCount = 0, errorCount = 0, completeCount = 0;
+    int videoCount = 0, pdfCount = 0, errorCount = 0, completeCount = 0, uploadedCount = 0;
     qint64 totalSize = 0;
     QSet<QString> uniquePaths;
 
@@ -3462,6 +3630,7 @@ void WatermarkPanel::updateStats() {
         }
         if (info.status == "error") errorCount++;
         else if (info.status == "complete") completeCount++;
+        else if (info.status == "uploaded") uploadedCount++;
     }
 
     int uniqueFileCount = uniquePaths.size();
@@ -3482,6 +3651,9 @@ void WatermarkPanel::updateStats() {
 
     if (completeCount > 0) {
         statsText += QString(" | <span style='color: green;'>%1 completed</span>").arg(completeCount);
+    }
+    if (uploadedCount > 0) {
+        statsText += QString(" | <span style='color: green;'>%1 uploaded</span>").arg(uploadedCount);
     }
 
     if (errorCount > 0) {
@@ -3511,7 +3683,7 @@ void WatermarkPanel::updateButtonStates() {
 
     m_startBtn->setText(pausedForDisk ? "Resume Watermarking" : "Start Watermarking");
     m_startBtn->setToolTip(pausedForDisk
-        ? "Resume only unfinished rows from the paused disk-full job."
+        ? "Resume the paused disk-full job with a member-batch safety check before recreating any folders."
         : "Start watermarking the selected files with the current settings.");
 
     m_removeBtn->setEnabled(hasSelection && !m_isRunning && !pausedForDisk);
