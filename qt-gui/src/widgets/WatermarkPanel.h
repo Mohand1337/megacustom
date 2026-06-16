@@ -44,6 +44,7 @@ struct WatermarkFileInfo {
     QString status;         // "pending", "processing", "complete", "error", "uploading", "uploaded"
     QString outputPath;
     QString error;
+    QString jobId;          // owning watermark job while live table state is available
     int progressPercent = 0;
     bool isHeader = false;  // true for member section header rows
 };
@@ -106,7 +107,8 @@ private:
                             const WatermarkConfig& baseConfig,
                             const std::string& outputDir,
                             int& successCount,
-                            int& failCount);
+                            int& failCount,
+                            QMap<QString, QStringList>& memberFileMap);
 
     QStringList m_files;
     QString m_outputDir;

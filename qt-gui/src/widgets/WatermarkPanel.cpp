@@ -286,7 +286,8 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
                                          const WatermarkConfig& baseConfig,
                                          const std::string& outputDir,
                                          int& successCount,
-                                         int& failCount) {
+                                         int& failCount,
+                                         QMap<QString, QStringList>& memberFileMap) {
     int totalWatermarkTasks = 0;
     for (const WatermarkResumeTask& task : m_resumeTasks) {
         if (task.watermarkNeeded) {
@@ -377,6 +378,9 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
         if (!task.watermarkNeeded) {
             if (!task.existingOutputPath.isEmpty() && QFileInfo::exists(task.existingOutputPath)) {
                 memberOutputFiles.append(task.existingOutputPath);
+                if (!task.memberId.isEmpty()) {
+                    memberFileMap[task.memberId].append(task.existingOutputPath);
+                }
             }
             continue;
         }
@@ -401,6 +405,7 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
             const QString outFile = QString::fromStdString(result.outputFile);
             if (!task.memberId.isEmpty()) {
                 memberOutputFiles.append(outFile);
+                memberFileMap[task.memberId].append(outFile);
             }
         } else {
             failCount++;
@@ -440,9 +445,10 @@ void WatermarkWorker::process() {
     std::string outputDir = m_outputDir.isEmpty() ? "" : m_outputDir.toStdString();
 
     if (!m_resumeTasks.isEmpty()) {
-        processResumeTasks(watermarker, baseConfig, outputDir, successCount, failCount);
+        QMap<QString, QStringList> memberFileMap;
+        processResumeTasks(watermarker, baseConfig, outputDir, successCount, failCount, memberFileMap);
         emit finished(successCount, failCount);
-        emit finishedWithMapping(successCount, failCount, {});
+        emit finishedWithMapping(successCount, failCount, memberFileMap);
         return;
     }
 
@@ -1558,20 +1564,12 @@ void WatermarkPanel::cleanupJob(const QString& jobId) {
     }
 
     bool liveTableMatchesJob = (jobId == m_pausedJobId || jobId == m_currentJobId);
-    if (!liveTableMatchesJob && !m_files.isEmpty()) {
-        QSet<QString> jobSourcePaths;
-        const QJsonArray filePathArray = record.metadata["filePaths"].toArray();
-        for (const QJsonValue& value : filePathArray) {
-            const QString path = QDir::cleanPath(value.toString());
-            if (!path.isEmpty()) {
-                jobSourcePaths.insert(path);
-            }
-        }
+    if (!m_files.isEmpty()) {
         for (const WatermarkFileInfo& info : m_files) {
             if (info.isHeader) {
                 continue;
             }
-            if (jobSourcePaths.contains(QDir::cleanPath(info.filePath))) {
+            if (info.jobId == jobId) {
                 liveTableMatchesJob = true;
                 break;
             }
@@ -1581,8 +1579,8 @@ void WatermarkPanel::cleanupJob(const QString& jobId) {
     if (!liveTableMatchesJob) {
         QMessageBox::warning(this, "Cleanup Needs Live State",
             "This job does not have enough live cleanup state in the Watermark panel.\n\n"
-            "Cleanup is currently safe for paused/failed watermark jobs while their table rows are still loaded. "
-            "Older jobs or jobs after app restart need persisted per-row cleanup metadata before automatic cleanup can be safe.");
+            "Cleanup is currently safe only when the selected job's live table rows are still loaded. "
+            "Jobs from older builds or after app restart need persisted per-row cleanup metadata before automatic cleanup can be safe.");
         return;
     }
 
@@ -2342,6 +2340,13 @@ void WatermarkPanel::onStartWatermark() {
 
     // Pre-flight: validate auto-upload can work
     if (m_autoUploadCheck->isChecked()) {
+        if (!m_megaApi) {
+            QMessageBox::warning(this, "Not Connected",
+                "Auto-upload is enabled, but the MEGA connection is not available.\n\n"
+                "Log in first, or disable auto-upload and use the manual Distribution handoff.");
+            return;
+        }
+
         bool useCustomPath = m_customPathCheck->isChecked() && !m_customPathEdit->text().isEmpty();
         if (useCustomPath) {
             // Custom path mode — no need to check member folders
@@ -2428,6 +2433,9 @@ void WatermarkPanel::onStartWatermark() {
         QString("Watermark %1 %2").arg(plannedCount).arg(plannedCount == 1 ? "file" : "files"),
         plannedCount,
         metadata);
+    for (WatermarkFileInfo& info : m_files) {
+        info.jobId = m_currentJobId;
+    }
     m_retrySourceJobId.clear();
     m_pausedJobId.clear();
     m_currentJobCancelled = false;
@@ -2448,7 +2456,8 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setRootDir(m_sourceRootDir);
 
     // Smart Engine: pass auto-upload and metrics to worker
-    if (m_autoUploadCheck->isChecked() && m_megaApi) {
+    const bool autoUploadActive = m_autoUploadCheck->isChecked() && m_megaApi;
+    if (autoUploadActive) {
         m_worker->setAutoUpload(true, m_megaApi);
         if (m_customPathCheck->isChecked() && !m_customPathEdit->text().isEmpty()) {
             m_worker->setCustomUploadPath(m_customPathEdit->text());
@@ -2463,12 +2472,12 @@ void WatermarkPanel::onStartWatermark() {
     connect(m_worker, &WatermarkWorker::fileCompleted, this, &WatermarkPanel::onWorkerFileCompleted);
     connect(m_worker, &WatermarkWorker::finished, this, &WatermarkPanel::onWorkerFinished);
     connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
-            [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
+            [this, autoUploadActive](int, int, const QMap<QString, QStringList>& memberFileMap) {
                 if (m_pausedForDiskSpace) {
                     return;
                 }
                 if (!memberFileMap.isEmpty()) {
-                    if (m_autoUploadCheck->isChecked()) {
+                    if (autoUploadActive) {
                         // Auto-upload handled everything — files already uploaded & deleted
                         m_lastMemberFileMap.clear();
                         m_sendToDistBtn->setEnabled(false);
@@ -2576,7 +2585,7 @@ void WatermarkPanel::onResumePausedWatermark() {
     QStringList missingSources;
     QStringList removedPartialOutputs;
     int watermarkTaskCount = 0;
-    int uploadOnlyCount = 0;
+    int existingOutputTaskCount = 0;
     int skippedCompleteCount = 0;
     int skippedExternalMemberCount = 0;
     int rebuildMemberCount = 0;
@@ -2698,8 +2707,7 @@ void WatermarkPanel::onResumePausedWatermark() {
 
         if (complete) {
             skippedCompleteCount++;
-            if (m_autoUploadCheck && m_autoUploadCheck->isChecked()
-                && !info.memberId.isEmpty()
+            if (!info.memberId.isEmpty()
                 && !info.outputPath.isEmpty()
                 && QFileInfo::exists(info.outputPath)) {
                 WatermarkResumeTask task;
@@ -2709,7 +2717,7 @@ void WatermarkPanel::onResumePausedWatermark() {
                 task.existingOutputPath = info.outputPath;
                 task.watermarkNeeded = false;
                 tasks.append(task);
-                uploadOnlyCount++;
+                existingOutputTaskCount++;
             }
             continue;
         }
@@ -2779,10 +2787,10 @@ void WatermarkPanel::onResumePausedWatermark() {
     QString confirmText = QString(
         "Resume this paused watermark job?\n\n"
         "Pending rows to watermark: %1\n"
-        "Existing completed outputs to upload: %2\n"
+        "Existing completed outputs carried forward: %2\n"
         "Completed rows skipped: %3")
         .arg(watermarkTaskCount)
-        .arg(uploadOnlyCount)
+        .arg(existingOutputTaskCount)
         .arg(skippedCompleteCount);
     if (skippedExternalMemberCount > 0) {
         confirmText += QString("\nMember batches skipped as already handled: %1")
@@ -2812,6 +2820,13 @@ void WatermarkPanel::onResumePausedWatermark() {
     }
 
     if (m_autoUploadCheck && m_autoUploadCheck->isChecked()) {
+        if (!m_megaApi) {
+            QMessageBox::warning(this, "Not Connected",
+                "Auto-upload is enabled, but the MEGA connection is not available.\n\n"
+                "Log in first, or disable auto-upload and resume for manual Distribution handoff.");
+            return;
+        }
+
         bool useCustomPath = m_customPathCheck && m_customPathCheck->isChecked()
             && m_customPathEdit && !m_customPathEdit->text().isEmpty();
         if (m_customPathCheck && m_customPathCheck->isChecked() && !useCustomPath) {
@@ -2849,7 +2864,8 @@ void WatermarkPanel::onResumePausedWatermark() {
         QJsonObject metadata;
         metadata["resumeMode"] = "disk_full";
         metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
-        metadata["resumeUploadOnlyCount"] = uploadOnlyCount;
+        metadata["resumeExistingOutputCount"] = existingOutputTaskCount;
+        metadata["resumeUploadOnlyCount"] = existingOutputTaskCount;
         metadata["resumeSkippedExternalMemberCount"] = skippedExternalMemberCount;
         metadata["resumeRebuildMemberCount"] = rebuildMemberCount;
         m_currentJobId = OperationJobStore::instance().createJob(
@@ -2862,7 +2878,8 @@ void WatermarkPanel::onResumePausedWatermark() {
         QJsonObject metadata = record.metadata;
         metadata["resumeMode"] = "disk_full";
         metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
-        metadata["resumeUploadOnlyCount"] = uploadOnlyCount;
+        metadata["resumeExistingOutputCount"] = existingOutputTaskCount;
+        metadata["resumeUploadOnlyCount"] = existingOutputTaskCount;
         metadata["resumeSkippedCompleteCount"] = skippedCompleteCount;
         metadata["resumeSkippedExternalMemberCount"] = skippedExternalMemberCount;
         metadata["resumeRebuildMemberCount"] = rebuildMemberCount;
@@ -2876,6 +2893,9 @@ void WatermarkPanel::onResumePausedWatermark() {
             metadata,
             m_currentJobId);
     }
+    for (WatermarkFileInfo& info : m_files) {
+        info.jobId = m_currentJobId;
+    }
 
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
@@ -2887,7 +2907,8 @@ void WatermarkPanel::onResumePausedWatermark() {
     m_worker->setRootDir(m_sourceRootDir);
     m_worker->setResumeTasks(tasks);
 
-    if (m_autoUploadCheck && m_autoUploadCheck->isChecked() && m_megaApi) {
+    const bool resumeAutoUploadActive = m_autoUploadCheck && m_autoUploadCheck->isChecked() && m_megaApi;
+    if (resumeAutoUploadActive) {
         m_worker->setAutoUpload(true, m_megaApi);
         if (m_customPathCheck && m_customPathCheck->isChecked()
             && m_customPathEdit && !m_customPathEdit->text().isEmpty()) {
@@ -2903,11 +2924,11 @@ void WatermarkPanel::onResumePausedWatermark() {
     connect(m_worker, &WatermarkWorker::fileCompleted, this, &WatermarkPanel::onWorkerFileCompleted);
     connect(m_worker, &WatermarkWorker::finished, this, &WatermarkPanel::onWorkerFinished);
     connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
-            [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
+            [this, resumeAutoUploadActive](int, int, const QMap<QString, QStringList>& memberFileMap) {
                 if (m_pausedForDiskSpace || memberFileMap.isEmpty()) {
                     return;
                 }
-                if (m_autoUploadCheck && m_autoUploadCheck->isChecked()) {
+                if (resumeAutoUploadActive) {
                     m_lastMemberFileMap.clear();
                     m_sendToDistBtn->setEnabled(false);
                 } else {
@@ -2988,9 +3009,9 @@ void WatermarkPanel::onResumePausedWatermark() {
     emit watermarkStarted();
     OperationJobStore::instance().markRunning(
         m_currentJobId,
-        QString("Resuming paused watermark job: %1 row(s) pending, %2 existing output(s) queued for upload")
+        QString("Resuming paused watermark job: %1 row(s) pending, %2 existing output(s) carried forward")
             .arg(watermarkTaskCount)
-            .arg(uploadOnlyCount));
+            .arg(existingOutputTaskCount));
     m_workerThread->start();
 }
 
@@ -3673,7 +3694,9 @@ void WatermarkPanel::updateButtonStates() {
     // Count completed files for distribution button
     int completedCount = 0;
     for (const WatermarkFileInfo& info : m_files) {
-        if (info.status == "complete" && !info.outputPath.isEmpty()) {
+        if (info.status == "complete"
+            && !info.outputPath.isEmpty()
+            && QFileInfo::exists(info.outputPath)) {
             completedCount++;
         }
     }
@@ -3806,9 +3829,46 @@ QString WatermarkPanel::formatFileSize(qint64 bytes) const {
 void WatermarkPanel::onSendToDistribution() {
     // If we have a member file map from multi-member watermarking, send that
     if (!m_lastMemberFileMap.isEmpty()) {
+        QMap<QString, QStringList> runnableMap;
+        QStringList missingFiles;
+
+        for (auto it = m_lastMemberFileMap.constBegin(); it != m_lastMemberFileMap.constEnd(); ++it) {
+            QStringList existingFiles;
+            QStringList missingForMember;
+            for (const QString& path : it.value()) {
+                if (QFileInfo::exists(path)) {
+                    existingFiles.append(path);
+                } else {
+                    missingForMember.append(path);
+                    missingFiles.append(path);
+                }
+            }
+
+            if (!missingForMember.isEmpty()) {
+                continue;
+            }
+            if (!existingFiles.isEmpty()) {
+                runnableMap[it.key()] = existingFiles;
+            }
+        }
+
+        if (!missingFiles.isEmpty()) {
+            QMessageBox::warning(this, "Missing Watermarked Files",
+                QString("%1 local watermarked file(s) no longer exist. "
+                        "Members with missing files were not sent to Distribution to avoid partial uploads:\n\n%2")
+                    .arg(missingFiles.size())
+                    .arg(missingFiles.mid(0, 30).join("\n")));
+        }
+
+        if (runnableMap.isEmpty()) {
+            QMessageBox::information(this, "No Files",
+                "No complete local member batches are available to send to Distribution.");
+            return;
+        }
+
         m_statusLabel->setText(QString("Sending files for %1 members to Distribution...")
-            .arg(m_lastMemberFileMap.size()));
-        emit sendToDistributionMapped(m_lastMemberFileMap);
+            .arg(runnableMap.size()));
+        emit sendToDistributionMapped(runnableMap);
         m_lastMemberFileMap.clear();
         m_sendToDistBtn->setEnabled(false);
         return;
@@ -3816,10 +3876,22 @@ void WatermarkPanel::onSendToDistribution() {
 
     // Otherwise send flat file list (global/single-member mode)
     QStringList completedFiles;
+    QStringList missingFiles;
     for (const WatermarkFileInfo& info : m_files) {
         if (info.status == "complete" && !info.outputPath.isEmpty()) {
-            completedFiles.append(info.outputPath);
+            if (QFileInfo::exists(info.outputPath)) {
+                completedFiles.append(info.outputPath);
+            } else {
+                missingFiles.append(info.outputPath);
+            }
         }
+    }
+
+    if (!missingFiles.isEmpty()) {
+        QMessageBox::warning(this, "Missing Watermarked Files",
+            QString("%1 completed local file(s) no longer exist and were skipped:\n\n%2")
+                .arg(missingFiles.size())
+                .arg(missingFiles.mid(0, 30).join("\n")));
     }
 
     if (completedFiles.isEmpty()) {

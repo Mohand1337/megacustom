@@ -1772,6 +1772,35 @@ Still pending:
 - Add cleanup actions for partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-16 Watermark Handoff and State Truth Pass
+
+Scope:
+
+- Fixed the next set of resume/handoff bugs where UI state could claim outputs were ready or uploaded while the local files, member map, or job ownership evidence was stale.
+
+Implemented:
+
+- Auto-upload now blocks Watermark start/resume when the MEGA API connection is unavailable instead of silently running as manual mode while the UI says auto-upload completed.
+- Watermark finish handlers now use the actual worker auto-upload state, not only the checkbox state, when deciding whether to clear the manual member file map.
+- Manual Watermark resume now carries existing completed outputs into the resume task plan and emits a member-to-file map for Distribution handoff.
+- Watermark `Send to Distribution` validates that local watermarked files still exist before sending them.
+- Mapped Watermark handoff skips incomplete member batches instead of sending partial member uploads.
+- Distribution direct-upload preparation now filters out missing local files and members without distribution folders before showing the upload table.
+- Distribution direct-upload start revalidates the local files and destinations in case files were moved or deleted after review.
+- Downloader manual and auto-send to Watermark now skip missing completed files instead of sending stale paths.
+- Live Watermark cleanup rows now carry the owning job ID, and cleanup no longer treats source-path overlap alone as proof that the loaded table belongs to the selected job.
+
+Verification completed:
+
+- Qt GUI build with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Persist row-level Watermark checkpoint/output metadata so cleanup and resume evidence survives app restart.
+- Add explicit cleanup actions for cloud folders that already existed before this pass.
+- Add cleanup actions for partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

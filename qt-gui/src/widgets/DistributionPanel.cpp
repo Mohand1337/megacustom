@@ -166,6 +166,49 @@ static QMap<QString, QStringList> memberFileMapFromJson(const QJsonArray& array)
     return memberFileMap;
 }
 
+struct UploadMapValidation {
+    QMap<QString, QStringList> memberFileMap;
+    QStringList missingFiles;
+    QStringList membersWithoutFolder;
+};
+
+static UploadMapValidation validateMemberFileMapForUpload(const QMap<QString, QStringList>& input,
+                                                          MemberRegistry* registry) {
+    UploadMapValidation validation;
+    for (auto it = input.constBegin(); it != input.constEnd(); ++it) {
+        const QString& memberId = it.key();
+        const MemberInfo memberInfo = registry ? registry->getMember(memberId) : MemberInfo{};
+        const QString memberLabel = memberInfo.displayName.isEmpty()
+            ? memberId
+            : QString("%1 (%2)").arg(memberInfo.displayName, memberId);
+
+        if (memberInfo.distributionFolder.trimmed().isEmpty()) {
+            validation.membersWithoutFolder.append(memberLabel);
+            continue;
+        }
+
+        QStringList existingFiles;
+        QStringList missingForMember;
+        for (const QString& path : it.value()) {
+            if (QFileInfo::exists(path)) {
+                existingFiles.append(path);
+            } else {
+                missingForMember.append(path);
+            }
+        }
+
+        if (!missingForMember.isEmpty()) {
+            validation.missingFiles.append(missingForMember);
+            continue;
+        }
+
+        if (!existingFiles.isEmpty()) {
+            validation.memberFileMap[memberId] = existingFiles;
+        }
+    }
+    return validation;
+}
+
 // ==================== FolderCopyWorker ====================
 
 class FolderCopyWorker : public QObject {
@@ -1493,6 +1536,38 @@ void DistributionPanel::retryJob(const QString& jobId) {
 }
 
 void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& memberFileMap) {
+    const UploadMapValidation validation =
+        validateMemberFileMapForUpload(memberFileMap, m_registry);
+
+    if (!validation.missingFiles.isEmpty()) {
+        QMessageBox::warning(this, "Missing Watermarked Files",
+            QString("%1 local file(s) no longer exist. Members with missing files were not queued, "
+                    "because partial member uploads are unsafe:\n\n%2")
+                .arg(validation.missingFiles.size())
+                .arg(validation.missingFiles.mid(0, 30).join("\n")));
+    }
+
+    if (!validation.membersWithoutFolder.isEmpty()) {
+        QMessageBox::warning(this, "Missing Distribution Folders",
+            QString("%1 member(s) have no distribution folder and were not queued:\n\n%2")
+                .arg(validation.membersWithoutFolder.size())
+                .arg(validation.membersWithoutFolder.mid(0, 30).join("\n")));
+    }
+
+    if (validation.memberFileMap.isEmpty()) {
+        m_controllerActive = false;
+        m_pendingMemberFileMap.clear();
+        m_memberRowMap.clear();
+        m_memberTable->setRowCount(0);
+        m_startBtn->setEnabled(false);
+        m_uploadBanner->setVisible(false);
+        m_statusLabel->setText("No complete member upload batches are available.");
+        updateEmptyState();
+        return;
+    }
+
+    const QMap<QString, QStringList>& runnableMap = validation.memberFileMap;
+
     m_controllerActive = true;
     m_modeIndicator->setText("Mode: Auto-Upload (watermark -> member folders)");
     m_modeIndicator->setProperty("mode", "active");
@@ -1501,18 +1576,18 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
     m_routeMap.clear();
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
-    m_memberTable->setRowCount(memberFileMap.size());
+    m_memberTable->setRowCount(runnableMap.size());
 
     int totalFiles = 0;
-    for (const auto& files : memberFileMap) totalFiles += files.size();
+    for (const auto& files : runnableMap) totalFiles += files.size();
 
     // Show upload banner
     m_uploadBannerLabel->setText(QString("Upload Mode -- %1 files for %2 members. "
-        "Files received from Watermark panel.").arg(totalFiles).arg(memberFileMap.size()));
+        "Files received from Watermark panel.").arg(totalFiles).arg(runnableMap.size()));
     m_uploadBanner->setVisible(true);
 
     int row = 0;
-    for (auto it = memberFileMap.constBegin(); it != memberFileMap.constEnd(); ++it) {
+    for (auto it = runnableMap.constBegin(); it != runnableMap.constEnd(); ++it) {
         const QString& memberId = it.key();
         const QStringList& files = it.value();
 
@@ -1568,21 +1643,21 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
     }
 
     // Store the member file map for when user clicks Start
-    m_pendingMemberFileMap = memberFileMap;
+    m_pendingMemberFileMap = runnableMap;
 
     // Set UI to ready state — user must click Start
     m_startBtn->setEnabled(true);
     m_pauseBtn->setEnabled(false);
     m_stopBtn->setEnabled(false);
     m_progressBar->setValue(0);
-    m_progressBar->setMaximum(memberFileMap.size());
+    m_progressBar->setMaximum(runnableMap.size());
     m_successCount = 0;
     m_failCount = 0;
 
     m_statusLabel->setText(QString("Ready to upload %1 files to %2 members. Click Start to begin.")
-        .arg(totalFiles).arg(memberFileMap.size()));
+        .arg(totalFiles).arg(runnableMap.size()));
     m_statsLabel->setText(QString("Members: %1 | Files: %2")
-        .arg(memberFileMap.size()).arg(totalFiles));
+        .arg(runnableMap.size()).arg(totalFiles));
 
     updateEmptyState();
 }
@@ -2881,6 +2956,31 @@ void DistributionPanel::onStartDistribution() {
 
     // Controller-active mode: upload pending member files via DistributionController
     if (m_controllerActive && m_distController && !m_pendingMemberFileMap.isEmpty()) {
+        const UploadMapValidation validation =
+            validateMemberFileMapForUpload(m_pendingMemberFileMap, m_registry);
+        if (!validation.missingFiles.isEmpty() || !validation.membersWithoutFolder.isEmpty()) {
+            QStringList warnings;
+            if (!validation.missingFiles.isEmpty()) {
+                warnings << QString("%1 local file(s) no longer exist:\n%2")
+                    .arg(validation.missingFiles.size())
+                    .arg(validation.missingFiles.mid(0, 20).join("\n"));
+            }
+            if (!validation.membersWithoutFolder.isEmpty()) {
+                warnings << QString("%1 member(s) have no distribution folder:\n%2")
+                    .arg(validation.membersWithoutFolder.size())
+                    .arg(validation.membersWithoutFolder.mid(0, 20).join("\n"));
+            }
+
+            QMessageBox::warning(this, "Upload List Changed",
+                QString("The upload list changed before start. Incomplete member batches were removed.\n\n%1\n\n"
+                        "Review the updated list and click Start again.")
+                    .arg(warnings.join("\n\n")));
+            prepareForUpload(validation.memberFileMap);
+            return;
+        }
+
+        m_pendingMemberFileMap = validation.memberFileMap;
+
         int totalFiles = 0;
         for (const auto& files : m_pendingMemberFileMap) totalFiles += files.size();
 

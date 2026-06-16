@@ -954,21 +954,41 @@ void DownloaderPanel::onCheckDependencies() {
 
 void DownloaderPanel::onSendToWatermark() {
     QStringList filesToSend;
+    QStringList missingFiles;
+    const QModelIndexList selectedRows = m_downloadTable->selectionModel()->selectedRows();
 
     // Get selected completed files
-    for (const QModelIndex& index : m_downloadTable->selectionModel()->selectedRows()) {
+    for (const QModelIndex& index : selectedRows) {
         int row = index.row();
         if (row >= 0 && row < m_items.size()) {
             const DownloadItemInfo& info = m_items[row];
             if (info.status == "complete" && !info.outputPath.isEmpty()) {
-                filesToSend.append(info.outputPath);
+                if (QFileInfo::exists(info.outputPath)) {
+                    filesToSend.append(info.outputPath);
+                } else {
+                    missingFiles.append(info.outputPath);
+                }
             }
         }
     }
 
-    if (filesToSend.isEmpty()) {
+    if (filesToSend.isEmpty() && selectedRows.isEmpty()) {
         // If nothing selected, send all completed
-        filesToSend = m_completedFiles;
+        for (const QString& path : m_completedFiles) {
+            if (QFileInfo::exists(path)) {
+                filesToSend.append(path);
+            } else {
+                missingFiles.append(path);
+            }
+        }
+    }
+
+    missingFiles.removeDuplicates();
+    if (!missingFiles.isEmpty()) {
+        QMessageBox::warning(this, "Missing Downloaded Files",
+            QString("%1 completed download(s) no longer exist and were skipped:\n\n%2")
+                .arg(missingFiles.size())
+                .arg(missingFiles.mid(0, 30).join("\n")));
     }
 
     if (filesToSend.isEmpty()) {
@@ -1180,15 +1200,35 @@ void DownloaderPanel::updateCurrentJobProgress(const QString& summary) {
 
 void DownloaderPanel::checkAndAutoSend() {
     if (m_autoSendCheck->isChecked() && !m_completedFiles.isEmpty()) {
+        QStringList existingFiles;
+        QStringList missingFiles;
+        for (const QString& path : m_completedFiles) {
+            if (QFileInfo::exists(path)) {
+                existingFiles.append(path);
+            } else {
+                missingFiles.append(path);
+            }
+        }
+
+        if (existingFiles.isEmpty()) {
+            m_statusLabel->setText(m_statusLabel->text()
+                + " | Auto-send skipped: completed files are no longer local");
+            return;
+        }
+
+        if (!missingFiles.isEmpty()) {
+            qWarning() << "Downloader auto-send skipped missing completed files:" << missingFiles;
+        }
+
         LogManager::instance().logWithContext(LogLevel::Info, LogCategory::Download,
             "download.auto_send_to_watermark",
             QString("Auto-sent %1 completed downloads to Watermark")
-                .arg(m_completedFiles.size()).toStdString(),
+                .arg(existingFiles.size()).toStdString(),
             "",
             "",
             m_currentJobId.toStdString());
-        emit sendToWatermark(m_completedFiles);
-        m_statusLabel->setText(m_statusLabel->text() + QString(" | Auto-sent %1 %2 to Watermark").arg(m_completedFiles.size()).arg(m_completedFiles.size() == 1 ? "file" : "files"));
+        emit sendToWatermark(existingFiles);
+        m_statusLabel->setText(m_statusLabel->text() + QString(" | Auto-sent %1 %2 to Watermark").arg(existingFiles.size()).arg(existingFiles.size() == 1 ? "file" : "files"));
     }
 }
 
