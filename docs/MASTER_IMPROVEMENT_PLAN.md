@@ -1801,6 +1801,34 @@ Still pending:
 - Add cleanup actions for partial distribution folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-16 Watermark Checkpoint Persistence Pass
+
+Scope:
+
+- Added the first persisted row-level Watermark checkpoint layer so live table state is no longer the only source of cleanup/resume evidence.
+
+Implemented:
+
+- Watermark jobs now persist a `watermarkRows` checkpoint array in job metadata.
+- Each checkpoint row stores row type, source path, file name, file size, file type, member ID/name, status, output path, error, progress, and owning job ID.
+- Checkpoints are written when a Watermark job is created, when a row completes/fails, when a member is marked uploaded/external-handled, when disk-full pause is reached, when resume is prepared, and after cleanup.
+- Checkpoint metadata also stores row counts by state: pending, processing, complete, uploaded, and error.
+- Watermark cleanup can now restore saved checkpoint rows from job metadata after app restart or after the live table has been cleared.
+- Cleanup no longer depends only on in-memory row state for checkpointed jobs; older jobs without checkpoints still show the safe manual-review warning.
+- Restored checkpoint jobs rehydrate the Watermark table, member selection, templates, output settings, encoding settings, metadata fields, auto-upload setting, and custom upload path from job metadata.
+- Restoring a paused checkpoint re-enables the disk-full Resume flow with the saved row state.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add a dedicated Jobs-tab `Resume` action for paused Watermark jobs instead of relying on cleanup/open-panel restoration.
+- Add explicit cleanup actions for cloud folders that already existed before this pass.
+- Add cleanup actions for partial distribution folders.
+- Add parent/child job display for download-to-watermark retries and handoffs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

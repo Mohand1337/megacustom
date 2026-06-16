@@ -15,6 +15,8 @@
 #include <QListWidget>
 #include <QThread>
 #include <QMap>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <memory>
 #include <atomic>
 
@@ -30,6 +32,7 @@ class WatermarkerController;
 class MetricsStore;
 struct WatermarkConfig;
 struct WatermarkResult;
+struct OperationJobRecord;
 
 /**
  * Info about a file to be watermarked
@@ -191,6 +194,10 @@ private:
     void updateStats();
     void updateButtonStates();
     void updateCurrentJobProgress(const QString& summary = {});
+    void saveWatermarkCheckpoint(const QString& reason, const QString& jobId = {});
+    QJsonArray serializeWatermarkRows() const;
+    bool restoreWatermarkRowsFromJob(const OperationJobRecord& record);
+    void applyWatermarkJobMetadataToUi(const QJsonObject& metadata);
     void onResumePausedWatermark();
     void loadMembers();
     QStringList getSelectedMemberIds() const;

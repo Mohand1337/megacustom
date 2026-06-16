@@ -1540,6 +1540,218 @@ void WatermarkPanel::retryJob(const QString& jobId) {
     onStartWatermark();
 }
 
+QJsonArray WatermarkPanel::serializeWatermarkRows() const {
+    QJsonArray rows;
+    for (int row = 0; row < m_files.size(); ++row) {
+        const WatermarkFileInfo& info = m_files[row];
+        QJsonObject object;
+        object["row"] = row;
+        object["isHeader"] = info.isHeader;
+        object["sourcePath"] = info.filePath;
+        object["fileName"] = info.fileName;
+        object["fileSizeBytes"] = QString::number(info.fileSize);
+        object["fileType"] = info.fileType;
+        object["memberName"] = info.memberName;
+        object["memberId"] = info.memberId;
+        object["status"] = info.status;
+        object["outputPath"] = info.outputPath;
+        object["error"] = info.error;
+        object["progressPercent"] = info.progressPercent;
+        object["jobId"] = info.jobId;
+        rows.append(object);
+    }
+    return rows;
+}
+
+void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QString& jobId) {
+    QString targetJobId = jobId.trimmed().isEmpty()
+        ? (!m_currentJobId.trimmed().isEmpty() ? m_currentJobId : m_pausedJobId)
+        : jobId.trimmed();
+    if (targetJobId.isEmpty()) {
+        for (const WatermarkFileInfo& info : m_files) {
+            if (!info.isHeader && !info.jobId.trimmed().isEmpty()) {
+                targetJobId = info.jobId.trimmed();
+                break;
+            }
+        }
+    }
+    if (targetJobId.isEmpty() || m_files.isEmpty()) {
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(targetJobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Watermark) {
+        return;
+    }
+
+    int rowCount = 0;
+    int pendingCount = 0;
+    int processingCount = 0;
+    int completeCount = 0;
+    int uploadedCount = 0;
+    int errorCount = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            continue;
+        }
+        ++rowCount;
+        if (info.status == "pending") ++pendingCount;
+        else if (info.status == "processing") ++processingCount;
+        else if (info.status == "complete") ++completeCount;
+        else if (info.status == "uploaded") ++uploadedCount;
+        else if (info.status == "error") ++errorCount;
+    }
+
+    QJsonObject metadata = record.metadata;
+    metadata["watermarkCheckpointVersion"] = 1;
+    metadata["watermarkCheckpointReason"] = reason;
+    metadata["watermarkCheckpointUpdatedAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    metadata["watermarkRows"] = serializeWatermarkRows();
+    metadata["watermarkRowCount"] = rowCount;
+    metadata["watermarkPendingRows"] = pendingCount;
+    metadata["watermarkProcessingRows"] = processingCount;
+    metadata["watermarkCompleteRows"] = completeCount;
+    metadata["watermarkUploadedRows"] = uploadedCount;
+    metadata["watermarkErrorRows"] = errorCount;
+
+    OperationJobStore::instance().createJob(
+        OperationJobType::Watermark,
+        record.title,
+        qMax(record.plannedCount, rowCount),
+        metadata,
+        targetJobId);
+}
+
+void WatermarkPanel::applyWatermarkJobMetadataToUi(const QJsonObject& metadata) {
+    const QString mode = metadata["mode"].toString("global");
+    const int modeIndex = m_modeCombo->findData(mode);
+    if (modeIndex >= 0) {
+        m_modeCombo->setCurrentIndex(modeIndex);
+    }
+
+    m_primaryTextEdit->setText(metadata["primaryText"].toString());
+    m_secondaryTextEdit->setText(metadata["secondaryText"].toString());
+    m_sameAsInputCheck->setChecked(metadata["sameAsInput"].toBool(true));
+    m_outputDirEdit->setText(metadata["outputDirRaw"].toString());
+    m_sourceRootDir = metadata["sourceRootDir"].toString();
+
+    auto setComboValue = [](QComboBox* combo, const QString& value) {
+        if (!combo || value.isEmpty()) return;
+        const int index = combo->findText(value);
+        if (index >= 0) {
+            combo->setCurrentIndex(index);
+        }
+    };
+    setComboValue(m_presetCombo, metadata["preset"].toString());
+    if (metadata.contains("crf")) {
+        m_crfSpin->setValue(metadata["crf"].toInt(m_crfSpin->value()));
+    }
+    if (metadata.contains("intervalSeconds")) {
+        m_intervalSpin->setValue(metadata["intervalSeconds"].toInt(m_intervalSpin->value()));
+    }
+    if (metadata.contains("durationSeconds")) {
+        m_durationSpin->setValue(metadata["durationSeconds"].toInt(m_durationSpin->value()));
+    }
+
+    m_embedMetadataCheck->setChecked(metadata["embedMetadata"].toBool(false));
+    m_metaTitleEdit->setText(metadata["metadataTitle"].toString());
+    m_metaAuthorEdit->setText(metadata["metadataAuthor"].toString());
+    m_metaCommentEdit->setText(metadata["metadataComment"].toString());
+    m_metaKeywordsEdit->setText(metadata["metadataKeywords"].toString());
+
+    if (m_autoUploadCheck) {
+        m_autoUploadCheck->setChecked(metadata["autoUpload"].toBool(false));
+    }
+    if (m_customPathCheck) {
+        m_customPathCheck->setChecked(metadata["customPathEnabled"].toBool(false));
+    }
+    if (m_customPathEdit) {
+        m_customPathEdit->setText(metadata["customUploadPath"].toString());
+    }
+
+    QSet<QString> selectedMembers;
+    const QJsonArray memberArray = metadata["selectedMemberIds"].toArray();
+    for (const QJsonValue& value : memberArray) {
+        const QString id = value.toString().trimmed();
+        if (!id.isEmpty()) {
+            selectedMembers.insert(id);
+        }
+    }
+
+    loadMembers();
+    m_memberListWidget->blockSignals(true);
+    for (int i = 0; i < m_memberListWidget->count(); ++i) {
+        QListWidgetItem* item = m_memberListWidget->item(i);
+        const QString id = item->data(Qt::UserRole).toString();
+        item->setCheckState(selectedMembers.contains(id) ? Qt::Checked : Qt::Unchecked);
+    }
+    m_memberListWidget->blockSignals(false);
+    onMemberSelectionChanged();
+}
+
+bool WatermarkPanel::restoreWatermarkRowsFromJob(const OperationJobRecord& record) {
+    const QJsonArray rows = record.metadata["watermarkRows"].toArray();
+    if (rows.isEmpty()) {
+        return false;
+    }
+
+    applyWatermarkJobMetadataToUi(record.metadata);
+
+    QList<WatermarkFileInfo> restoredRows;
+    restoredRows.reserve(rows.size());
+    for (const QJsonValue& value : rows) {
+        if (!value.isObject()) {
+            continue;
+        }
+
+        const QJsonObject object = value.toObject();
+        WatermarkFileInfo info;
+        info.isHeader = object["isHeader"].toBool(false);
+        info.filePath = object["sourcePath"].toString();
+        info.fileName = object["fileName"].toString();
+        if (info.fileName.isEmpty() && !info.filePath.isEmpty()) {
+            info.fileName = QFileInfo(info.filePath).fileName();
+        }
+        info.fileSize = object["fileSizeBytes"].toString().toLongLong();
+        if (info.fileSize <= 0 && QFileInfo::exists(info.filePath)) {
+            info.fileSize = QFileInfo(info.filePath).size();
+        }
+        info.fileType = object["fileType"].toString();
+        info.memberName = object["memberName"].toString();
+        info.memberId = object["memberId"].toString();
+        info.status = object["status"].toString("pending");
+        info.outputPath = object["outputPath"].toString();
+        info.error = object["error"].toString();
+        info.progressPercent = object["progressPercent"].toInt(0);
+        info.jobId = object["jobId"].toString(record.id);
+        if (info.jobId.isEmpty()) {
+            info.jobId = record.id;
+        }
+        restoredRows.append(info);
+    }
+
+    if (restoredRows.isEmpty()) {
+        return false;
+    }
+
+    m_files = restoredRows;
+    m_workerIdxToRow.clear();
+    m_lastMemberFileMap.clear();
+    m_currentJobId.clear();
+    m_pausedJobId = record.status == OperationJobStatus::Paused ? record.id : QString();
+    m_pausedForDiskSpace = record.status == OperationJobStatus::Paused;
+    m_diskSpacePauseMessage = m_pausedForDiskSpace
+        ? (record.summary.isEmpty() ? "Paused watermark job restored from checkpoint." : record.summary)
+        : QString();
+    m_currentJobCancelled = false;
+
+    populateTable();
+    updateStats();
+    updateButtonStates();
+    m_statusLabel->setText(QString("Restored watermark checkpoint for job %1").arg(record.id));
+    return true;
+}
+
 void WatermarkPanel::cleanupJob(const QString& jobId) {
     if (m_isRunning) {
         QMessageBox::warning(this, "Watermark Running",
@@ -1576,11 +1788,24 @@ void WatermarkPanel::cleanupJob(const QString& jobId) {
         }
     }
 
+    if (!liveTableMatchesJob && record.metadata["watermarkRows"].isArray()) {
+        if (!m_files.isEmpty()) {
+            int reply = QMessageBox::question(this, "Restore Watermark Checkpoint",
+                "Cleanup needs to load this job's saved Watermark checkpoint, replacing the current Watermark table. Continue?",
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (reply != QMessageBox::Yes) {
+                return;
+            }
+        }
+        liveTableMatchesJob = restoreWatermarkRowsFromJob(record);
+    }
+
     if (!liveTableMatchesJob) {
         QMessageBox::warning(this, "Cleanup Needs Live State",
             "This job does not have enough live cleanup state in the Watermark panel.\n\n"
-            "Cleanup is currently safe only when the selected job's live table rows are still loaded. "
-            "Jobs from older builds or after app restart need persisted per-row cleanup metadata before automatic cleanup can be safe.");
+            "Cleanup is safe when the selected job's live table rows are loaded or when the job contains saved Watermark row checkpoints. "
+            "Jobs from older builds without checkpoints still need manual review.");
         return;
     }
 
@@ -1892,6 +2117,7 @@ void WatermarkPanel::cleanupJob(const QString& jobId) {
         latestRecord.plannedCount,
         metadata,
         jobId);
+    saveWatermarkCheckpoint("cleanup_applied", jobId);
 
     const int cleanupFailures = failedFiles + failedDirPaths.size();
     const QString summary = QString("Cleanup removed %1 partial file(s) and %2 empty folder(s)%3")
@@ -2436,6 +2662,7 @@ void WatermarkPanel::onStartWatermark() {
     for (WatermarkFileInfo& info : m_files) {
         info.jobId = m_currentJobId;
     }
+    saveWatermarkCheckpoint("created");
     m_retrySourceJobId.clear();
     m_pausedJobId.clear();
     m_currentJobCancelled = false;
@@ -2770,6 +2997,7 @@ void WatermarkPanel::onResumePausedWatermark() {
         m_pausedForDiskSpace = false;
         m_diskSpacePauseMessage.clear();
         if (!m_pausedJobId.isEmpty()) {
+            saveWatermarkCheckpoint("resume_no_pending_work", m_pausedJobId);
             OperationJobStore::instance().markCompleted(
                 m_pausedJobId,
                 skippedCompleteCount,
@@ -2896,6 +3124,7 @@ void WatermarkPanel::onResumePausedWatermark() {
     for (WatermarkFileInfo& info : m_files) {
         info.jobId = m_currentJobId;
     }
+    saveWatermarkCheckpoint("resume_prepared");
 
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
@@ -3306,6 +3535,7 @@ void WatermarkPanel::onWorkerFileCompleted(int fileIndex, bool success, const QS
     updateCurrentJobProgress(success
         ? QString("Watermarked %1").arg(QFileInfo(outputPath).fileName())
         : QString("Failed: %1").arg(error.left(160)));
+    saveWatermarkCheckpoint(success ? "row_completed" : "row_failed");
 }
 
 void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
@@ -3320,6 +3550,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         m_statusLabel->setText(message);
         OperationJobStore::instance().markPaused(m_currentJobId, message);
         m_pausedJobId = m_currentJobId;
+        saveWatermarkCheckpoint("paused_disk_full", m_pausedJobId);
         QMessageBox::warning(this, "Watermarking Paused",
             QString("%1\n\nNo more files or member folders will be created. Free space, then click Resume Watermarking to run the member-batch resume check.")
                 .arg(message));
@@ -3352,6 +3583,9 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(finalSuccessCount).arg(finalFailCount));
 
     if (!m_currentJobId.isEmpty()) {
+        saveWatermarkCheckpoint(m_currentJobCancelled
+            ? "cancelled"
+            : (finalFailCount > 0 ? "finished_with_errors" : "completed"));
         if (m_currentJobCancelled) {
             OperationJobStore::instance().markCancelled(
                 m_currentJobId,
@@ -3616,6 +3850,7 @@ void WatermarkPanel::markMemberRowsUploaded(const QString& memberId, const QStri
     updateMemberHeader(headerRow);
     updateStats();
     updateButtonStates();
+    saveWatermarkCheckpoint("member_marked_uploaded");
 }
 
 int WatermarkPanel::findMemberHeaderRow(const QString& memberId) const {
