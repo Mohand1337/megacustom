@@ -1906,6 +1906,35 @@ Still pending:
 - Add parent/child job display for download-to-watermark retries and handoffs.
 - Add a richer cleanup summary view in the Jobs tab for previous cleanup runs.
 
+### 2026-06-17 Resume/Retry Reconciliation Review Pass
+
+Scope:
+
+- Added preview-first reconciliation reviews before replaying saved Watermark and Distribution work, so resume/retry decisions are visible before the app mutates local outputs or starts MEGA transfers.
+
+Implemented:
+
+- Watermark resume now shows a table of every saved row before restart: watermark again, carry completed output forward, skip completed row, skip externally handled member batch, rebuild from source, remove partial output, or cannot resume because the source is missing.
+- Watermark resume no longer removes partial local output files before confirmation; those files are removed only after the reconciliation review is accepted.
+- Watermark resume metadata now records review-related counts, including missing sources and removed partial outputs.
+- Distribution direct-upload retry now checks expected remote file paths before retrying.
+- Distribution direct-upload retry skips files already present in the expected member folder, including files whose local output was removed after a manual upload.
+- Distribution direct-upload retry blocks a member batch when required local files are missing and not confirmed remote, preventing partial leftover-only uploads.
+- Distribution folder-task retry now shows a structured review table before restart.
+- Distribution folder-task retry blocks incomplete saved local file-list batches as a batch instead of uploading only the remaining subset.
+- Distribution folder-task retry checks saved MEGA source paths when connected, records existing remote cleanup evidence counts in the review, and stores reconciliation counts in retry job metadata.
+- Distribution retry reconciliation emits structured `retry.reconciled` log events.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add parent/child job display for download-to-watermark retries and handoffs.
+- Add a cleanup-run details viewer in the Jobs tab.
+- Consider a shared reusable reconciliation dialog class if more panels adopt the same review pattern.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

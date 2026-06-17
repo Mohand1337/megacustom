@@ -22,6 +22,8 @@
 #include <megaapi.h>
 #include <QtConcurrent>
 #include <QApplication>
+#include <QAbstractItemView>
+#include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -1296,38 +1298,237 @@ void DistributionPanel::retryJob(const QString& jobId) {
             return;
         }
 
+        struct RetryReviewRow {
+            QString action;
+            QString member;
+            QString source;
+            QString destination;
+            QString detail;
+            bool warning = false;
+            bool blocked = false;
+        };
+
+        QList<RetryReviewRow> reviewRows;
         QMap<QString, QStringList> runnableMap;
-        QStringList missingFiles;
+        int runnableFileCount = 0;
+        int alreadyRemoteCount = 0;
+        int missingLocalCount = 0;
+        int unsafeMemberCount = 0;
+        int missingFolderCount = 0;
+
+        auto expectedRemoteFilePath = [](const QString& folderPath, const QString& localPath) {
+            const QString folder = QDir::cleanPath(folderPath.trimmed());
+            const QString fileName = QFileInfo(localPath).fileName();
+            if (folder.isEmpty() || fileName.isEmpty()) {
+                return QString();
+            }
+            return QDir::cleanPath(folder + "/" + fileName);
+        };
+
+        auto remoteFileExists = [this](const QString& path) {
+            if (!m_megaApi || path.trimmed().isEmpty()) {
+                return false;
+            }
+            std::unique_ptr<mega::MegaNode> node(
+                m_megaApi->getNodeByPath(path.toUtf8().constData()));
+            return node && !node->isFolder();
+        };
+
+        auto appendReviewRow = [&reviewRows](const QString& action,
+                                             const QString& member,
+                                             const QString& source,
+                                             const QString& destination,
+                                             const QString& detail,
+                                             bool warning = false,
+                                             bool blocked = false) {
+            RetryReviewRow row;
+            row.action = action;
+            row.member = member;
+            row.source = source;
+            row.destination = destination;
+            row.detail = detail;
+            row.warning = warning;
+            row.blocked = blocked;
+            reviewRows.append(row);
+        };
+
         for (auto it = memberFileMap.constBegin(); it != memberFileMap.constEnd(); ++it) {
-            QStringList existingFiles;
+            const QString& memberId = it.key();
+            const MemberInfo memberInfo = m_registry ? m_registry->getMember(memberId) : MemberInfo{};
+            const QString memberLabel = memberInfo.displayName.isEmpty()
+                ? memberId
+                : QString("%1 (%2)").arg(memberInfo.displayName, memberId);
+            const QString distributionFolder = memberInfo.distributionFolder.trimmed();
+
+            if (distributionFolder.isEmpty()) {
+                missingFolderCount++;
+                for (const QString& path : it.value()) {
+                    appendReviewRow("Cannot retry", memberLabel, path, {},
+                        "Member has no distribution folder in the registry.", true, true);
+                }
+                continue;
+            }
+
+            struct PendingUploadFile {
+                QString localPath;
+                QString remotePath;
+            };
+            QList<PendingUploadFile> pendingFiles;
+            bool memberUnsafe = false;
+
             for (const QString& path : it.value()) {
-                if (QFileInfo::exists(path)) {
-                    existingFiles.append(path);
-                } else {
-                    missingFiles.append(path);
+                const QString remotePath = expectedRemoteFilePath(distributionFolder, path);
+                const bool existsLocal = QFileInfo::exists(path);
+                const bool existsRemote = remoteFileExists(remotePath);
+
+                if (existsRemote) {
+                    alreadyRemoteCount++;
+                    appendReviewRow("Skip already remote", memberLabel, path, remotePath,
+                        "Expected file already exists in this member folder.");
+                    continue;
+                }
+
+                if (!existsLocal) {
+                    missingLocalCount++;
+                    memberUnsafe = true;
+                    appendReviewRow("Cannot retry", memberLabel, path, remotePath,
+                        m_megaApi
+                            ? "Local file is missing and the expected remote file was not found."
+                            : "Local file is missing and remote presence could not be verified.",
+                        true,
+                        true);
+                    continue;
+                }
+
+                pendingFiles.append({path, remotePath});
+            }
+
+            if (memberUnsafe) {
+                unsafeMemberCount++;
+                for (const PendingUploadFile& pending : pendingFiles) {
+                    appendReviewRow("Skip unsafe member", memberLabel, pending.localPath, pending.remotePath,
+                        "This member has missing files that are not confirmed remote, so partial retry is blocked.",
+                        true,
+                        true);
+                }
+                continue;
+            }
+
+            QStringList runnableFiles;
+            for (const PendingUploadFile& pending : pendingFiles) {
+                runnableFiles.append(pending.localPath);
+                runnableFileCount++;
+                appendReviewRow("Upload retry", memberLabel, pending.localPath, pending.remotePath,
+                    "File is local and is not already present at the expected remote path.");
+            }
+
+            if (!runnableFiles.isEmpty()) {
+                runnableMap[memberId] = runnableFiles;
+            }
+        }
+
+        auto showRetryReview = [&]() -> bool {
+            QDialog dialog(this);
+            dialog.setWindowTitle("Review Distribution Upload Retry");
+            dialog.resize(1040, 600);
+
+            auto* layout = new QVBoxLayout(&dialog);
+            auto* summary = new QLabel(QString(
+                "Distribution upload retry plan: %1 file(s) will upload, %2 file(s) are already remote, "
+                "%3 local file(s) are missing, %4 unsafe member batch(es) are blocked, %5 member(s) have no destination folder.")
+                .arg(runnableFileCount)
+                .arg(alreadyRemoteCount)
+                .arg(missingLocalCount)
+                .arg(unsafeMemberCount)
+                .arg(missingFolderCount));
+            summary->setWordWrap(true);
+            layout->addWidget(summary);
+
+            auto* table = new QTableWidget(reviewRows.size(), 5, &dialog);
+            table->setHorizontalHeaderLabels({"Action", "Member", "Source", "Destination", "Detail"});
+            table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            table->setSelectionBehavior(QAbstractItemView::SelectRows);
+            table->setSelectionMode(QAbstractItemView::SingleSelection);
+            table->verticalHeader()->setVisible(false);
+            table->horizontalHeader()->setStretchLastSection(true);
+            table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+            table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+
+            auto& tm = ThemeManager::instance();
+            for (int row = 0; row < reviewRows.size(); ++row) {
+                const RetryReviewRow& review = reviewRows[row];
+                const QStringList values = {
+                    review.action,
+                    review.member,
+                    review.source,
+                    review.destination,
+                    review.detail
+                };
+                for (int column = 0; column < values.size(); ++column) {
+                    auto* item = new QTableWidgetItem(values[column]);
+                    item->setToolTip(values[column]);
+                    if (review.blocked) {
+                        item->setForeground(tm.supportError());
+                    } else if (review.warning) {
+                        item->setForeground(tm.supportWarning());
+                    }
+                    table->setItem(row, column, item);
                 }
             }
-            if (!existingFiles.isEmpty()) {
-                runnableMap[it.key()] = existingFiles;
-            }
-        }
+            table->resizeColumnsToContents();
+            layout->addWidget(table, 1);
 
-        if (!missingFiles.isEmpty()) {
-            QMessageBox::warning(this, "Missing Files",
-                QString("%1 local file(s) from this upload job no longer exist and will be skipped:\n\n%2")
-                    .arg(missingFiles.size())
-                    .arg(missingFiles.join("\n")));
-        }
+            auto* buttons = new QDialogButtonBox(&dialog);
+            QPushButton* startButton = buttons->addButton(
+                runnableFileCount > 0 ? "Start Retry" : "Close",
+                QDialogButtonBox::AcceptRole);
+            startButton->setToolTip(runnableFileCount > 0
+                ? "Accept this plan and start retrying the uploadable files."
+                : "Close this review.");
+            QPushButton* cancelButton = buttons->addButton(QDialogButtonBox::Cancel);
+            cancelButton->setToolTip("Leave the saved distribution job unchanged.");
+            connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            layout->addWidget(buttons);
 
-        if (runnableMap.isEmpty()) {
-            QMessageBox::warning(this, "Retry Unavailable",
-                "None of the original upload files are still available.");
+            return dialog.exec() == QDialog::Accepted;
+        };
+
+        if (!showRetryReview()) {
             return;
         }
 
+        if (runnableMap.isEmpty()) {
+            m_statusLabel->setText("No distribution upload retry work remains after reconciliation.");
+            QMessageBox::information(this, "No Retry Work",
+                "No uploadable files remain after checking local files and expected remote files.");
+            return;
+        }
+
+        QJsonObject retryDetails;
+        retryDetails["retryOfJobId"] = record.id;
+        retryDetails["runnableFileCount"] = runnableFileCount;
+        retryDetails["alreadyRemoteCount"] = alreadyRemoteCount;
+        retryDetails["missingLocalCount"] = missingLocalCount;
+        retryDetails["unsafeMemberCount"] = unsafeMemberCount;
+        retryDetails["missingFolderCount"] = missingFolderCount;
+        LogManager::instance().logWithContext(
+            LogLevel::Info,
+            LogCategory::Distribution,
+            "retry.reconciled",
+            QString("Distribution upload retry reconciled: %1 uploadable, %2 already remote, %3 missing")
+                .arg(runnableFileCount)
+                .arg(alreadyRemoteCount)
+                .arg(missingLocalCount)
+                .toStdString(),
+            "",
+            "",
+            record.id.toStdString(),
+            QString::fromUtf8(QJsonDocument(retryDetails).toJson(QJsonDocument::Compact)).toStdString());
+
         m_retrySourceJobId = record.id;
         prepareForUpload(runnableMap);
-        m_statusLabel->setText(QString("Retrying upload job %1. Confirm to start.")
+        m_statusLabel->setText(QString("Retrying upload job %1. Confirmed after reconciliation.")
             .arg(record.id));
         onStartDistribution();
         return;
@@ -1346,57 +1547,243 @@ void DistributionPanel::retryJob(const QString& jobId) {
         return;
     }
 
+    const bool moveMode = metadata["moveFiles"].toBool(metadata["operation"].toString() == "move");
+    const bool copyFolderItself = metadata["copyFolderItself"].toBool(false);
+
+    struct FolderRetryReviewRow {
+        QString action;
+        QString member;
+        QString source;
+        QString destination;
+        QString detail;
+        bool warning = false;
+        bool blocked = false;
+    };
+
+    QList<FolderRetryReviewRow> folderReviewRows;
     QList<FolderCopyTask> runnableTasks;
-    QStringList skippedSources;
+    int missingLocalFileCount = 0;
+    int missingLocalTaskCount = 0;
+    int missingCloudTaskCount = 0;
+    int missingDestinationCount = 0;
+    int partialLocalBatchCount = 0;
+
+    auto appendFolderReviewRow = [&folderReviewRows](const QString& action,
+                                                     const QString& member,
+                                                     const QString& source,
+                                                     const QString& destination,
+                                                     const QString& detail,
+                                                     bool warning = false,
+                                                     bool blocked = false) {
+        FolderRetryReviewRow row;
+        row.action = action;
+        row.member = member;
+        row.source = source;
+        row.destination = destination;
+        row.detail = detail;
+        row.warning = warning;
+        row.blocked = blocked;
+        folderReviewRows.append(row);
+    };
+
+    auto memberLabelForTask = [this](const FolderCopyTask& task) {
+        const MemberInfo memberInfo = m_registry ? m_registry->getMember(task.memberId) : MemberInfo{};
+        return memberInfo.displayName.isEmpty()
+            ? task.memberId
+            : QString("%1 (%2)").arg(memberInfo.displayName, task.memberId);
+    };
+
+    auto remotePathExists = [this](const QString& path) {
+        if (!m_megaApi || path.trimmed().isEmpty()) {
+            return true;
+        }
+        std::unique_ptr<mega::MegaNode> node(
+            m_megaApi->getNodeByPath(path.toUtf8().constData()));
+        return node != nullptr;
+    };
+
+    auto recordedArtifactCounts = [this, &metadata]() {
+        QPair<int, int> counts(0, 0);
+        const QJsonArray folders = metadata["distributionCreatedRemoteFolders"].toArray();
+        for (const QJsonValue& value : folders) {
+            if (!value.isObject()) {
+                continue;
+            }
+            const QString path = value.toObject()["path"].toString().trimmed();
+            if (path.isEmpty() || !m_megaApi) {
+                continue;
+            }
+            std::unique_ptr<mega::MegaNode> node(
+                m_megaApi->getNodeByPath(path.toUtf8().constData()));
+            if (node && node->isFolder()) {
+                counts.first++;
+            }
+        }
+
+        const QJsonArray files = metadata["distributionCreatedRemoteFiles"].toArray();
+        for (const QJsonValue& value : files) {
+            if (!value.isObject()) {
+                continue;
+            }
+            const QString path = value.toObject()["remoteFilePath"].toString().trimmed();
+            if (path.isEmpty() || !m_megaApi) {
+                continue;
+            }
+            std::unique_ptr<mega::MegaNode> node(
+                m_megaApi->getNodeByPath(path.toUtf8().constData()));
+            if (node && !node->isFolder()) {
+                counts.second++;
+            }
+        }
+        return counts;
+    }();
+
     for (FolderCopyTask task : tasks) {
+        const QString memberLabel = memberLabelForTask(task);
         if (task.isLocalSource) {
             if (!task.individualFiles.isEmpty()) {
                 QStringList existingFiles;
+                QStringList missingFiles;
                 for (const QString& path : task.individualFiles) {
                     if (QFileInfo::exists(path)) {
                         existingFiles.append(path);
                     } else {
-                        skippedSources.append(path);
+                        missingFiles.append(path);
                     }
                 }
-                task.individualFiles = existingFiles;
-                if (task.individualFiles.isEmpty()) {
+                if (!missingFiles.isEmpty()) {
+                    missingLocalFileCount += missingFiles.size();
+                    partialLocalBatchCount++;
+                    appendFolderReviewRow("Skip partial local batch", memberLabel,
+                        existingFiles.isEmpty()
+                            ? QString("%1 missing file(s)").arg(missingFiles.size())
+                            : QString("%1 local, %2 missing").arg(existingFiles.size()).arg(missingFiles.size()),
+                        task.destPath,
+                        "Saved file list is incomplete, so the whole task is blocked to avoid a partial delivery.",
+                        true,
+                        true);
                     continue;
                 }
+                task.individualFiles = existingFiles;
             } else if (!QFileInfo::exists(task.sourcePath)) {
-                skippedSources.append(task.sourcePath);
+                missingLocalTaskCount++;
+                appendFolderReviewRow("Cannot retry", memberLabel, task.sourcePath, task.destPath,
+                    "Saved local source path no longer exists.", true, true);
                 continue;
             }
+        } else if (!remotePathExists(task.sourcePath)) {
+            missingCloudTaskCount++;
+            appendFolderReviewRow("Cannot retry", memberLabel, task.sourcePath, task.destPath,
+                "Saved MEGA source folder no longer exists.", true, true);
+            continue;
         }
 
         if (task.sourcePath.trimmed().isEmpty() && task.individualFiles.isEmpty()) {
-            skippedSources.append(QString("Task for %1").arg(task.memberId));
+            missingLocalTaskCount++;
+            appendFolderReviewRow("Cannot retry", memberLabel, task.sourcePath, task.destPath,
+                "Saved task has no source path or file list.", true, true);
             continue;
         }
         if (task.destPath.trimmed().isEmpty()) {
-            skippedSources.append(QString("%1 has no destination").arg(task.memberId));
+            missingDestinationCount++;
+            appendFolderReviewRow("Cannot retry", memberLabel, task.sourcePath, task.destPath,
+                "Saved task has no destination path.", true, true);
             continue;
         }
 
         task.index = runnableTasks.size();
         runnableTasks.append(task);
+        appendFolderReviewRow(moveMode ? "Move retry" : "Copy retry",
+            memberLabel,
+            task.sourcePath.isEmpty()
+                ? QString("%1 saved local file(s)").arg(task.individualFiles.size())
+                : task.sourcePath,
+            task.destPath,
+            task.individualFiles.isEmpty()
+                ? "Saved task is runnable."
+                : "Saved local file list is complete and runnable.");
     }
 
-    if (!skippedSources.isEmpty()) {
-        QMessageBox::warning(this, "Skipped Tasks",
-            QString("%1 saved source(s) are no longer available or complete and will be skipped:\n\n%2")
-                .arg(skippedSources.size())
-                .arg(skippedSources.join("\n")));
-    }
+    auto showFolderRetryReview = [&]() -> bool {
+        QDialog dialog(this);
+        dialog.setWindowTitle("Review Distribution Retry");
+        dialog.resize(1040, 600);
 
-    if (runnableTasks.isEmpty()) {
-        QMessageBox::warning(this, "Retry Unavailable",
-            "No saved distribution tasks are still runnable.");
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* summary = new QLabel(QString(
+            "Distribution retry plan: %1 task(s) will run, %2 local task(s) are missing, "
+            "%3 cloud task(s) are missing, %4 partial local batch(es) are blocked (%5 missing file(s)), "
+            "%6 destination(s) are missing. Recorded remote artifacts still present: %7 folder(s), %8 file(s).")
+            .arg(runnableTasks.size())
+            .arg(missingLocalTaskCount)
+            .arg(missingCloudTaskCount)
+            .arg(partialLocalBatchCount)
+            .arg(missingLocalFileCount)
+            .arg(missingDestinationCount)
+            .arg(recordedArtifactCounts.first)
+            .arg(recordedArtifactCounts.second));
+        summary->setWordWrap(true);
+        layout->addWidget(summary);
+
+        auto* table = new QTableWidget(folderReviewRows.size(), 5, &dialog);
+        table->setHorizontalHeaderLabels({"Action", "Member", "Source", "Destination", "Detail"});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->verticalHeader()->setVisible(false);
+        table->horizontalHeader()->setStretchLastSection(true);
+        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+
+        auto& tm = ThemeManager::instance();
+        for (int row = 0; row < folderReviewRows.size(); ++row) {
+            const FolderRetryReviewRow& review = folderReviewRows[row];
+            const QStringList values = {
+                review.action,
+                review.member,
+                review.source,
+                review.destination,
+                review.detail
+            };
+            for (int column = 0; column < values.size(); ++column) {
+                auto* item = new QTableWidgetItem(values[column]);
+                item->setToolTip(values[column]);
+                if (review.blocked) {
+                    item->setForeground(tm.supportError());
+                } else if (review.warning) {
+                    item->setForeground(tm.supportWarning());
+                }
+                table->setItem(row, column, item);
+            }
+        }
+        table->resizeColumnsToContents();
+        layout->addWidget(table, 1);
+
+        auto* buttons = new QDialogButtonBox(&dialog);
+        QPushButton* startButton = buttons->addButton(
+            runnableTasks.isEmpty() ? "Close" : "Start Retry",
+            QDialogButtonBox::AcceptRole);
+        startButton->setToolTip(runnableTasks.isEmpty()
+            ? "Close this review."
+            : "Accept this plan and start the runnable distribution tasks.");
+        QPushButton* cancelButton = buttons->addButton(QDialogButtonBox::Cancel);
+        cancelButton->setToolTip("Leave the saved distribution job unchanged.");
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
+
+        return dialog.exec() == QDialog::Accepted;
+    };
+
+    if (!showFolderRetryReview()) {
         return;
     }
 
-    const bool moveMode = metadata["moveFiles"].toBool(metadata["operation"].toString() == "move");
-    const bool copyFolderItself = metadata["copyFolderItself"].toBool(false);
+    if (runnableTasks.isEmpty()) {
+        QMessageBox::information(this, "Retry Unavailable",
+            "No saved distribution tasks are still runnable.");
+        return;
+    }
 
     if (m_sourceTypeCombo) {
         const QString sourceType = metadata["sourceType"].toString();
@@ -1541,6 +1928,37 @@ void DistributionPanel::retryJob(const QString& jobId) {
     metadata["tasks"] = folderCopyTasksToJson(runnableTasks);
     metadata["retryOfJobId"] = record.id;
     metadata["retriedTaskCount"] = runnableTasks.size();
+    metadata["retryReviewAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    metadata["retryMissingLocalTaskCount"] = missingLocalTaskCount;
+    metadata["retryMissingLocalFileCount"] = missingLocalFileCount;
+    metadata["retryMissingCloudTaskCount"] = missingCloudTaskCount;
+    metadata["retryPartialLocalBatchCount"] = partialLocalBatchCount;
+    metadata["retryMissingDestinationCount"] = missingDestinationCount;
+    metadata["retryExistingRecordedRemoteFolders"] = recordedArtifactCounts.first;
+    metadata["retryExistingRecordedRemoteFiles"] = recordedArtifactCounts.second;
+
+    QJsonObject retryDetails;
+    retryDetails["retryOfJobId"] = record.id;
+    retryDetails["runnableTaskCount"] = runnableTasks.size();
+    retryDetails["missingLocalTaskCount"] = missingLocalTaskCount;
+    retryDetails["missingLocalFileCount"] = missingLocalFileCount;
+    retryDetails["missingCloudTaskCount"] = missingCloudTaskCount;
+    retryDetails["partialLocalBatchCount"] = partialLocalBatchCount;
+    retryDetails["missingDestinationCount"] = missingDestinationCount;
+    retryDetails["existingRecordedRemoteFolders"] = recordedArtifactCounts.first;
+    retryDetails["existingRecordedRemoteFiles"] = recordedArtifactCounts.second;
+    LogManager::instance().logWithContext(
+        LogLevel::Info,
+        LogCategory::Distribution,
+        "retry.reconciled",
+        QString("Distribution task retry reconciled: %1 runnable, %2 partial local batch(es) blocked")
+            .arg(runnableTasks.size())
+            .arg(partialLocalBatchCount)
+            .toStdString(),
+        "",
+        "",
+        record.id.toStdString(),
+        QString::fromUtf8(QJsonDocument(retryDetails).toJson(QJsonDocument::Compact)).toStdString());
 
     m_currentJobId = OperationJobStore::instance().createJob(
         OperationJobType::Distribution,

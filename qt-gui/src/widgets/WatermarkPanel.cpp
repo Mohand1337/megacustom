@@ -18,6 +18,9 @@
 #include <QInputDialog>
 #include <QStorageInfo>
 #include <QElapsedTimer>
+#include <QAbstractItemView>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -2970,12 +2973,188 @@ void WatermarkPanel::onResumePausedWatermark() {
         } else {
             skipExternalMembers = suspectIncompleteMembers;
             skippedExternalMemberCount = skipExternalMembers.size();
-            for (const QString& memberId : skipExternalMembers) {
-                markMemberRowsUploaded(
-                    memberId,
-                    "Skipped on resume: member folder was already uploaded, removed, or cleaned up outside the app.");
+        }
+    }
+
+    struct ResumeReviewRow {
+        QString action;
+        QString member;
+        QString fileName;
+        QString sourcePath;
+        QString outputPath;
+        QString detail;
+        bool warning = false;
+        bool blocked = false;
+    };
+
+    QList<ResumeReviewRow> reviewRows;
+    int plannedWatermarkTasks = 0;
+    int plannedExistingOutputs = 0;
+    int plannedSkippedRows = 0;
+    int plannedPartialRemovals = 0;
+    int plannedMissingSources = 0;
+
+    auto addReviewRow = [&reviewRows](const QString& action,
+                                      const WatermarkFileInfo& info,
+                                      const QString& detail,
+                                      bool warning = false,
+                                      bool blocked = false) {
+        ResumeReviewRow row;
+        row.action = action;
+        row.member = info.memberName.isEmpty()
+            ? (info.memberId.isEmpty() ? QString("Global") : info.memberId)
+            : info.memberName;
+        row.fileName = info.fileName.isEmpty() ? QFileInfo(info.filePath).fileName() : info.fileName;
+        row.sourcePath = info.filePath;
+        row.outputPath = info.outputPath;
+        row.detail = detail;
+        row.warning = warning;
+        row.blocked = blocked;
+        reviewRows.append(row);
+    };
+
+    for (int row = 0; row < m_files.size(); ++row) {
+        const WatermarkFileInfo& info = m_files[row];
+        if (info.isHeader) {
+            continue;
+        }
+
+        const int headerRow = findMemberHeaderRow(info.memberId);
+        const bool forceRebuildMember = rebuildMembers.contains(info.memberId);
+        const bool memberUploaded = !forceRebuildMember
+            && ((headerRow >= 0 && m_files[headerRow].status == "uploaded")
+                || skipExternalMembers.contains(info.memberId));
+        const bool complete = !forceRebuildMember
+            && (info.status == "complete" || info.status == "uploaded");
+
+        if (memberUploaded) {
+            plannedSkippedRows++;
+            addReviewRow("Skip member batch", info,
+                skipExternalMembers.contains(info.memberId)
+                    ? "Marked as already handled outside the app."
+                    : "Member batch is already marked uploaded.");
+            continue;
+        }
+
+        if (complete) {
+            plannedSkippedRows++;
+            const bool hasLocalOutput = !info.outputPath.trimmed().isEmpty()
+                && QFileInfo::exists(info.outputPath);
+            if (hasLocalOutput && !info.memberId.isEmpty()) {
+                plannedExistingOutputs++;
+                addReviewRow("Carry completed output", info,
+                    "Existing output will be kept and included in the resumed member handoff.");
+            } else {
+                addReviewRow("Skip completed row", info,
+                    hasLocalOutput
+                        ? "Completed row already has local output."
+                        : "Completed row has no local output; it will not be rebuilt unless the member batch is rebuilt.",
+                    !hasLocalOutput);
+            }
+            continue;
+        }
+
+        if (!QFileInfo::exists(info.filePath)) {
+            plannedMissingSources++;
+            addReviewRow("Cannot resume", info,
+                "Source file is missing; this row will be marked error and skipped.",
+                true,
+                true);
+            continue;
+        }
+
+        const bool hasPartialOutput = !info.outputPath.isEmpty() && QFileInfo::exists(info.outputPath);
+        plannedWatermarkTasks++;
+        if (hasPartialOutput) {
+            plannedPartialRemovals++;
+            addReviewRow(forceRebuildMember ? "Remove output and rebuild" : "Remove partial and retry",
+                info,
+                "The existing output file will be removed only after this review is accepted.",
+                true);
+        } else {
+            addReviewRow(forceRebuildMember ? "Rebuild from source" : "Watermark",
+                info,
+                forceRebuildMember
+                    ? "Member batch is being rebuilt from source."
+                    : "Row will be watermarked from the saved source file.");
+        }
+    }
+
+    auto showResumeReview = [&]() -> bool {
+        QDialog dialog(this);
+        dialog.setWindowTitle("Review Watermark Resume");
+        dialog.resize(1040, 600);
+
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* summary = new QLabel(QString(
+            "Watermark resume plan: %1 row(s) will watermark, %2 completed output(s) will carry forward, "
+            "%3 row(s) will be skipped, %4 partial output(s) will be removed after confirmation, %5 source file(s) are missing.")
+            .arg(plannedWatermarkTasks)
+            .arg(plannedExistingOutputs)
+            .arg(plannedSkippedRows)
+            .arg(plannedPartialRemovals)
+            .arg(plannedMissingSources));
+        summary->setWordWrap(true);
+        layout->addWidget(summary);
+
+        auto* table = new QTableWidget(reviewRows.size(), 6, &dialog);
+        table->setHorizontalHeaderLabels({"Action", "Member", "File", "Source", "Output", "Detail"});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->verticalHeader()->setVisible(false);
+        table->horizontalHeader()->setStretchLastSection(true);
+        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+
+        auto& tm = ThemeManager::instance();
+        for (int row = 0; row < reviewRows.size(); ++row) {
+            const ResumeReviewRow& review = reviewRows[row];
+            const QStringList values = {
+                review.action,
+                review.member,
+                review.fileName,
+                review.sourcePath,
+                review.outputPath,
+                review.detail
+            };
+
+            for (int column = 0; column < values.size(); ++column) {
+                auto* item = new QTableWidgetItem(values[column]);
+                item->setToolTip(values[column]);
+                if (review.blocked) {
+                    item->setForeground(tm.supportError());
+                } else if (review.warning) {
+                    item->setForeground(tm.supportWarning());
+                }
+                table->setItem(row, column, item);
             }
         }
+        table->resizeColumnsToContents();
+        layout->addWidget(table, 1);
+
+        auto* buttons = new QDialogButtonBox(&dialog);
+        QPushButton* startButton = buttons->addButton("Start Resume", QDialogButtonBox::AcceptRole);
+        startButton->setToolTip("Accept this plan and start the resumed watermark job.");
+        QPushButton* cancelButton = buttons->addButton(QDialogButtonBox::Cancel);
+        cancelButton->setToolTip("Leave the paused job unchanged.");
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
+
+        return dialog.exec() == QDialog::Accepted;
+    };
+
+    if (!showResumeReview()) {
+        updateButtonStates();
+        return;
+    }
+
+    for (const QString& memberId : skipExternalMembers) {
+        markMemberRowsUploaded(
+            memberId,
+            "Skipped on resume: member folder was already uploaded, removed, or cleaned up outside the app.");
     }
 
     m_workerIdxToRow.clear();
@@ -2985,9 +3164,11 @@ void WatermarkPanel::onResumePausedWatermark() {
             continue;
         }
 
-        const int headerRow = findMemberHeaderRow(info.memberId);
-        const bool memberUploaded = headerRow >= 0 && m_files[headerRow].status == "uploaded";
         const bool forceRebuildMember = rebuildMembers.contains(info.memberId);
+        const int headerRow = findMemberHeaderRow(info.memberId);
+        const bool memberUploaded = !forceRebuildMember
+            && headerRow >= 0
+            && m_files[headerRow].status == "uploaded";
         const bool complete = !forceRebuildMember
             && (info.status == "complete" || info.status == "uploaded");
 
@@ -3050,13 +3231,6 @@ void WatermarkPanel::onResumePausedWatermark() {
     }
     updateStats();
 
-    if (!missingSources.isEmpty()) {
-        QMessageBox::warning(this, "Missing Sources",
-            QString("%1 source file(s) are missing and cannot be resumed:\n\n%2")
-                .arg(missingSources.size())
-                .arg(missingSources.join("\n")));
-    }
-
     if (tasks.isEmpty()) {
         m_pausedForDiskSpace = false;
         m_diskSpacePauseMessage.clear();
@@ -3072,35 +3246,6 @@ void WatermarkPanel::onResumePausedWatermark() {
         m_pausedJobId.clear();
         m_currentJobId.clear();
         m_statusLabel->setText("No pending watermark work remains.");
-        updateButtonStates();
-        return;
-    }
-
-    QString confirmText = QString(
-        "Resume this paused watermark job?\n\n"
-        "Pending rows to watermark: %1\n"
-        "Existing completed outputs carried forward: %2\n"
-        "Completed rows skipped: %3")
-        .arg(watermarkTaskCount)
-        .arg(existingOutputTaskCount)
-        .arg(skippedCompleteCount);
-    if (skippedExternalMemberCount > 0) {
-        confirmText += QString("\nMember batches skipped as already handled: %1")
-            .arg(skippedExternalMemberCount);
-    }
-    if (rebuildMemberCount > 0) {
-        confirmText += QString("\nMember batches being rebuilt from source: %1")
-            .arg(rebuildMemberCount);
-    }
-    if (!removedPartialOutputs.isEmpty()) {
-        confirmText += QString("\n\nRemoved %1 partial output file(s) before retrying those rows.")
-            .arg(removedPartialOutputs.size());
-    }
-
-    if (QMessageBox::question(this, "Resume Watermarking",
-            confirmText,
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::Yes) != QMessageBox::Yes) {
         updateButtonStates();
         return;
     }
@@ -3158,8 +3303,12 @@ void WatermarkPanel::onResumePausedWatermark() {
         metadata["resumeWatermarkTaskCount"] = watermarkTaskCount;
         metadata["resumeExistingOutputCount"] = existingOutputTaskCount;
         metadata["resumeUploadOnlyCount"] = existingOutputTaskCount;
+        metadata["resumeSkippedCompleteCount"] = skippedCompleteCount;
         metadata["resumeSkippedExternalMemberCount"] = skippedExternalMemberCount;
         metadata["resumeRebuildMemberCount"] = rebuildMemberCount;
+        metadata["resumeMissingSourceCount"] = missingSources.size();
+        metadata["resumeRemovedPartialOutputCount"] = removedPartialOutputs.size();
+        metadata["lastResumeReviewAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         m_currentJobId = OperationJobStore::instance().createJob(
             OperationJobType::Watermark,
             QString("Resume paused watermark %1 rows").arg(watermarkTaskCount),
@@ -3175,6 +3324,9 @@ void WatermarkPanel::onResumePausedWatermark() {
         metadata["resumeSkippedCompleteCount"] = skippedCompleteCount;
         metadata["resumeSkippedExternalMemberCount"] = skippedExternalMemberCount;
         metadata["resumeRebuildMemberCount"] = rebuildMemberCount;
+        metadata["resumeMissingSourceCount"] = missingSources.size();
+        metadata["resumeRemovedPartialOutputCount"] = removedPartialOutputs.size();
+        metadata["lastResumeReviewAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         metadata["lastResumeAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         OperationJobStore::instance().createJob(
             OperationJobType::Watermark,
