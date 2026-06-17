@@ -251,12 +251,21 @@ void DistributionWorker::processDirectUpload() {
             emit progress(prog);
 
             std::string error;
+            MegaUploadEvidence evidence;
             bool ok = megaApiUpload(api, filePath.toStdString(),
-                                    memberInfo.distributionFolder.toStdString(), error);
+                                    memberInfo.distributionFolder.toStdString(), error, &evidence);
 
             if (ok) {
                 memberStatus.filesUploaded++;
                 result.filesUploaded++;
+                if (evidence.createdNewRemoteFile) {
+                    emit remoteFileUploaded(
+                        memberId,
+                        filePath,
+                        QString::fromStdString(evidence.remoteFolderPath),
+                        QString::fromStdString(evidence.remoteFilePath),
+                        QString::fromStdString(evidence.fileName));
+                }
             } else {
                 memberStatus.filesFailed++;
                 memberStatus.lastError = QString::fromStdString(error);
@@ -401,6 +410,8 @@ void DistributionController::uploadToMembers(const QMap<QString, QStringList>& m
     connect(m_worker, &DistributionWorker::started, this, &DistributionController::onWorkerStarted);
     connect(m_worker, &DistributionWorker::progress, this, &DistributionController::onWorkerProgress);
     connect(m_worker, &DistributionWorker::memberCompleted, this, &DistributionController::onWorkerMemberCompleted);
+    connect(m_worker, &DistributionWorker::remoteFileUploaded,
+            this, &DistributionController::remoteFileUploaded);
     connect(m_worker, &DistributionWorker::finished, this, &DistributionController::onWorkerFinished);
     connect(m_worker, &DistributionWorker::error, this, &DistributionController::onWorkerError);
 
@@ -488,6 +499,8 @@ void DistributionController::startWorker(bool previewOnly) {
     connect(m_worker, &DistributionWorker::started, this, &DistributionController::onWorkerStarted);
     connect(m_worker, &DistributionWorker::progress, this, &DistributionController::onWorkerProgress);
     connect(m_worker, &DistributionWorker::memberCompleted, this, &DistributionController::onWorkerMemberCompleted);
+    connect(m_worker, &DistributionWorker::remoteFileUploaded,
+            this, &DistributionController::remoteFileUploaded);
     connect(m_worker, &DistributionWorker::finished, this, &DistributionController::onWorkerFinished);
     connect(m_worker, &DistributionWorker::error, this, &DistributionController::onWorkerError);
 

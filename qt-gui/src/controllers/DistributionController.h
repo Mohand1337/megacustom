@@ -119,6 +119,11 @@ signals:
     void started(const QString& jobId);
     void progress(const QtDistributionProgress& progress);
     void memberCompleted(const QtMemberStatus& status);
+    void remoteFileUploaded(const QString& memberId,
+                            const QString& localPath,
+                            const QString& remoteFolderPath,
+                            const QString& remoteFilePath,
+                            const QString& fileName);
     void finished(const QtDistributionResult& result);
     void error(const QString& message);
 
@@ -206,6 +211,11 @@ signals:
     void distributionStarted(const QString& jobId);
     void distributionProgress(const QtDistributionProgress& progress);
     void memberCompleted(const QtMemberStatus& status);
+    void remoteFileUploaded(const QString& memberId,
+                            const QString& localPath,
+                            const QString& remoteFolderPath,
+                            const QString& remoteFilePath,
+                            const QString& fileName);
     void distributionFinished(const QtDistributionResult& result);
     void distributionError(const QString& error);
 

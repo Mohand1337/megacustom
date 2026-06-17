@@ -146,6 +146,12 @@ private:
     void saveDistributionCheckpoint(const QString& reason, const QString& jobId = {});
     QJsonArray serializeDistributionRows() const;
     void recordDistributionCreatedFolder(int taskIndex, const QString& path);
+    void recordDistributionUploadedFile(int taskIndex,
+                                        const QString& memberId,
+                                        const QString& localPath,
+                                        const QString& remoteFolderPath,
+                                        const QString& remoteFilePath,
+                                        const QString& fileName);
 
     // UI Components - Configuration
     QComboBox* m_sourceTypeCombo = nullptr;  // "Cloud" or "Local"

@@ -144,6 +144,19 @@ private:
 
 // ==================== MegaApi Upload Helpers ====================
 
+struct MegaUploadEvidence {
+    std::string localPath;
+    std::string remoteFolderPath;
+    std::string remoteFilePath;
+    std::string fileName;
+    bool createdNewRemoteFile = false;
+};
+
+inline std::string fileNameFromUploadPath(const std::string& path) {
+    const size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 /**
  * Ensure a MEGA cloud folder exists, creating it recursively if needed.
  * @return The MegaNode for the folder, or nullptr on failure.
@@ -221,7 +234,17 @@ inline mega::MegaNode* ensureFolderExists(mega::MegaApi* api, const std::string&
  * Blocks until completion (for use in worker threads only).
  */
 inline bool megaApiUpload(mega::MegaApi* api, const std::string& localPath,
-                          const std::string& remotePath, std::string& error) {
+                          const std::string& remotePath, std::string& error,
+                          MegaUploadEvidence* evidence = nullptr) {
+    if (evidence) {
+        *evidence = {};
+        evidence->localPath = localPath;
+        evidence->remoteFolderPath = remotePath;
+        evidence->fileName = fileNameFromUploadPath(localPath);
+        evidence->remoteFilePath = remotePath + (remotePath.empty() || remotePath.back() == '/' ? "" : "/")
+            + evidence->fileName;
+    }
+
     if (!api) {
         error = "MegaApi not available";
         return false;
@@ -234,12 +257,21 @@ inline bool megaApiUpload(mega::MegaApi* api, const std::string& localPath,
         return false;
     }
 
+    const std::string fileName = fileNameFromUploadPath(localPath);
+    const bool hadRemoteFile = [&]() {
+        if (fileName.empty()) {
+            return false;
+        }
+        std::unique_ptr<mega::MegaNode> existing(api->getChildNode(destNode.get(), fileName.c_str()));
+        return existing != nullptr;
+    }();
+
     // Upload file (path normalized for Windows FileSystemAccess)
     const std::string nativeLocal = toNativeUploadPath(localPath);
     SyncTransferListener listener;
     api->startUpload(nativeLocal.c_str(),
                      destNode.get(),
-                     nullptr,   // filename (use original)
+                     fileName.empty() ? nullptr : fileName.c_str(),
                      0,         // mtime
                      nullptr,   // appData
                      false,     // isSourceTemporary
@@ -256,6 +288,11 @@ inline bool megaApiUpload(mega::MegaApi* api, const std::string& localPath,
     if (!listener.isSuccess()) {
         error = "Upload failed: " + listener.errorString();
         return false;
+    }
+
+    if (evidence && !hadRemoteFile && !fileName.empty()) {
+        std::unique_ptr<mega::MegaNode> uploaded(api->getChildNode(destNode.get(), fileName.c_str()));
+        evidence->createdNewRemoteFile = uploaded != nullptr && !uploaded->isFolder();
     }
 
     return true;

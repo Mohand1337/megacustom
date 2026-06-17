@@ -1880,6 +1880,32 @@ Still pending:
 - Add richer per-file remote upload evidence for deleting individual partial files inside pre-existing folders.
 - Add parent/child job display for download-to-watermark retries and handoffs.
 
+### 2026-06-17 Distribution Per-File Cleanup Evidence Pass
+
+Scope:
+
+- Added per-file remote upload evidence so failed/cancelled Distribution jobs can clean partial files inside pre-existing member folders without deleting the folder.
+
+Implemented:
+
+- Shared MEGA upload helper now reports whether an upload created a brand-new remote file that did not exist before upload.
+- Direct Distribution uploads from Watermark handoff now emit per-file remote evidence for newly-created uploaded files.
+- Local-folder Distribution uploads also emit per-file remote evidence for newly-created uploaded files.
+- Distribution job metadata now stores file evidence in `distributionCreatedRemoteFiles`.
+- Jobs-tab Cleanup now enables for failed/cancelled/cleanup-required Distribution jobs with either app-created folder evidence or app-created file evidence.
+- Distribution cleanup preview now lists both folders and files, with row/status/member/source context where available.
+- Cleanup moves recorded files inside existing member folders to the MEGA rubbish bin individually, while still avoiding any file that existed before the app uploaded.
+- Cleanup run metadata now stores moved/failed file counts and paths separately from folder cleanup counts.
+
+Verification completed:
+
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add parent/child job display for download-to-watermark retries and handoffs.
+- Add a richer cleanup summary view in the Jobs tab for previous cleanup runs.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

@@ -379,6 +379,12 @@ signals:
     void taskStarted(int index, const QString& source, const QString& dest);
     void taskCompleted(int index, bool success, const QString& error);
     void destinationFolderCreated(int index, const QString& dest);
+    void remoteFileUploaded(int index,
+                            const QString& memberId,
+                            const QString& localPath,
+                            const QString& remoteFolderPath,
+                            const QString& remoteFilePath,
+                            const QString& fileName);
     void allCompleted(int success, int failed);
     void progress(int current, int total, const QString& currentItem);
     void error(const QString& message);
@@ -520,13 +526,24 @@ private:
             const QString nativeLocal = QDir::toNativeSeparators(item.localPath);
 
             std::string err;
+            MegaUploadEvidence evidence;
             bool ok = megaApiUpload(m_megaApi,
                                     nativeLocal.toStdString(),
                                     destFolder.toStdString(),
-                                    err);
+                                    err,
+                                    &evidence);
             emitCreatedFolderIfNew(task.index, destFolder, destExistedBefore);
             if (ok) {
                 success++;
+                if (evidence.createdNewRemoteFile) {
+                    emit remoteFileUploaded(
+                        task.index,
+                        task.memberId,
+                        item.localPath,
+                        QString::fromStdString(evidence.remoteFolderPath),
+                        QString::fromStdString(evidence.remoteFilePath),
+                        QString::fromStdString(evidence.fileName));
+                }
                 if (m_moveMode) {
                     // Move mode = delete local file after successful upload
                     // (QFile::remove accepts either separator on Windows)
@@ -703,6 +720,21 @@ void DistributionPanel::setDistributionController(DistributionController* contro
                 .arg(status.memberName.isEmpty() ? status.memberId : status.memberName,
                      status.state));
             saveDistributionCheckpoint(QString("member_%1").arg(status.state));
+        });
+        connect(m_distController, &DistributionController::remoteFileUploaded,
+                this, [this](const QString& memberId,
+                              const QString& localPath,
+                              const QString& remoteFolderPath,
+                              const QString& remoteFilePath,
+                              const QString& fileName) {
+            if (!m_controllerActive) return;
+            recordDistributionUploadedFile(
+                m_memberRowMap.value(memberId, -1),
+                memberId,
+                localPath,
+                remoteFolderPath,
+                remoteFilePath,
+                fileName);
         });
 
         // Distribution finished — reset UI and show summary
@@ -1553,6 +1585,8 @@ void DistributionPanel::retryJob(const QString& jobId) {
             this, &DistributionPanel::onWorkerTaskCompleted, Qt::QueuedConnection);
     connect(m_copyWorker, &FolderCopyWorker::destinationFolderCreated,
             this, &DistributionPanel::recordDistributionCreatedFolder, Qt::QueuedConnection);
+    connect(m_copyWorker, &FolderCopyWorker::remoteFileUploaded,
+            this, &DistributionPanel::recordDistributionUploadedFile, Qt::QueuedConnection);
     connect(m_copyWorker, &FolderCopyWorker::allCompleted,
             this, &DistributionPanel::onWorkerAllCompleted, Qt::QueuedConnection);
     connect(m_copyWorker, &FolderCopyWorker::progress,
@@ -1689,6 +1723,54 @@ void DistributionPanel::recordDistributionCreatedFolder(int taskIndex, const QSt
     saveDistributionCheckpoint("remote_folder_created", m_currentJobId);
 }
 
+void DistributionPanel::recordDistributionUploadedFile(int taskIndex,
+                                                       const QString& memberId,
+                                                       const QString& localPath,
+                                                       const QString& remoteFolderPath,
+                                                       const QString& remoteFilePath,
+                                                       const QString& fileName) {
+    const QString cleanedFilePath = QDir::cleanPath(remoteFilePath.trimmed());
+    if (m_currentJobId.isEmpty() || cleanedFilePath.isEmpty() || cleanedFilePath == "." || cleanedFilePath == "/") {
+        return;
+    }
+
+    OperationJobRecord record = OperationJobStore::instance().job(m_currentJobId);
+    if (record.id.isEmpty() || record.type != OperationJobType::Distribution) {
+        return;
+    }
+
+    QJsonObject metadata = record.metadata;
+    QJsonArray uploadedFiles = metadata["distributionCreatedRemoteFiles"].toArray();
+    for (const QJsonValue& value : uploadedFiles) {
+        if (!value.isObject()) {
+            continue;
+        }
+        if (QDir::cleanPath(value.toObject()["remoteFilePath"].toString()) == cleanedFilePath) {
+            return;
+        }
+    }
+
+    QJsonObject entry;
+    entry["remoteFilePath"] = cleanedFilePath;
+    entry["remoteFolderPath"] = QDir::cleanPath(remoteFolderPath.trimmed());
+    entry["fileName"] = fileName.trimmed().isEmpty() ? QFileInfo(localPath).fileName() : fileName.trimmed();
+    entry["localPath"] = QDir::cleanPath(localPath.trimmed());
+    entry["memberId"] = memberId;
+    entry["taskIndex"] = taskIndex;
+    entry["recordedAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    uploadedFiles.append(entry);
+    metadata["distributionCreatedRemoteFiles"] = uploadedFiles;
+    metadata["distributionCreatedRemoteFileCount"] = uploadedFiles.size();
+
+    OperationJobStore::instance().createJob(
+        OperationJobType::Distribution,
+        record.title,
+        record.plannedCount,
+        metadata,
+        m_currentJobId);
+    saveDistributionCheckpoint("remote_file_uploaded", m_currentJobId);
+}
+
 void DistributionPanel::cleanupJob(const QString& jobId) {
     if (m_isRunning || (m_distController && m_distController->isRunning())) {
         QMessageBox::warning(this, "Distribution Running",
@@ -1719,10 +1801,11 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
     }
 
     const QJsonArray createdFolders = record.metadata["distributionCreatedRemoteFolders"].toArray();
-    if (createdFolders.isEmpty()) {
+    const QJsonArray createdFiles = record.metadata["distributionCreatedRemoteFiles"].toArray();
+    if (createdFolders.isEmpty() && createdFiles.isEmpty()) {
         QMessageBox::warning(this, "Cleanup Needs Ownership Proof",
-            "This distribution job has no recorded app-created remote folders.\n\n"
-            "Cleanup will not guess based on destination paths, because those may be real member folders.");
+            "This distribution job has no recorded app-created remote folders or files.\n\n"
+            "Cleanup will not guess based on destination paths, because those may be real member folders or existing files.");
         return;
     }
 
@@ -1743,10 +1826,20 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
         int taskIndex = -1;
         int childCount = 0;
     };
+    struct RemoteFileCleanupCandidate {
+        QString path;
+        QString status;
+        QString member;
+        QString localPath;
+        int taskIndex = -1;
+    };
 
     QList<RemoteCleanupCandidate> candidates;
+    QList<RemoteFileCleanupCandidate> fileCandidates;
     QStringList missingFolders;
+    QStringList missingFiles;
     QStringList skippedCompletedFolders;
+    QStringList skippedCompletedFiles;
     QSet<QString> seenPaths;
 
     for (const QJsonValue& value : createdFolders) {
@@ -1792,18 +1885,83 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
         candidates.append(candidate);
     }
 
-    if (candidates.isEmpty()) {
+    QSet<QString> folderCandidatePaths;
+    for (const RemoteCleanupCandidate& candidate : candidates) {
+        folderCandidatePaths.insert(candidate.path);
+    }
+
+    QSet<QString> seenFilePaths;
+    for (const QJsonValue& value : createdFiles) {
+        if (!value.isObject()) {
+            continue;
+        }
+
+        const QJsonObject object = value.toObject();
+        const QString path = QDir::cleanPath(object["remoteFilePath"].toString().trimmed());
+        const int taskIndex = object["taskIndex"].toInt(-1);
+        if (path.isEmpty() || path == "." || path == "/" || seenFilePaths.contains(path)) {
+            continue;
+        }
+        seenFilePaths.insert(path);
+
+        bool coveredByFolderCandidate = false;
+        for (const QString& folderPath : folderCandidatePaths) {
+            if (path == folderPath || path.startsWith(folderPath + "/")) {
+                coveredByFolderCandidate = true;
+                break;
+            }
+        }
+        if (coveredByFolderCandidate) {
+            continue;
+        }
+
+        const QJsonObject row = rowByIndex.value(taskIndex);
+        const QString status = row["status"].toString();
+        const QString normalizedStatus = status.trimmed().toLower();
+        if (normalizedStatus.contains("done") || normalizedStatus.contains("complete")) {
+            skippedCompletedFiles.append(path);
+            continue;
+        }
+
+        std::unique_ptr<mega::MegaNode> node(
+            m_megaApi->getNodeByPath(path.toUtf8().constData()));
+        if (!node || node->isFolder()) {
+            missingFiles.append(path);
+            continue;
+        }
+
+        RemoteFileCleanupCandidate candidate;
+        candidate.path = path;
+        candidate.taskIndex = taskIndex;
+        candidate.status = status.isEmpty() ? OperationJobStore::statusToString(record.status) : status;
+        candidate.member = row["memberText"].toString();
+        if (candidate.member.isEmpty()) {
+            candidate.member = object["memberId"].toString();
+        }
+        candidate.localPath = object["localPath"].toString();
+        fileCandidates.append(candidate);
+    }
+
+    if (candidates.isEmpty() && fileCandidates.isEmpty()) {
         QStringList details;
         if (!skippedCompletedFolders.isEmpty()) {
             details << QString("%1 app-created folder(s) belong to completed rows and were kept.")
                 .arg(skippedCompletedFolders.size());
         }
+        if (!skippedCompletedFiles.isEmpty()) {
+            details << QString("%1 app-created file(s) belong to completed rows and were kept.")
+                .arg(skippedCompletedFiles.size());
+        }
         if (!missingFolders.isEmpty()) {
             details << QString("%1 recorded folder(s) no longer exist.")
                 .arg(missingFolders.size());
         }
+        if (!missingFiles.isEmpty()) {
+            details << QString("%1 recorded file(s) no longer exist.")
+                .arg(missingFiles.size());
+        }
         QMessageBox::information(this, "No Cleanup Needed",
-            QString("No app-created remote folders are eligible for distribution cleanup.%1")
+            QString("No app-created remote artifacts are eligible for distribution cleanup.%1")
                 .arg(details.isEmpty() ? QString() : "\n\n" + details.join("\n")));
         return;
     }
@@ -1812,10 +1970,14 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
                                                        const RemoteCleanupCandidate& b) {
         return a.path.count('/') > b.path.count('/');
     });
+    std::sort(fileCandidates.begin(), fileCandidates.end(), [](const RemoteFileCleanupCandidate& a,
+                                                               const RemoteFileCleanupCandidate& b) {
+        return a.path < b.path;
+    });
 
     QStringList preview;
-    const int maxPreview = qMin(candidates.size(), 25);
-    for (int i = 0; i < maxPreview; ++i) {
+    const int maxFolderPreview = qMin(candidates.size(), 20);
+    for (int i = 0; i < maxFolderPreview; ++i) {
         const RemoteCleanupCandidate& candidate = candidates[i];
         preview << QString("[folder] %1\n   Row: %2 | Status: %3 | Items inside: %4%5")
             .arg(candidate.path)
@@ -1824,13 +1986,27 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
             .arg(candidate.childCount)
             .arg(candidate.member.isEmpty() ? QString() : QString(" | Member: %1").arg(candidate.member));
     }
-    if (candidates.size() > maxPreview) {
-        preview << QString("...and %1 more").arg(candidates.size() - maxPreview);
+    if (candidates.size() > maxFolderPreview) {
+        preview << QString("...and %1 more folder(s)").arg(candidates.size() - maxFolderPreview);
+    }
+    const int maxFilePreview = qMin(fileCandidates.size(), 25);
+    for (int i = 0; i < maxFilePreview; ++i) {
+        const RemoteFileCleanupCandidate& candidate = fileCandidates[i];
+        preview << QString("[file] %1\n   Row: %2 | Status: %3%4%5")
+            .arg(candidate.path)
+            .arg(candidate.taskIndex + 1)
+            .arg(candidate.status)
+            .arg(candidate.member.isEmpty() ? QString() : QString(" | Member: %1").arg(candidate.member))
+            .arg(candidate.localPath.isEmpty() ? QString() : QString(" | Source: %1").arg(candidate.localPath));
+    }
+    if (fileCandidates.size() > maxFilePreview) {
+        preview << QString("...and %1 more file(s)").arg(fileCandidates.size() - maxFilePreview);
     }
 
     if (QMessageBox::warning(this, "Preview Distribution Cleanup",
             QString("Cleanup will move only remote folders that this app recorded as newly created by the selected Distribution job.\n\n"
-                    "Existing member folders are not touched. Non-empty app-created folders may contain partial uploaded files and will be moved to the MEGA rubbish bin, not permanently deleted.\n\n%1\n\nContinue?")
+                    "Recorded app-created files inside existing member folders are moved individually. Existing member folders are not touched. "
+                    "All cleanup targets go to the MEGA rubbish bin, not permanent deletion.\n\n%1\n\nContinue?")
                 .arg(preview.join("\n")),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No) != QMessageBox::Yes) {
@@ -1839,6 +2015,7 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
 
     QJsonObject startedDetails;
     startedDetails["candidateFolders"] = candidates.size();
+    startedDetails["candidateFiles"] = fileCandidates.size();
     LogManager::instance().logWithContext(
         LogLevel::Info,
         LogCategory::Distribution,
@@ -1858,8 +2035,12 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
 
     int movedFolders = 0;
     int failedFolders = 0;
+    int movedFiles = 0;
+    int failedFiles = 0;
     QStringList movedPaths;
     QStringList failedPaths;
+    QStringList movedFilePaths;
+    QStringList failedFilePaths;
 
     for (const RemoteCleanupCandidate& candidate : candidates) {
         std::unique_ptr<mega::MegaNode> node(
@@ -1880,6 +2061,25 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
         movedPaths.append(candidate.path);
     }
 
+    for (const RemoteFileCleanupCandidate& candidate : fileCandidates) {
+        std::unique_ptr<mega::MegaNode> node(
+            m_megaApi->getNodeByPath(candidate.path.toUtf8().constData()));
+        if (!node || node->isFolder()) {
+            continue;
+        }
+
+        SyncRequestListener listener;
+        m_megaApi->moveNode(node.get(), rubbishNode.get(), &listener);
+        if (!listener.waitForCompletion(60) || !listener.isSuccess()) {
+            failedFiles++;
+            failedFilePaths.append(QString("%1 (%2)").arg(candidate.path, QString::fromStdString(listener.errorString())));
+            continue;
+        }
+
+        movedFiles++;
+        movedFilePaths.append(candidate.path);
+    }
+
     auto appendPathArray = [](const QStringList& paths) {
         QJsonArray array;
         const int maxPaths = qMin(paths.size(), 100);
@@ -1897,17 +2097,24 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
     QJsonArray cleanupRuns = metadata["cleanupRuns"].toArray();
     QJsonObject cleanupRun;
     cleanupRun["at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-    cleanupRun["scope"] = "remote_distribution_created_folders";
+    cleanupRun["scope"] = "remote_distribution_created_artifacts";
     cleanupRun["candidateFolders"] = candidates.size();
+    cleanupRun["candidateFiles"] = fileCandidates.size();
     cleanupRun["movedFolders"] = movedFolders;
     cleanupRun["failedFolders"] = failedFolders;
+    cleanupRun["movedFiles"] = movedFiles;
+    cleanupRun["failedFiles"] = failedFiles;
     cleanupRun["movedFolderPaths"] = appendPathArray(movedPaths);
     cleanupRun["failedFolderPaths"] = appendPathArray(failedPaths);
+    cleanupRun["movedFilePaths"] = appendPathArray(movedFilePaths);
+    cleanupRun["failedFilePaths"] = appendPathArray(failedFilePaths);
     cleanupRuns.append(cleanupRun);
     metadata["cleanupRuns"] = cleanupRuns;
     metadata["lastCleanupAt"] = cleanupRun["at"];
     metadata["lastCleanupMovedFolders"] = movedFolders;
     metadata["lastCleanupFailedFolders"] = failedFolders;
+    metadata["lastCleanupMovedFiles"] = movedFiles;
+    metadata["lastCleanupFailedFiles"] = failedFiles;
 
     OperationJobStore::instance().createJob(
         OperationJobType::Distribution,
@@ -1919,26 +2126,32 @@ void DistributionPanel::cleanupJob(const QString& jobId) {
     QJsonObject completedDetails;
     completedDetails["movedFolders"] = movedFolders;
     completedDetails["failedFolders"] = failedFolders;
+    completedDetails["movedFiles"] = movedFiles;
+    completedDetails["failedFiles"] = failedFiles;
+    const int totalFailures = failedFolders + failedFiles;
     LogManager::instance().logWithContext(
-        failedFolders > 0 ? LogLevel::Warning : LogLevel::Info,
+        totalFailures > 0 ? LogLevel::Warning : LogLevel::Info,
         LogCategory::Distribution,
-        failedFolders > 0 ? "cleanup.partial" : "cleanup.completed",
-        QString("Distribution cleanup moved %1 folder(s), %2 failed")
+        totalFailures > 0 ? "cleanup.partial" : "cleanup.completed",
+        QString("Distribution cleanup moved %1 folder(s), %2 file(s); %3 failed")
             .arg(movedFolders)
-            .arg(failedFolders)
+            .arg(movedFiles)
+            .arg(totalFailures)
             .toStdString(),
         "",
         "",
         jobId.toStdString(),
         QString::fromUtf8(QJsonDocument(completedDetails).toJson(QJsonDocument::Compact)).toStdString());
 
-    m_statusLabel->setText(QString("Cleanup moved %1 folder(s) to MEGA rubbish bin; %2 failed.")
+    m_statusLabel->setText(QString("Cleanup moved %1 folder(s), %2 file(s) to MEGA rubbish bin; %3 failed.")
         .arg(movedFolders)
-        .arg(failedFolders));
+        .arg(movedFiles)
+        .arg(totalFailures));
     QMessageBox::information(this, "Distribution Cleanup Complete",
-        QString("Cleanup moved %1 app-created remote folder(s) to the MEGA rubbish bin.\nFailed: %2")
+        QString("Cleanup moved app-created remote artifacts to the MEGA rubbish bin.\n\nFolders: %1 moved\nFiles: %2 moved\nFailed: %3")
             .arg(movedFolders)
-            .arg(failedFolders));
+            .arg(movedFiles)
+            .arg(totalFailures));
 }
 
 void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& memberFileMap) {
@@ -3767,6 +3980,8 @@ void DistributionPanel::onStartDistribution() {
             this, &DistributionPanel::onWorkerTaskCompleted, Qt::QueuedConnection);
     connect(m_copyWorker, &FolderCopyWorker::destinationFolderCreated,
             this, &DistributionPanel::recordDistributionCreatedFolder, Qt::QueuedConnection);
+    connect(m_copyWorker, &FolderCopyWorker::remoteFileUploaded,
+            this, &DistributionPanel::recordDistributionUploadedFile, Qt::QueuedConnection);
     connect(m_copyWorker, &FolderCopyWorker::allCompleted,
             this, &DistributionPanel::onWorkerAllCompleted, Qt::QueuedConnection);
     connect(m_copyWorker, &FolderCopyWorker::progress,

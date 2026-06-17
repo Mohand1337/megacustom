@@ -988,8 +988,11 @@ void LogViewerPanel::updateJobActionStates() {
             && !record.metadata["watermarkRows"].toArray().isEmpty();
     } else if (hasJob && m_selectedJobType == OperationJobType::Distribution) {
         const OperationJobRecord record = OperationJobStore::instance().job(m_selectedJobId);
-        hasDistributionCleanupProof = record.metadata["distributionCreatedRemoteFolders"].isArray()
-            && !record.metadata["distributionCreatedRemoteFolders"].toArray().isEmpty();
+        hasDistributionCleanupProof =
+            (record.metadata["distributionCreatedRemoteFolders"].isArray()
+                && !record.metadata["distributionCreatedRemoteFolders"].toArray().isEmpty())
+            || (record.metadata["distributionCreatedRemoteFiles"].isArray()
+                && !record.metadata["distributionCreatedRemoteFiles"].toArray().isEmpty());
     }
     const bool canResume = hasJob
         && m_selectedJobType == OperationJobType::Watermark
@@ -1037,10 +1040,10 @@ void LogViewerPanel::updateJobActionStates() {
         if (canCleanupWatermark) {
             m_cleanupJobBtn->setToolTip("Preview and remove safe local artifacts for this watermark job.");
         } else if (canCleanupDistribution) {
-            m_cleanupJobBtn->setToolTip("Preview and move app-created remote distribution folders to the MEGA rubbish bin.");
+            m_cleanupJobBtn->setToolTip("Preview and move app-created remote distribution files/folders to the MEGA rubbish bin.");
         } else {
             m_cleanupJobBtn->setToolTip(
-                "Cleanup is available for Watermark recovery jobs, or failed/cancelled Distribution jobs with app-created folder evidence.");
+                "Cleanup is available for Watermark recovery jobs, or failed/cancelled Distribution jobs with app-created file/folder evidence.");
         }
     }
     if (m_openRelatedPanelBtn) {
