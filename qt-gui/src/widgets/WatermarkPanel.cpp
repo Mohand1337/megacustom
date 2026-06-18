@@ -37,10 +37,12 @@
 #include <QProcess>
 #include <QApplication>
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTextStream>
+#include <QUrl>
 
 namespace MegaCustom {
 
@@ -1299,6 +1301,30 @@ void WatermarkPanel::setupUI() {
     m_checkDepsBtn->setToolTip("Check if FFmpeg and Python are available");
     connect(m_checkDepsBtn, &QPushButton::clicked, this, &WatermarkPanel::onCheckDependencies);
     actionsLayout->addWidget(m_checkDepsBtn);
+
+    m_reviewIssuesBtn = new QPushButton("Review Issues");
+    m_reviewIssuesBtn->setObjectName("PanelSecondaryButton");
+    m_reviewIssuesBtn->setIcon(QIcon(":/icons/alert-circle.svg"));
+    m_reviewIssuesBtn->setEnabled(false);
+    m_reviewIssuesBtn->setToolTip("No actionable Watermark issues are currently detected.");
+    connect(m_reviewIssuesBtn, &QPushButton::clicked, this, &WatermarkPanel::onReviewWatermarkIssues);
+    actionsLayout->addWidget(m_reviewIssuesBtn);
+
+    m_openReportFolderBtn = new QPushButton("Open Report Folder");
+    m_openReportFolderBtn->setObjectName("PanelSecondaryButton");
+    m_openReportFolderBtn->setIcon(QIcon(":/icons/folder.svg"));
+    m_openReportFolderBtn->setEnabled(false);
+    m_openReportFolderBtn->setToolTip("A Watermark completion or incomplete-output report is not available yet.");
+    connect(m_openReportFolderBtn, &QPushButton::clicked, this, &WatermarkPanel::onOpenWatermarkReportFolder);
+    actionsLayout->addWidget(m_openReportFolderBtn);
+
+    m_retryFailedRowsBtn = new QPushButton("Retry Failed Rows");
+    m_retryFailedRowsBtn->setObjectName("PanelSecondaryButton");
+    m_retryFailedRowsBtn->setIcon(QIcon(":/icons/refresh-cw.svg"));
+    m_retryFailedRowsBtn->setEnabled(false);
+    m_retryFailedRowsBtn->setToolTip("No retryable failed Watermark rows are loaded.");
+    connect(m_retryFailedRowsBtn, &QPushButton::clicked, this, &WatermarkPanel::onRetryFailedWatermarkRows);
+    actionsLayout->addWidget(m_retryFailedRowsBtn);
 
     actionsLayout->addStretch();
 
@@ -3829,11 +3855,10 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
     const QString incompleteReportPath = QDir(rootDir).filePath("_WATERMARK_INCOMPLETE_DO_NOT_UPLOAD.txt");
     const QString completeReportPath = QDir(rootDir).filePath("_WATERMARK_COMPLETE_MANIFEST.txt");
     const QString memberMarkerName = "_DO_NOT_UPLOAD_MISSING_WATERMARK_OUTPUTS.txt";
-    const bool hasFailures = failCount > 0;
-    const QString reportPath = hasFailures ? incompleteReportPath : completeReportPath;
 
     QMap<QString, QList<WatermarkFileInfo>> failuresByMember;
     QSet<QString> allMemberIds;
+    int missingCompletedOutputs = 0;
     for (const WatermarkFileInfo& info : m_files) {
         if (info.isHeader) {
             if (!info.memberId.isEmpty()) {
@@ -3844,10 +3869,16 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
         if (!info.memberId.isEmpty()) {
             allMemberIds.insert(info.memberId);
         }
-        if (info.status == "error") {
+        const bool completeMissingLocalOutput = hasMissingCompletedOutput(info);
+        if (completeMissingLocalOutput) {
+            ++missingCompletedOutputs;
+        }
+        if (info.status == "error" || completeMissingLocalOutput) {
             failuresByMember[info.memberId.isEmpty() ? QString("global") : info.memberId].append(info);
         }
     }
+    const bool hasFailures = failCount > 0 || missingCompletedOutputs > 0 || !failuresByMember.isEmpty();
+    const QString reportPath = hasFailures ? incompleteReportPath : completeReportPath;
 
     QString report;
     QTextStream stream(&report);
@@ -3857,6 +3888,9 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
     stream << "Output root: " << rootDir << "\n";
     stream << "Succeeded rows: " << successCount << "\n";
     stream << "Failed rows: " << failCount << "\n\n";
+    if (missingCompletedOutputs > 0) {
+        stream << "Completed rows with missing local outputs: " << missingCompletedOutputs << "\n\n";
+    }
 
     if (hasFailures) {
         stream << "This output set is incomplete. Do not manually upload member folders until every failed row is fixed.\n\n";
@@ -3864,10 +3898,14 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
             const QString memberId = it.key();
             stream << "Member: " << memberId << "\n";
             for (const WatermarkFileInfo& failed : it.value()) {
+                const bool completeMissingLocalOutput = hasMissingCompletedOutput(failed);
                 stream << "  Missing output for: " << failed.fileName << "\n";
                 stream << "    Source: " << failed.filePath << "\n";
                 if (!failed.outputPath.isEmpty()) {
                     stream << "    Expected output: " << failed.outputPath << "\n";
+                }
+                if (completeMissingLocalOutput) {
+                    stream << "    Error: row was marked complete but the local output file is missing\n";
                 }
                 if (!failed.error.isEmpty()) {
                     stream << "    Error: " << failed.error << "\n";
@@ -3914,8 +3952,12 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
         markerStream << "Member: " << memberId << "\n";
         markerStream << "Missing watermarked outputs: " << memberFailures.size() << "\n\n";
         for (const WatermarkFileInfo& failed : memberFailures) {
+            const bool completeMissingLocalOutput = hasMissingCompletedOutput(failed);
             markerStream << "- " << failed.fileName << "\n";
             markerStream << "  Source: " << failed.filePath << "\n";
+            if (completeMissingLocalOutput) {
+                markerStream << "  Error: row was marked complete but the local output file is missing\n";
+            }
             if (!failed.error.isEmpty()) {
                 markerStream << "  Error: " << failed.error << "\n";
             }
@@ -3929,6 +3971,778 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
     }
 
     return reportPath;
+}
+
+bool WatermarkPanel::hasTrustedWatermarkOutput(const WatermarkFileInfo& info) const {
+    if (info.isHeader) {
+        return false;
+    }
+    if (info.status == "uploaded") {
+        return true;
+    }
+    return info.status == "complete"
+        && !info.outputPath.trimmed().isEmpty()
+        && QFileInfo::exists(info.outputPath);
+}
+
+bool WatermarkPanel::hasMissingCompletedOutput(const WatermarkFileInfo& info) const {
+    return !info.isHeader
+        && info.status == "complete"
+        && !hasTrustedWatermarkOutput(info);
+}
+
+int WatermarkPanel::completedWatermarkRowCount() const {
+    int count = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (hasTrustedWatermarkOutput(info)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int WatermarkPanel::failedWatermarkRowCount() const {
+    int count = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (!info.isHeader && (info.status == "error" || hasMissingCompletedOutput(info))) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int WatermarkPanel::resumableWatermarkRowCount() const {
+    int count = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            continue;
+        }
+        if (info.status == "pending" || info.status == "processing") {
+            ++count;
+        } else if (info.status == "error"
+            && info.error.contains("disk", Qt::CaseInsensitive)
+            && info.error.contains("space", Qt::CaseInsensitive)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+QString WatermarkPanel::owningWatermarkJobId() const {
+    if (!m_currentJobId.trimmed().isEmpty()) {
+        return m_currentJobId.trimmed();
+    }
+    if (!m_pausedJobId.trimmed().isEmpty()) {
+        return m_pausedJobId.trimmed();
+    }
+    for (const WatermarkFileInfo& info : m_files) {
+        if (!info.isHeader && !info.jobId.trimmed().isEmpty()) {
+            return info.jobId.trimmed();
+        }
+    }
+    return {};
+}
+
+QString WatermarkPanel::latestWatermarkReportPath() const {
+    const QString jobId = owningWatermarkJobId();
+    if (!jobId.isEmpty()) {
+        const OperationJobRecord record = OperationJobStore::instance().job(jobId);
+        const QString reportPath = record.metadata["watermarkCompletionReportPath"].toString();
+        if (!reportPath.trimmed().isEmpty() && QFileInfo::exists(reportPath)) {
+            return reportPath;
+        }
+    }
+
+    const QString rootDir = watermarkReportRootDir();
+    const QString incomplete = QDir(rootDir).filePath("_WATERMARK_INCOMPLETE_DO_NOT_UPLOAD.txt");
+    if (QFileInfo::exists(incomplete)) {
+        return incomplete;
+    }
+    const QString complete = QDir(rootDir).filePath("_WATERMARK_COMPLETE_MANIFEST.txt");
+    if (QFileInfo::exists(complete)) {
+        return complete;
+    }
+    return {};
+}
+
+QList<WatermarkPanel::WatermarkIssue> WatermarkPanel::buildWatermarkIssues() const {
+    QMap<QString, WatermarkIssue> grouped;
+
+    auto appendIssue = [&grouped](const QString& key,
+                                  const QString& category,
+                                  const QString& severity,
+                                  const QString& title,
+                                  const QString& detail,
+                                  const QString& action,
+                                  const WatermarkFileInfo& info,
+                                  bool retryable,
+                                  bool resumable,
+                                  bool blocksUpload) {
+        WatermarkIssue issue = grouped.value(key);
+        if (issue.category.isEmpty()) {
+            issue.category = category;
+            issue.severity = severity;
+            issue.title = title;
+            issue.detail = detail;
+            issue.recommendedAction = action;
+            issue.retryable = retryable;
+            issue.resumable = resumable;
+            issue.blocksUpload = blocksUpload;
+        } else {
+            issue.retryable = issue.retryable || retryable;
+            issue.resumable = issue.resumable || resumable;
+            issue.blocksUpload = issue.blocksUpload || blocksUpload;
+        }
+        issue.affectedRows++;
+        const QString member = info.memberName.isEmpty()
+            ? (info.memberId.isEmpty() ? QString("Global") : info.memberId)
+            : info.memberName;
+        if (!member.isEmpty() && !issue.members.contains(member)) {
+            issue.members.append(member);
+        }
+        const QString source = info.fileName.isEmpty() ? QFileInfo(info.filePath).fileName() : info.fileName;
+        if (!source.isEmpty() && !issue.sources.contains(source)) {
+            issue.sources.append(source);
+        }
+        grouped[key] = issue;
+    };
+
+    if (m_pausedForDiskSpace) {
+        WatermarkFileInfo pauseInfo;
+        pauseInfo.fileName = "Paused Watermark job";
+        appendIssue("disk_pause",
+            "Disk Space",
+            "Blocked",
+            "Watermarking is paused because disk space is too low",
+            QString("%1 row(s) remain resumable. The app will not create more member folders until Resume Watermarking is accepted.")
+                .arg(resumableWatermarkRowCount()),
+            "Free disk space, then use Resume Watermarking so the member-batch safety review runs first.",
+            pauseInfo,
+            false,
+            true,
+            true);
+    }
+
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            continue;
+        }
+
+        const bool completeMissingLocalOutput = hasMissingCompletedOutput(info);
+        if (completeMissingLocalOutput) {
+            appendIssue("missing_completed_output",
+                "Missing Output",
+                "Blocked",
+                "Completed rows have missing local output files",
+                "A row marked complete no longer has its local watermarked output. Manual upload and Distribution handoff are not safe until this is fixed.",
+                "Restore the missing output or rebuild that member batch before uploading.",
+                info,
+                false,
+                false,
+                true);
+        }
+
+        if (info.status != "error") {
+            continue;
+        }
+
+        const QString error = info.error.toLower();
+        const bool sourceExists = QFileInfo::exists(info.filePath);
+        if (!sourceExists) {
+            appendIssue("missing_source",
+                "Missing Source",
+                "Blocked",
+                "Source files are missing",
+                "Failed rows cannot be retried because the original source file is not available at the saved path.",
+                "Restore the source file or remove the row from the queue before retrying.",
+                info,
+                false,
+                false,
+                true);
+        } else if (error.contains("disk") && error.contains("space")) {
+            appendIssue("disk_error",
+                "Disk Space",
+                m_pausedForDiskSpace ? "Blocked" : "Warning",
+                "Rows stopped because disk space was insufficient",
+                "These rows should be treated as unfinished work, not finished failures.",
+                m_pausedForDiskSpace
+                    ? "Free disk space, then use Resume Watermarking."
+                    : "Free disk space, then retry the failed rows.",
+                info,
+                !m_pausedForDiskSpace,
+                m_pausedForDiskSpace,
+                true);
+        } else if (error.contains("charmap")
+            || error.contains("codec can't encode")
+            || error.contains("unicodeencode")
+            || error.contains("metadata")) {
+            appendIssue("pdf_encoding",
+                "PDF Encoding",
+                "Error",
+                "PDF watermarking failed on path or metadata encoding",
+                "The PDF worker failed while handling text metadata or console/path encoding.",
+                "Retry failed rows after the encoding-safe PDF path is available in this build.",
+                info,
+                true,
+                false,
+                true);
+        } else if (error.contains("ffmpeg")
+            || info.fileType == "video"
+            || info.fileType == "audio") {
+            appendIssue("media_watermark_failed",
+                "Media Watermark",
+                "Error",
+                "Media watermarking failed",
+                "One or more audio/video rows did not produce a trusted output.",
+                "Review the source file and retry the failed rows.",
+                info,
+                true,
+                false,
+                true);
+        } else if (error.contains("upload")) {
+            appendIssue("auto_upload_failed",
+                "Upload",
+                "Error",
+                "Auto-upload failed after watermarking",
+                "The local output may exist, but automatic delivery did not complete.",
+                "Review the member folder and retry upload/distribution from complete local outputs.",
+                info,
+                false,
+                false,
+                true);
+        } else {
+            appendIssue("watermark_failed",
+                "Watermark",
+                "Error",
+                "Watermark rows failed",
+                "One or more rows did not produce a trusted watermarked output.",
+                "Retry failed rows after reviewing the first error details.",
+                info,
+                true,
+                false,
+                true);
+        }
+    }
+
+    return grouped.values();
+}
+
+void WatermarkPanel::updateSafetyActionStates() {
+    const QList<WatermarkIssue> issues = buildWatermarkIssues();
+    const int failedRows = failedWatermarkRowCount();
+    const int completedRows = completedWatermarkRowCount();
+    const bool pausedForDisk = m_pausedForDiskSpace && !m_isRunning;
+
+    int retryableIssues = 0;
+    for (const WatermarkIssue& issue : issues) {
+        if (issue.retryable) {
+            retryableIssues++;
+        }
+    }
+
+    if (m_reviewIssuesBtn) {
+        m_reviewIssuesBtn->setEnabled(!issues.isEmpty());
+        m_reviewIssuesBtn->setToolTip(issues.isEmpty()
+            ? "No actionable Watermark issues are currently detected."
+            : QString("Review %1 grouped Watermark issue%2 with affected files, members, and next actions.")
+                .arg(issues.size())
+                .arg(issues.size() == 1 ? "" : "s"));
+    }
+
+    if (m_openReportFolderBtn) {
+        const QString reportPath = latestWatermarkReportPath();
+        const bool canOpenReport = !m_files.isEmpty()
+            && (!reportPath.isEmpty() || failedRows > 0 || completedRows > 0);
+        m_openReportFolderBtn->setEnabled(canOpenReport && !m_isRunning);
+        m_openReportFolderBtn->setToolTip(canOpenReport
+            ? "Open the folder containing the Watermark completion manifest or DO_NOT_UPLOAD report."
+            : "A Watermark completion or incomplete-output report is not available yet.");
+    }
+
+    if (m_retryFailedRowsBtn) {
+        const bool canRetryFailedRows = failedRows > 0
+            && retryableIssues > 0
+            && !m_isRunning
+            && !pausedForDisk;
+        m_retryFailedRowsBtn->setEnabled(canRetryFailedRows);
+        if (pausedForDisk) {
+            m_retryFailedRowsBtn->setToolTip("Resume the paused disk-space job instead of retrying failed rows.");
+        } else if (canRetryFailedRows) {
+            m_retryFailedRowsBtn->setToolTip("Retry exactly the failed Watermark row/member pairs from the loaded table.");
+        } else if (failedRows > 0) {
+            m_retryFailedRowsBtn->setToolTip("Loaded failed rows are not retryable until blocked sources or safety issues are fixed.");
+        } else {
+            m_retryFailedRowsBtn->setToolTip("No retryable failed Watermark rows are loaded.");
+        }
+    }
+}
+
+void WatermarkPanel::onReviewWatermarkIssues() {
+    const QList<WatermarkIssue> issues = buildWatermarkIssues();
+    if (issues.isEmpty()) {
+        QMessageBox::information(this, "No Watermark Issues",
+            "No actionable Watermark issues are currently detected in the loaded table.");
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle("Watermark Issues");
+    dialog.resize(1040, 560);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* summary = new QLabel(QString(
+        "%1 grouped issue%2 found. Review the affected members/files before uploading, retrying, or cleaning up.")
+        .arg(issues.size())
+        .arg(issues.size() == 1 ? "" : "s"));
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+
+    auto* table = new QTableWidget(issues.size(), 6, &dialog);
+    table->setHorizontalHeaderLabels({"Severity", "Issue", "Affected", "Members", "Examples", "Next Action"});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->verticalHeader()->setVisible(false);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+
+    auto& tm = ThemeManager::instance();
+    for (int row = 0; row < issues.size(); ++row) {
+        const WatermarkIssue& issue = issues[row];
+        const QString members = issue.members.mid(0, 6).join(", ")
+            + (issue.members.size() > 6 ? QString(" ... +%1").arg(issue.members.size() - 6) : QString());
+        const QString examples = issue.sources.mid(0, 4).join("\n")
+            + (issue.sources.size() > 4 ? QString("\n... +%1 more").arg(issue.sources.size() - 4) : QString());
+        const QStringList values = {
+            issue.severity,
+            issue.title,
+            QString("%1 row%2").arg(issue.affectedRows).arg(issue.affectedRows == 1 ? "" : "s"),
+            members,
+            examples,
+            issue.recommendedAction
+        };
+
+        for (int col = 0; col < values.size(); ++col) {
+            auto* item = new QTableWidgetItem(values[col]);
+            item->setToolTip(values[col]);
+            if (issue.severity.compare("Blocked", Qt::CaseInsensitive) == 0
+                || issue.blocksUpload) {
+                item->setForeground(tm.supportError());
+            } else if (issue.severity.compare("Warning", Qt::CaseInsensitive) == 0) {
+                item->setForeground(tm.supportWarning());
+            }
+            table->setItem(row, col, item);
+        }
+    }
+    table->resizeColumnsToContents();
+    layout->addWidget(table, 1);
+
+    auto* buttons = new QDialogButtonBox(&dialog);
+    QPushButton* reportButton = buttons->addButton("Open Report Folder", QDialogButtonBox::ActionRole);
+    reportButton->setToolTip("Open the folder containing the Watermark manifest or DO_NOT_UPLOAD report.");
+    QPushButton* retryButton = buttons->addButton("Retry Failed Rows", QDialogButtonBox::ActionRole);
+    retryButton->setToolTip("Retry exactly the retryable failed row/member pairs from this loaded table.");
+    retryButton->setEnabled(m_retryFailedRowsBtn && m_retryFailedRowsBtn->isEnabled());
+    QPushButton* closeButton = buttons->addButton(QDialogButtonBox::Close);
+    closeButton->setToolTip("Close the issue review.");
+    connect(reportButton, &QPushButton::clicked, this, &WatermarkPanel::onOpenWatermarkReportFolder);
+    connect(retryButton, &QPushButton::clicked, &dialog, [&]() {
+        dialog.accept();
+        onRetryFailedWatermarkRows();
+    });
+    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    dialog.exec();
+}
+
+void WatermarkPanel::onOpenWatermarkReportFolder() {
+    if (m_files.isEmpty()) {
+        QMessageBox::information(this, "No Watermark Report",
+            "No Watermark table is loaded, so there is no report folder to open.");
+        return;
+    }
+
+    QString reportPath = latestWatermarkReportPath();
+    if (reportPath.isEmpty() || !QFileInfo::exists(reportPath)) {
+        reportPath = writeWatermarkCompletionReport(
+            completedWatermarkRowCount(),
+            failedWatermarkRowCount());
+    }
+
+    const QFileInfo reportInfo(reportPath);
+    if (reportPath.isEmpty() || !reportInfo.exists()) {
+        QMessageBox::warning(this, "Report Unavailable",
+            "The Watermark report could not be written or located.");
+        return;
+    }
+
+    const QString folderPath = reportInfo.absolutePath();
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath))) {
+        QMessageBox::warning(this, "Open Failed",
+            QString("Could not open the report folder:\n%1").arg(folderPath));
+        return;
+    }
+
+    m_statusLabel->setText(QString("Opened Watermark report folder: %1").arg(folderPath));
+}
+
+void WatermarkPanel::onRetryFailedWatermarkRows() {
+    if (m_isRunning) {
+        QMessageBox::warning(this, "Watermark Running",
+            "Wait for the current Watermark job to finish before retrying failed rows.");
+        return;
+    }
+    if (m_pausedForDiskSpace) {
+        QMessageBox::information(this, "Resume Required",
+            "This job is paused for disk space. Use Resume Watermarking so the member-batch safety review runs first.");
+        return;
+    }
+
+    struct RetryCandidate {
+        int row = -1;
+        bool blocked = false;
+        QString action;
+        QString detail;
+    };
+
+    QList<RetryCandidate> candidates;
+    int retryableCount = 0;
+    int blockedCount = 0;
+
+    for (int row = 0; row < m_files.size(); ++row) {
+        const WatermarkFileInfo& info = m_files[row];
+        if (info.isHeader || info.status != "error") {
+            continue;
+        }
+
+        RetryCandidate candidate;
+        candidate.row = row;
+        if (!QFileInfo::exists(info.filePath)) {
+            candidate.blocked = true;
+            candidate.action = "Blocked";
+            candidate.detail = "Source file is missing.";
+            blockedCount++;
+        } else {
+            candidate.blocked = false;
+            candidate.action = !info.outputPath.isEmpty() && QFileInfo::exists(info.outputPath)
+                ? "Remove partial and retry"
+                : "Retry";
+            candidate.detail = "The row will be watermarked again from its saved source path.";
+            retryableCount++;
+        }
+        candidates.append(candidate);
+    }
+
+    if (retryableCount == 0) {
+        QMessageBox::warning(this, "No Retryable Rows",
+            blockedCount > 0
+                ? "Failed rows are loaded, but their source files are missing. Restore the sources before retrying."
+                : "No failed Watermark rows are loaded.");
+        return;
+    }
+
+    QDialog review(this);
+    review.setWindowTitle("Review Failed Row Retry");
+    review.resize(1040, 560);
+
+    auto* layout = new QVBoxLayout(&review);
+    auto* summary = new QLabel(QString(
+        "Retry plan: %1 failed row%2 will be retried exactly as loaded. %3 row%4 blocked.")
+        .arg(retryableCount)
+        .arg(retryableCount == 1 ? "" : "s")
+        .arg(blockedCount)
+        .arg(blockedCount == 1 ? " is" : "s are"));
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+
+    auto* table = new QTableWidget(candidates.size(), 6, &review);
+    table->setHorizontalHeaderLabels({"Action", "Member", "File", "Source", "Output", "Detail"});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->verticalHeader()->setVisible(false);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+
+    auto& tm = ThemeManager::instance();
+    for (int i = 0; i < candidates.size(); ++i) {
+        const RetryCandidate& candidate = candidates[i];
+        const WatermarkFileInfo& info = m_files[candidate.row];
+        const QString member = info.memberName.isEmpty()
+            ? (info.memberId.isEmpty() ? QString("Global") : info.memberId)
+            : info.memberName;
+        const QStringList values = {
+            candidate.action,
+            member,
+            info.fileName,
+            info.filePath,
+            info.outputPath,
+            candidate.detail
+        };
+        for (int col = 0; col < values.size(); ++col) {
+            auto* item = new QTableWidgetItem(values[col]);
+            item->setToolTip(values[col]);
+            item->setForeground(candidate.blocked ? tm.supportError() : tm.textPrimary());
+            table->setItem(i, col, item);
+        }
+    }
+    table->resizeColumnsToContents();
+    layout->addWidget(table, 1);
+
+    auto* buttons = new QDialogButtonBox(&review);
+    QPushButton* retryButton = buttons->addButton("Retry Failed Rows", QDialogButtonBox::AcceptRole);
+    retryButton->setToolTip("Start a recovery run for the retryable failed rows only. Auto-upload is not used by this action.");
+    QPushButton* cancelButton = buttons->addButton(QDialogButtonBox::Cancel);
+    cancelButton->setToolTip("Leave the failed rows unchanged.");
+    connect(buttons, &QDialogButtonBox::accepted, &review, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &review, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (review.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    QStringList removedPartialOutputs;
+    QStringList skippedPartialOutputs;
+    QList<WatermarkResumeTask> tasks;
+    QSet<int> retryRows;
+    QMap<QString, QList<int>> rowsByMember;
+    for (const RetryCandidate& candidate : candidates) {
+        if (candidate.blocked) {
+            continue;
+        }
+        const WatermarkFileInfo& info = m_files[candidate.row];
+        rowsByMember[info.memberId].append(candidate.row);
+        retryRows.insert(candidate.row);
+    }
+
+    int workerIdx = 0;
+    m_workerIdxToRow.clear();
+    QStringList retrySourcePaths;
+    QJsonArray retryRowArray;
+    QJsonArray affectedMemberArray;
+
+    for (auto it = rowsByMember.constBegin(); it != rowsByMember.constEnd(); ++it) {
+        const QString memberId = it.key();
+        if (!memberId.isEmpty()) {
+            affectedMemberArray.append(memberId);
+        }
+
+        for (int row = 0; row < m_files.size(); ++row) {
+            const WatermarkFileInfo& info = m_files[row];
+            if (info.isHeader || info.memberId != memberId || retryRows.contains(row)) {
+                continue;
+            }
+            if (info.status == "complete"
+                && !info.outputPath.trimmed().isEmpty()
+                && QFileInfo::exists(info.outputPath)) {
+                WatermarkResumeTask existing;
+                existing.filePath = info.filePath;
+                existing.memberId = info.memberId;
+                existing.rowIndex = row;
+                existing.existingOutputPath = info.outputPath;
+                existing.watermarkNeeded = false;
+                tasks.append(existing);
+            }
+        }
+
+        for (int row : it.value()) {
+            WatermarkFileInfo& info = m_files[row];
+            if (!info.outputPath.trimmed().isEmpty() && QFileInfo::exists(info.outputPath)) {
+                if (QFile::remove(info.outputPath)) {
+                    removedPartialOutputs.append(info.outputPath);
+                } else {
+                    skippedPartialOutputs.append(info.outputPath);
+                    info.error = "Partial output could not be removed before retry";
+                    updateSingleRow(row);
+                    continue;
+                }
+            }
+
+            retrySourcePaths.append(info.filePath);
+            retryRowArray.append(row);
+            info.status = "pending";
+            info.outputPath.clear();
+            info.error.clear();
+            info.progressPercent = 0;
+            updateSingleRow(row);
+
+            WatermarkResumeTask task;
+            task.filePath = info.filePath;
+            task.memberId = info.memberId;
+            task.rowIndex = row;
+            task.watermarkNeeded = true;
+            tasks.append(task);
+            m_workerIdxToRow[workerIdx] = row;
+            workerIdx++;
+        }
+    }
+
+    if (!skippedPartialOutputs.isEmpty()) {
+        QMessageBox::warning(this, "Retry Skipped Some Rows",
+            QString("%1 partial output file(s) could not be removed, so those rows were not retried:\n\n%2")
+                .arg(skippedPartialOutputs.size())
+                .arg(skippedPartialOutputs.mid(0, 20).join("\n")));
+    }
+
+    if (workerIdx == 0 || tasks.isEmpty()) {
+        updateStats();
+        updateButtonStates();
+        QMessageBox::warning(this, "Retry Unavailable",
+            "No retry tasks remained after safety checks.");
+        return;
+    }
+
+    for (int row = 0; row < m_files.size(); ++row) {
+        if (m_files[row].isHeader) {
+            updateMemberHeader(row);
+        }
+    }
+    updateStats();
+
+    WatermarkConfig config = buildConfig();
+    QString outputDir;
+    if (!m_sameAsInputCheck->isChecked() && !m_outputDirEdit->text().isEmpty()) {
+        outputDir = m_outputDirEdit->text();
+    }
+
+    QString jobId = owningWatermarkJobId();
+    OperationJobRecord existingRecord;
+    if (!jobId.isEmpty()) {
+        existingRecord = OperationJobStore::instance().job(jobId);
+        if (existingRecord.id.isEmpty() || existingRecord.type != OperationJobType::Watermark) {
+            jobId.clear();
+        }
+    }
+
+    QJsonObject metadata = existingRecord.metadata;
+    metadata["retryMode"] = "failed_rows";
+    metadata["failedRowRetryAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    metadata["failedRowRetryCount"] = workerIdx;
+    metadata["failedRowRetryRows"] = retryRowArray;
+    metadata["failedRowRetryAffectedMembers"] = affectedMemberArray;
+    metadata["failedRowRetryAutoUpload"] = false;
+    metadata["failedRowRetryRemovedPartialOutputs"] = removedPartialOutputs.size();
+    if (metadata["filePaths"].toArray().isEmpty()) {
+        QJsonArray filePathArray;
+        QSet<QString> seenPaths;
+        for (const QString& path : retrySourcePaths) {
+            if (!seenPaths.contains(path)) {
+                seenPaths.insert(path);
+                filePathArray.append(path);
+            }
+        }
+        metadata["filePaths"] = filePathArray;
+    }
+
+    if (jobId.isEmpty()) {
+        jobId = OperationJobStore::instance().createJob(
+            OperationJobType::Watermark,
+            QString("Retry %1 failed watermark rows").arg(workerIdx),
+            qMax(workerIdx, m_files.size()),
+            metadata);
+    } else {
+        OperationJobStore::instance().createJob(
+            OperationJobType::Watermark,
+            existingRecord.title.isEmpty()
+                ? QString("Retry %1 failed watermark rows").arg(workerIdx)
+                : existingRecord.title,
+            qMax(existingRecord.plannedCount, m_files.size()),
+            metadata,
+            jobId);
+    }
+
+    m_currentJobId = jobId;
+    m_retrySourceJobId.clear();
+    m_currentJobCancelled = false;
+    for (WatermarkFileInfo& info : m_files) {
+        if (!info.isHeader) {
+            info.jobId = m_currentJobId;
+        }
+    }
+    saveWatermarkCheckpoint("failed_rows_retry_prepared", m_currentJobId);
+
+    QJsonObject details;
+    details["retryRows"] = workerIdx;
+    details["blockedRows"] = blockedCount;
+    details["autoUpload"] = false;
+    details["removedPartialOutputs"] = removedPartialOutputs.size();
+    LogManager::instance().logWithContext(
+        LogLevel::Info,
+        LogCategory::Watermark,
+        "retry.failed_rows_started",
+        QString("Retrying %1 failed Watermark row(s)").arg(workerIdx).toStdString(),
+        "",
+        "",
+        m_currentJobId.toStdString(),
+        QString::fromUtf8(QJsonDocument(details).toJson(QJsonDocument::Compact)).toStdString());
+
+    m_workerThread = new QThread();
+    m_worker = new WatermarkWorker();
+    m_worker->moveToThread(m_workerThread);
+    m_worker->setFiles({});
+    m_worker->setOutputDir(outputDir);
+    m_worker->setConfig(config);
+    m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
+    m_worker->setRootDir(m_sourceRootDir);
+    m_worker->setResumeTasks(tasks);
+    if (m_metricsStore) {
+        m_worker->setMetricsStore(m_metricsStore);
+    }
+
+    connect(m_workerThread, &QThread::started, m_worker, &WatermarkWorker::process);
+    connect(m_worker, &WatermarkWorker::progress, this, &WatermarkPanel::onWorkerProgress);
+    connect(m_worker, &WatermarkWorker::fileCompleted, this, &WatermarkPanel::onWorkerFileCompleted);
+    connect(m_worker, &WatermarkWorker::finished, this, &WatermarkPanel::onWorkerFinished);
+    connect(m_worker, &WatermarkWorker::finishedWithMapping, this,
+            [this](int, int, const QMap<QString, QStringList>& memberFileMap) {
+                if (m_pausedForDiskSpace || memberFileMap.isEmpty()) {
+                    return;
+                }
+                m_lastMemberFileMap = memberFileMap;
+                const bool handoffSafe = failedWatermarkRowCount() == 0;
+                m_sendToDistBtn->setEnabled(handoffSafe);
+                m_statusLabel->setText(handoffSafe
+                    ? QString("Retried failed rows for %1 member%2. Review, then send to Distribution if needed.")
+                        .arg(memberFileMap.size())
+                        .arg(memberFileMap.size() == 1 ? "" : "s")
+                    : "Retried failed rows, but the Watermark session still has blocking issues.");
+            });
+    connect(m_worker, &WatermarkWorker::diskSpaceWarning, this,
+        [this](qint64 available, qint64 needed) {
+            qWarning() << "Low disk space during failed-row retry! Available:" << available << "Needed:" << needed;
+            m_pausedForDiskSpace = true;
+            m_diskSpacePauseMessage = QString("Paused during failed-row retry: disk is full (%1 free, %2 needed). Free space and resume again.")
+                .arg(formatFileSize(available))
+                .arg(formatFileSize(needed));
+            m_statusLabel->setText(m_diskSpacePauseMessage);
+            OperationJobStore::instance().markPaused(m_currentJobId, m_diskSpacePauseMessage);
+        });
+
+    connect(m_worker, &WatermarkWorker::finished, m_workerThread, &QThread::quit);
+    connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
+    connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+    connect(m_workerThread, &QThread::finished, this, [this]() {
+        m_workerThread = nullptr;
+        m_worker = nullptr;
+    });
+
+    m_isRunning = true;
+    m_sendToDistBtn->setEnabled(false);
+    updateButtonStates();
+    m_progressBar->setValue(0);
+    m_statusLabel->setText(QString("Retrying %1 failed Watermark row(s)...").arg(workerIdx));
+
+    emit watermarkStarted();
+    OperationJobStore::instance().markRunning(
+        m_currentJobId,
+        QString("Retrying %1 failed Watermark row(s); auto-upload disabled").arg(workerIdx));
+    m_workerThread->start();
 }
 
 void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
@@ -3961,27 +4775,20 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         OperationJobStore::instance().markPaused(m_currentJobId, message);
         m_pausedJobId = m_currentJobId;
         saveWatermarkCheckpoint("paused_disk_full", m_pausedJobId);
+        const int resumableRows = resumableWatermarkRowCount();
         QMessageBox::warning(this, "Watermarking Paused",
-            QString("%1\n\nNo more files or member folders will be created. Free space, then click Resume Watermarking to run the member-batch resume check.")
-                .arg(message));
+            QString("%1\n\n%2 row(s) remain resumable. No more files or member folders will be created. "
+                    "Free space, then click Resume Watermarking to run the member-batch resume check.")
+                .arg(message)
+                .arg(resumableRows));
         m_currentJobId.clear();
         m_currentJobCancelled = false;
         updateButtonStates();
         return;
     }
 
-    int finalSuccessCount = 0;
-    int finalFailCount = 0;
-    for (const WatermarkFileInfo& info : m_files) {
-        if (info.isHeader) {
-            continue;
-        }
-        if (info.status == "complete" || info.status == "uploaded") {
-            ++finalSuccessCount;
-        } else if (info.status == "error") {
-            ++finalFailCount;
-        }
-    }
+    int finalSuccessCount = completedWatermarkRowCount();
+    int finalFailCount = failedWatermarkRowCount();
     if (finalSuccessCount == 0 && finalFailCount == 0) {
         finalSuccessCount = successCount;
         finalFailCount = failCount;
@@ -4158,12 +4965,18 @@ void WatermarkPanel::updateSingleRow(int row) {
 
     // Status (col 4)
     QTableWidgetItem* statusItem = new QTableWidgetItem();
+    const bool completeMissingLocalOutput = hasMissingCompletedOutput(info);
+
     if (info.status == "pending") {
         statusItem->setText("Pending");
         statusItem->setForeground(tm.textSecondary());
     } else if (info.status == "processing") {
         statusItem->setText(QString("Processing %1%").arg(info.progressPercent));
         statusItem->setForeground(tm.supportWarning());
+    } else if (completeMissingLocalOutput) {
+        statusItem->setText("Missing Output");
+        statusItem->setForeground(tm.supportError());
+        statusItem->setToolTip("This row was marked complete, but the local watermarked output file is missing.");
     } else if (info.status == "complete") {
         statusItem->setText("Complete");
         statusItem->setForeground(tm.supportSuccess());
@@ -4183,7 +4996,11 @@ void WatermarkPanel::updateSingleRow(int row) {
 
     // Output (col 5)
     QTableWidgetItem* outputItem = new QTableWidgetItem(info.outputPath);
-    if (info.status == "error" && !info.error.isEmpty()) {
+    if (completeMissingLocalOutput) {
+        outputItem->setText("Missing local output: " + info.outputPath);
+        outputItem->setForeground(tm.supportError());
+        outputItem->setToolTip(info.outputPath);
+    } else if (info.status == "error" && !info.error.isEmpty()) {
         outputItem->setText(info.error);
         outputItem->setForeground(tm.supportError());
     } else if (info.status == "uploaded") {
@@ -4195,7 +5012,7 @@ void WatermarkPanel::updateSingleRow(int row) {
     m_fileTable->setItem(row, 5, outputItem);
 
     // Row background highlight
-    if (info.status == "error") {
+    if (info.status == "error" || completeMissingLocalOutput) {
         QColor errorBg = tm.supportError(); errorBg.setAlpha(30);
         for (int c = 0; c < 6; ++c)
             if (auto* item = m_fileTable->item(row, c)) item->setBackground(errorBg);
@@ -4318,7 +5135,8 @@ void WatermarkPanel::updateStats() {
             else pdfCount++;
             totalSize += info.fileSize;
         }
-        if (info.status == "error") errorCount++;
+        const bool completeMissingLocalOutput = hasMissingCompletedOutput(info);
+        if (info.status == "error" || completeMissingLocalOutput) errorCount++;
         else if (info.status == "complete") completeCount++;
         else if (info.status == "uploaded") uploadedCount++;
     }
@@ -4363,18 +5181,8 @@ void WatermarkPanel::updateButtonStates() {
     bool hasSelection = m_fileTable->selectionModel()->hasSelection();
     const bool pausedForDisk = m_pausedForDiskSpace && !m_isRunning;
 
-    // Count completed files for distribution button
-    int completedCount = 0;
-    int errorCount = 0;
-    for (const WatermarkFileInfo& info : m_files) {
-        if (info.status == "complete"
-            && !info.outputPath.isEmpty()
-            && QFileInfo::exists(info.outputPath)) {
-            completedCount++;
-        } else if (info.status == "error") {
-            errorCount++;
-        }
-    }
+    const int completedCount = completedWatermarkRowCount();
+    const int errorCount = failedWatermarkRowCount();
 
     m_startBtn->setText(pausedForDisk ? "Resume Watermarking" : "Start Watermarking");
     m_startBtn->setToolTip(pausedForDisk
@@ -4437,6 +5245,7 @@ void WatermarkPanel::updateButtonStates() {
     m_metaAuthorEdit->setEnabled(metaEnabled);
     m_metaCommentEdit->setEnabled(metaEnabled);
     m_metaKeywordsEdit->setEnabled(metaEnabled);
+    updateSafetyActionStates();
 }
 
 WatermarkConfig WatermarkPanel::buildConfig() const {
@@ -4511,9 +5320,10 @@ void WatermarkPanel::onSendToDistribution() {
         if (info.isHeader) {
             continue;
         }
-        if (info.status == "complete" || info.status == "uploaded") {
+        const bool completeMissingLocalOutput = hasMissingCompletedOutput(info);
+        if (!completeMissingLocalOutput && hasTrustedWatermarkOutput(info)) {
             completedRows++;
-        } else if (info.status == "error") {
+        } else if (info.status == "error" || completeMissingLocalOutput) {
             failedRows.append(QString("%1%2")
                 .arg(info.memberId.isEmpty() ? QString() : QString("%1: ").arg(info.memberId))
                 .arg(info.fileName));

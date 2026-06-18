@@ -1999,8 +1999,31 @@ Verification completed:
 
 Still pending:
 
-- Add a grouped Issues view that shows disk pause as one resumable incident instead of repeated file-level rows from older logs.
-- Add a resumable-row count to the paused Watermark dialog so it is obvious which video/file will resume next.
+- Extend the grouped issue model into the Jobs tab so older/restored jobs can be reviewed without opening the Watermark panel first.
+- Add cleanup-run details viewer in the Jobs tab.
+
+### 2026-06-18 Watermark Issue Center Pass
+
+Scope:
+
+- Added the first operational issue center inside the Watermark panel so incomplete sessions explain themselves before manual upload or Distribution handoff.
+
+Implemented:
+
+- Added `Review Issues`, `Open Report Folder`, and `Retry Failed Rows` actions to Watermark.
+- Grouped Watermark issues by operational cause instead of forcing the user to inspect repeated row-level errors.
+- Disk-space pauses now show as one resumable issue with the remaining resumable-row count.
+- The disk-pause dialog now states the number of rows that remain resumable before the user resumes.
+- `Open Report Folder` writes/opens the current completion manifest or DO_NOT_UPLOAD report from the loaded table state.
+- `Retry Failed Rows` starts an exact row/member retry using the resume-task worker path, avoiding the normal member-by-file cross-product.
+- Failed-row retry does not auto-upload; it recreates local outputs and keeps Distribution/upload gated until the loaded session is complete and locally verifiable.
+- Rows marked complete but missing local output files are now treated as blocking issues, not upload-safe success.
+- Completion reports, stats, row rendering, and Send to Distribution now use the same trusted-output definition: uploaded rows are trusted, complete rows must still have a local output file.
+
+Verification completed:
+
+- `git diff --check` passed.
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
 
 ## Non-Goals
 

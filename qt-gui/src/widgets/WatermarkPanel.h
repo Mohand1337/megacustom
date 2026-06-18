@@ -177,6 +177,9 @@ private slots:
     void onGroupQuickSelect(int index);
     void onMemberSearchChanged();
     void onSendToDistribution();
+    void onReviewWatermarkIssues();
+    void onOpenWatermarkReportFolder();
+    void onRetryFailedWatermarkRows();
     void onWatermarkHelpClicked();
     void onPreviewWatermarkClicked();
     void onSavePreset();
@@ -194,8 +197,10 @@ private:
     void updateEmptyState();
     void updateStats();
     void updateButtonStates();
+    void updateSafetyActionStates();
     void updateCurrentJobProgress(const QString& summary = {});
     QString watermarkReportRootDir() const;
+    QString latestWatermarkReportPath() const;
     QString writeWatermarkCompletionReport(int successCount, int failCount) const;
     void saveWatermarkCheckpoint(const QString& reason, const QString& jobId = {});
     QJsonArray serializeWatermarkRows() const;
@@ -213,6 +218,26 @@ private:
     void updateMemberHeader(int headerRow);
     void markMemberRowsUploaded(const QString& memberId, const QString& note = {});
     int findMemberHeaderRow(const QString& memberId) const;
+    int resumableWatermarkRowCount() const;
+    int failedWatermarkRowCount() const;
+    int completedWatermarkRowCount() const;
+    bool hasTrustedWatermarkOutput(const WatermarkFileInfo& info) const;
+    bool hasMissingCompletedOutput(const WatermarkFileInfo& info) const;
+    QString owningWatermarkJobId() const;
+    struct WatermarkIssue {
+        QString category;
+        QString severity;
+        QString title;
+        QString detail;
+        QString recommendedAction;
+        QStringList members;
+        QStringList sources;
+        int affectedRows = 0;
+        bool retryable = false;
+        bool resumable = false;
+        bool blocksUpload = false;
+    };
+    QList<WatermarkIssue> buildWatermarkIssues() const;
 
     // Empty state
     EmptyStateWidget* m_emptyState = nullptr;
@@ -267,6 +292,9 @@ private:
     QPushButton* m_stopBtn;
     QPushButton* m_checkDepsBtn;
     QPushButton* m_sendToDistBtn;
+    QPushButton* m_reviewIssuesBtn = nullptr;
+    QPushButton* m_openReportFolderBtn = nullptr;
+    QPushButton* m_retryFailedRowsBtn = nullptr;
 
     // UI Components - Progress
     QProgressBar* m_progressBar;
