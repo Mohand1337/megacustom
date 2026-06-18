@@ -162,7 +162,12 @@ qint64 WatermarkWorker::estimateOutputBytes(const QString& inputPath) const {
         }
     }
 
-    const qint64 estimated = static_cast<qint64>(inputSize * 1.2);
+    const QString ext = info.suffix().toLower();
+    const bool video = ext == "mp4" || ext == "mkv" || ext == "avi" || ext == "mov"
+        || ext == "wmv" || ext == "flv" || ext == "webm" || ext == "m4v"
+        || ext == "mpeg" || ext == "mpg";
+    const double multiplier = video ? 1.6 : 1.2;
+    const qint64 estimated = static_cast<qint64>(inputSize * multiplier);
     return qMax(inputSize, estimated);
 }
 
@@ -414,6 +419,19 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
         WatermarkResult result = watermarkInput(
             watermarker, baseConfig, task.filePath, task.memberId, outputDir);
 
+        if (!result.success && isDiskSpaceError(result)) {
+            if (!result.outputFile.empty()) {
+                QFile::remove(QString::fromStdString(result.outputFile));
+            }
+            if (!m_cancelled) {
+                const QString outputBaseDir = outputDir.empty()
+                    ? QFileInfo(task.filePath).absolutePath()
+                    : QString::fromStdString(outputDir);
+                pauseForDiskSpace(task.filePath, outputBaseDir);
+            }
+            break;
+        }
+
         if (result.success) {
             successCount++;
             const QString outFile = QString::fromStdString(result.outputFile);
@@ -430,14 +448,6 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
                            QString::fromStdString(result.outputFile),
                            QString::fromStdString(result.error));
         processedWatermarkTasks++;
-
-        if (!result.success && isDiskSpaceError(result)) {
-            const QString outputBaseDir = outputDir.empty()
-                ? QFileInfo(task.filePath).absolutePath()
-                : QString::fromStdString(outputDir);
-            pauseForDiskSpace(task.filePath, outputBaseDir);
-            break;
-        }
     }
 
     flushMemberUploads(activeMemberId, activeMemberHadFailure);
@@ -500,9 +510,6 @@ void WatermarkWorker::process() {
                     ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
                     : m_outputDir;
                 if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-                    failCount++;
-                    emit fileCompleted(idx, false, QString(), "Paused: insufficient disk space");
-                    idx++;
                     break;
                 }
 
@@ -538,6 +545,16 @@ void WatermarkWorker::process() {
                         QString::fromStdString(result.error));
                 }
 
+                if (!result.success && isDiskSpaceError(result)) {
+                    if (!result.outputFile.empty()) {
+                        QFile::remove(QString::fromStdString(result.outputFile));
+                    }
+                    if (!m_cancelled) {
+                        pauseForDiskSpace(inputPath, outputBaseDir);
+                    }
+                    break;
+                }
+
                 if (result.success) {
                     successCount++;
                     QString outFile = QString::fromStdString(result.outputFile);
@@ -552,11 +569,6 @@ void WatermarkWorker::process() {
                                   QString::fromStdString(result.outputFile),
                                   QString::fromStdString(result.error));
                 idx++;
-
-                if (!result.success && isDiskSpaceError(result)) {
-                    pauseForDiskSpace(inputPath, outputBaseDir);
-                    break;
-                }
             }
 
             // === Auto-upload & cleanup after this member's batch ===
@@ -680,8 +692,6 @@ void WatermarkWorker::process() {
                 ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
                 : m_outputDir;
             if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-                failCount++;
-                emit fileCompleted(i, false, QString(), "Paused: insufficient disk space");
                 break;
             }
 
@@ -710,8 +720,6 @@ void WatermarkWorker::process() {
                 ? QFileInfo(inputPath).absolutePath()
                 : QString::fromStdString(outputDir);
             if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-                failCount++;
-                emit fileCompleted(i, false, QString(), "Paused: insufficient disk space");
                 break;
             }
 
@@ -720,6 +728,19 @@ void WatermarkWorker::process() {
                 outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
             }
             result = watermarker.watermarkFile(inputStd, outputPath);
+        }
+
+        if (!result.success && isDiskSpaceError(result)) {
+            if (!result.outputFile.empty()) {
+                QFile::remove(QString::fromStdString(result.outputFile));
+            }
+            const QString outputBaseDir = outputDir.empty()
+                ? QFileInfo(inputPath).absolutePath()
+                : QString::fromStdString(outputDir);
+            if (!m_cancelled) {
+                pauseForDiskSpace(inputPath, outputBaseDir);
+            }
+            break;
         }
 
         if (result.success) {
@@ -731,14 +752,6 @@ void WatermarkWorker::process() {
         emit fileCompleted(i, result.success,
                           QString::fromStdString(result.outputFile),
                           QString::fromStdString(result.error));
-
-        if (!result.success && isDiskSpaceError(result)) {
-            const QString outputBaseDir = outputDir.empty()
-                ? QFileInfo(inputPath).absolutePath()
-                : QString::fromStdString(outputDir);
-            pauseForDiskSpace(inputPath, outputBaseDir);
-            break;
-        }
     }
 
     emit finished(successCount, failCount);
@@ -1508,7 +1521,9 @@ void WatermarkPanel::retryJob(const QString& jobId) {
 
     auto fileTypeForPath = [](const QString& path) {
         const QString ext = QFileInfo(path).suffix().toLower();
-        static const QSet<QString> videoExts = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"};
+        static const QSet<QString> videoExts = {
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
+        };
         static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
         if (ext == "pdf") return QString("pdf");
         if (audioExts.contains(ext)) return QString("audio");
@@ -2300,7 +2315,7 @@ void WatermarkPanel::onAddFiles() {
     QStringList files = QFileDialog::getOpenFileNames(this,
         "Select Files to Watermark",
         QString(),
-        "Supported Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.pdf *.mp3 *.flac *.wav *.aac *.ogg *.m4a);;Videos (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm);;PDFs (*.pdf);;Audio (*.mp3 *.flac *.wav *.aac *.ogg *.m4a);;All Files (*)");
+        "Supported Files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpeg *.mpg *.pdf *.mp3 *.flac *.wav *.aac *.ogg *.m4a);;Videos (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpeg *.mpg);;PDFs (*.pdf);;Audio (*.mp3 *.flac *.wav *.aac *.ogg *.m4a);;All Files (*)");
 
     for (const QString& file : files) {
         // Skip already-watermarked files (e.g., *_wm.mp4)
@@ -2325,7 +2340,9 @@ void WatermarkPanel::onAddFiles() {
         info.status = "pending";
 
         QString ext = fi.suffix().toLower();
-        static const QSet<QString> videoExts = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"};
+        static const QSet<QString> videoExts = {
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
+        };
         static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
 
         if (ext == "pdf") {
@@ -2381,7 +2398,9 @@ void WatermarkPanel::onAddFolder() {
         info.status = "pending";
 
         QString ext = fi.suffix().toLower();
-        static const QSet<QString> videoExts = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm"};
+        static const QSet<QString> videoExts = {
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
+        };
         static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
 
         if (ext == "pdf") {
@@ -3917,6 +3936,23 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     updateButtonStates();
 
     if (m_pausedForDiskSpace) {
+        for (int row = 0; row < m_files.size(); ++row) {
+            WatermarkFileInfo& info = m_files[row];
+            if (info.isHeader || info.status != "processing") {
+                continue;
+            }
+            info.status = "pending";
+            info.progressPercent = 0;
+            info.outputPath.clear();
+            info.error.clear();
+            updateSingleRow(row);
+
+            const int headerRow = findMemberHeaderRow(info.memberId);
+            if (headerRow >= 0) {
+                updateMemberHeader(headerRow);
+            }
+        }
+
         emit watermarkCompleted(successCount, failCount);
         const QString message = m_diskSpacePauseMessage.isEmpty()
             ? "Paused: disk is full. Free space and start again."

@@ -1971,6 +1971,37 @@ Still pending:
 - Add a one-click retry filter for only failed Watermark rows after an incomplete run.
 - Add structured log issue grouping so repeated per-member failures on the same source collapse into one actionable incident.
 
+### 2026-06-18 Watermark Video Disk-Pause Integrity Pass
+
+Scope:
+
+- Closed the video-specific missing-output class where disk-space pauses could be logged and counted as failed video watermark rows even though watermarking never actually ran or could not safely finish.
+
+Incident finding:
+
+- The reviewed log contained three MP4 `watermark.file_failed` rows.
+- All three were the same source video and all had `Paused: insufficient disk space` as the detail.
+- The app was treating a pause condition as a terminal row failure, which made resumed/manual workflows look like a video watermark failure instead of an unfinished row that must be resumed.
+
+Implemented:
+
+- Disk-space preflight pauses no longer increment failed counts.
+- Disk-space preflight pauses no longer emit `watermark.file_failed` for the current row.
+- Rows that were marked `processing` when disk pause occurred are reset to `pending` before the paused checkpoint is saved.
+- FFmpeg/PDF disk-full failures remove partial output artifacts and pause the job without marking the row failed.
+- Video output-space estimates now reserve more headroom than PDFs/audio before starting a row.
+- Watermark panel video detection now matches the engine for `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.mpeg`, and `.mpg`.
+
+Verification completed:
+
+- `git diff --check` passed.
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add a grouped Issues view that shows disk pause as one resumable incident instead of repeated file-level rows from older logs.
+- Add a resumable-row count to the paused Watermark dialog so it is obvious which video/file will resume next.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:
