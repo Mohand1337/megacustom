@@ -18,6 +18,9 @@ import sys
 import random
 from io import BytesIO
 
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
 # Force UTF-8 for stdout/stderr so we can print paths/text containing
 # non-ASCII characters (curly apostrophe etc.) without hitting Windows'
 # default cp1252 charmap codec, which raises:
@@ -46,6 +49,29 @@ try:
 except ImportError:
     print("Error: PyPDF2 not installed. Run: pip install PyPDF2", file=sys.stderr)
     sys.exit(1)
+
+
+def safe_console_text(value):
+    """Return text that can always be printed on Windows consoles."""
+    text = "" if value is None else str(value)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def safe_reportlab_text(value):
+    """ReportLab's built-in Helvetica fonts use WinAnsi-style text encoding."""
+    text = "" if value is None else str(value)
+    return text.encode("cp1252", errors="replace").decode("cp1252", errors="replace")
+
+
+def safe_pdf_metadata(value):
+    """
+    Older PyPDF2 builds can fail writing metadata containing characters outside
+    their PDFDocEncoding/charmap path. Metadata is secondary; never let it block
+    the actual watermarked output.
+    """
+    text = "" if value is None else str(value)
+    return text.encode("ascii", errors="replace").decode("ascii", errors="replace")
 
 
 def hex_to_rgb(hex_color):
@@ -79,6 +105,9 @@ def create_watermark_pdf(text, secondary_text="", width=612, height=792,
     Returns:
         BytesIO object containing the watermark PDF
     """
+    text = safe_reportlab_text(text)
+    secondary_text = safe_reportlab_text(secondary_text)
+
     packet = BytesIO()
     c = canvas.Canvas(packet, pagesize=(width, height))
 
@@ -141,6 +170,13 @@ def watermark_pdf(input_path, output_path, text, secondary_text="",
         True if successful, False otherwise
     """
     try:
+        text = safe_reportlab_text(text)
+        secondary_text = safe_reportlab_text(secondary_text)
+        metadata_title = safe_pdf_metadata(metadata_title)
+        metadata_author = safe_pdf_metadata(metadata_author)
+        metadata_subject = safe_pdf_metadata(metadata_subject)
+        metadata_keywords = safe_pdf_metadata(metadata_keywords)
+
         # Read the input PDF
         reader = PdfReader(input_path)
         writer = PdfWriter()
@@ -209,11 +245,11 @@ def watermark_pdf(input_path, output_path, text, secondary_text="",
         with open(output_path, 'wb') as output_file:
             writer.write(output_file)
 
-        print(f"Successfully created: {output_path}")
+        print(f"Successfully created: {safe_console_text(output_path)}")
         return True
 
     except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
+        print(f"Error: {safe_console_text(str(e))}", file=sys.stderr)
         return False
 
 

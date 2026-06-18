@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
@@ -145,6 +146,42 @@ FILE* utf8Popen(const std::string& cmd, const char* mode) {
 // Check if a file exists (use std::filesystem for Unicode path support on Windows)
 bool fileExists(const std::string& path) {
     return std::filesystem::exists(toFsPath(path));
+}
+
+bool isStructurallyCompletePdf(const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size < 16) {
+        return false;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+
+    char header[5] = {};
+    in.read(header, sizeof(header));
+    if (std::string(header, sizeof(header)) != "%PDF-") {
+        return false;
+    }
+
+    const std::streamoff tailSize = static_cast<std::streamoff>(std::min<uintmax_t>(size, 4096));
+    in.clear();
+    in.seekg(-tailSize, std::ios::end);
+    std::string tail(static_cast<size_t>(tailSize), '\0');
+    in.read(tail.data(), tailSize);
+    return tail.find("%%EOF") != std::string::npos;
+}
+
+bool looksLikePostWriteEncodingFailure(const std::string& output) {
+    std::string lower = output;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return lower.find("charmap") != std::string::npos
+        || lower.find("codec can't encode") != std::string::npos
+        || lower.find("unicodeencodeerror") != std::string::npos;
 }
 } // anonymous namespace for getHomeDirectory
 
@@ -914,6 +951,17 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
         result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
         LogManager::instance().logWatermark("pdf_complete",
             "PDF watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
+    } else if (exitCode != 0
+               && fs::exists(outputFs)
+               && isStructurallyCompletePdf(outputFs)
+               && looksLikePostWriteEncodingFailure(stdout_out + "\n" + stderr_out)) {
+        result.success = true;
+        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
+        result.error = "PDF output was created successfully; ignored post-write Python encoding warning.";
+        LogManager::instance().log(LogLevel::Warning, LogCategory::Watermark,
+            "pdf_post_write_encoding_warning",
+            "PDF output exists and is structurally complete after Python encoding warning: " + output,
+            input);
     } else {
         if (exitCode != 0) {
             result.error = "PDF watermarking failed (exit code " + std::to_string(exitCode) + "): " + stdout_out;

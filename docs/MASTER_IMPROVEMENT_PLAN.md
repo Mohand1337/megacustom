@@ -1935,6 +1935,42 @@ Still pending:
 - Add a cleanup-run details viewer in the Jobs tab.
 - Consider a shared reusable reconciliation dialog class if more panels adopt the same review pattern.
 
+### 2026-06-18 Watermark Manual Upload Integrity Pass
+
+Scope:
+
+- Closed the log-confirmed missing-output failure class where a watermark run could finish with incomplete member folders, then the operator could manually upload those folders without an obvious filesystem-level warning.
+
+Incident finding:
+
+- The reviewed job planned 1100 watermark rows and completed 1056, with 44 failed rows.
+- The failed rows all pointed to the same PDF and failed with a Windows/Python charmap encoding error while processing PDF metadata/path text.
+- The practical failure was not only the PDF exception. It was that manual upload workflows could still make incomplete member folders look ready after a long run.
+
+Implemented:
+
+- Hardened the PDF watermark script against Windows console, ReportLab text, and PDF metadata encoding failures.
+- Added a guarded engine fallback for post-write PDF encoding warnings: if Python exits nonzero only after creating a structurally complete PDF, the app accepts the output and logs a warning instead of marking the row failed.
+- Blocked Watermark auto-upload for a member batch if any row in that member batch failed, preventing partial member delivery.
+- Added a root `_WATERMARK_INCOMPLETE_DO_NOT_UPLOAD.txt` report whenever a Watermark session finishes with failed rows.
+- Added per-member `_DO_NOT_UPLOAD_MISSING_WATERMARK_OUTPUTS.txt` marker files inside affected member folders, so manual upload users see the problem from the filesystem itself.
+- Added a `_WATERMARK_COMPLETE_MANIFEST.txt` manifest for fully successful sessions and removed stale incomplete reports on clean completion.
+- Persisted completion report path and manual-upload blocked state in Watermark job metadata.
+- Disabled `Send to Distribution` when the current Watermark table has failed rows and made the tooltip explain why.
+- Added a final guard in `Send to Distribution` that rewrites the incomplete report and blocks handoff if failed rows still exist.
+
+Verification completed:
+
+- `python3 -B -m py_compile scripts/pdf_watermark.py` passed.
+- `git diff --check` passed.
+- Qt GUI build passed with `cmake --build qt-gui/build-qt --parallel 2`.
+
+Still pending:
+
+- Add a GUI "open report folder" action after incomplete Watermark completion.
+- Add a one-click retry filter for only failed Watermark rows after an incomplete run.
+- Add structured log issue grouping so repeated per-member failures on the same source collapse into one actionable incident.
+
 ## Non-Goals
 
 Avoid these until the foundation is fixed:

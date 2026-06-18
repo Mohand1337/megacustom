@@ -195,6 +195,8 @@ private:
     void updateStats();
     void updateButtonStates();
     void updateCurrentJobProgress(const QString& summary = {});
+    QString watermarkReportRootDir() const;
+    QString writeWatermarkCompletionReport(int successCount, int failCount) const;
     void saveWatermarkCheckpoint(const QString& reason, const QString& jobId = {});
     QJsonArray serializeWatermarkRows() const;
     bool restoreWatermarkRowsFromJob(const OperationJobRecord& record);

@@ -40,6 +40,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTextStream>
 
 namespace MegaCustom {
 
@@ -300,9 +301,18 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
 
     QString activeMemberId;
     QStringList memberOutputFiles;
+    bool activeMemberHadFailure = false;
     int processedWatermarkTasks = 0;
 
-    auto flushMemberUploads = [&](const QString& memberId) {
+    auto flushMemberUploads = [&](const QString& memberId, bool memberHadFailure) {
+        if (memberHadFailure && m_autoUpload && !memberId.isEmpty()) {
+            emit memberAutoUploadSkipped(
+                memberId,
+                "Member batch has failed watermark rows; upload blocked to avoid partial delivery.");
+            memberOutputFiles.clear();
+            return;
+        }
+
         if (!m_autoUpload || !m_megaApi || m_cancelled || memberId.isEmpty()
             || memberOutputFiles.isEmpty()) {
             memberOutputFiles.clear();
@@ -374,8 +384,9 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
         if (activeMemberId.isEmpty()) {
             activeMemberId = task.memberId;
         } else if (task.memberId != activeMemberId) {
-            flushMemberUploads(activeMemberId);
+            flushMemberUploads(activeMemberId, activeMemberHadFailure);
             activeMemberId = task.memberId;
+            activeMemberHadFailure = false;
         }
 
         if (!task.watermarkNeeded) {
@@ -412,6 +423,7 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
             }
         } else {
             failCount++;
+            activeMemberHadFailure = true;
         }
 
         emit fileCompleted(currentIdx, result.success,
@@ -428,7 +440,7 @@ void WatermarkWorker::processResumeTasks(Watermarker& watermarker,
         }
     }
 
-    flushMemberUploads(activeMemberId);
+    flushMemberUploads(activeMemberId, activeMemberHadFailure);
 }
 
 void WatermarkWorker::process() {
@@ -464,6 +476,7 @@ void WatermarkWorker::process() {
         for (int j = 0; j < m_memberIds.size() && !m_cancelled; ++j) {
             QString memberId = m_memberIds[j];
             QStringList memberOutputFiles;  // Track this member's outputs for auto-upload
+            int memberFailCount = 0;
 
             for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
                 QString inputPath = m_files[i];
@@ -532,6 +545,7 @@ void WatermarkWorker::process() {
                     memberOutputFiles.append(outFile);
                 } else {
                     failCount++;
+                    memberFailCount++;
                 }
 
                 emit fileCompleted(idx, result.success,
@@ -546,7 +560,12 @@ void WatermarkWorker::process() {
             }
 
             // === Auto-upload & cleanup after this member's batch ===
-            if (m_autoUpload && m_megaApi && !m_cancelled && !memberOutputFiles.isEmpty()) {
+            if (m_autoUpload && memberFailCount > 0 && !memberOutputFiles.isEmpty()) {
+                emit memberAutoUploadSkipped(
+                    memberId,
+                    QString("%1 watermark row(s) failed; upload blocked to avoid partial delivery.")
+                        .arg(memberFailCount));
+            } else if (m_autoUpload && m_megaApi && !m_cancelled && !memberOutputFiles.isEmpty()) {
                 mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
                 MemberInfo memberInfo = MemberRegistry::instance()->getMember(memberId);
 
@@ -3754,6 +3773,145 @@ void WatermarkPanel::onWorkerFileCompleted(int fileIndex, bool success, const QS
     saveWatermarkCheckpoint(success ? "row_completed" : "row_failed");
 }
 
+QString WatermarkPanel::watermarkReportRootDir() const {
+    const QString configuredOutput = m_outputDirEdit ? m_outputDirEdit->text().trimmed() : QString();
+    if (m_sameAsInputCheck && !m_sameAsInputCheck->isChecked() && !configuredOutput.isEmpty()) {
+        return QDir::cleanPath(configuredOutput);
+    }
+    if (!m_sourceRootDir.trimmed().isEmpty()) {
+        return QDir::cleanPath(m_sourceRootDir.trimmed());
+    }
+    for (const WatermarkFileInfo& info : m_files) {
+        if (!info.outputPath.trimmed().isEmpty()) {
+            QString cleanOutput = QDir::fromNativeSeparators(QDir::cleanPath(info.outputPath));
+            if (!info.memberId.isEmpty()) {
+                const QStringList parts = cleanOutput.split('/', Qt::SkipEmptyParts);
+                const int memberIndex = parts.lastIndexOf(info.memberId);
+                if (memberIndex > 0) {
+                    QString prefix = cleanOutput.startsWith('/') ? "/" : QString();
+                    return QDir::cleanPath(prefix + parts.mid(0, memberIndex).join('/'));
+                }
+            }
+            return QDir::cleanPath(QFileInfo(info.outputPath).absolutePath());
+        }
+    }
+    for (const WatermarkFileInfo& info : m_files) {
+        if (!info.filePath.trimmed().isEmpty()) {
+            return QDir::cleanPath(QFileInfo(info.filePath).absolutePath());
+        }
+    }
+    return QDir::homePath();
+}
+
+QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int failCount) const {
+    const QString rootDir = watermarkReportRootDir();
+    QDir().mkpath(rootDir);
+
+    const QString incompleteReportPath = QDir(rootDir).filePath("_WATERMARK_INCOMPLETE_DO_NOT_UPLOAD.txt");
+    const QString completeReportPath = QDir(rootDir).filePath("_WATERMARK_COMPLETE_MANIFEST.txt");
+    const QString memberMarkerName = "_DO_NOT_UPLOAD_MISSING_WATERMARK_OUTPUTS.txt";
+    const bool hasFailures = failCount > 0;
+    const QString reportPath = hasFailures ? incompleteReportPath : completeReportPath;
+
+    QMap<QString, QList<WatermarkFileInfo>> failuresByMember;
+    QSet<QString> allMemberIds;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            if (!info.memberId.isEmpty()) {
+                allMemberIds.insert(info.memberId);
+            }
+            continue;
+        }
+        if (!info.memberId.isEmpty()) {
+            allMemberIds.insert(info.memberId);
+        }
+        if (info.status == "error") {
+            failuresByMember[info.memberId.isEmpty() ? QString("global") : info.memberId].append(info);
+        }
+    }
+
+    QString report;
+    QTextStream stream(&report);
+    stream << (hasFailures ? "WATERMARK SESSION INCOMPLETE - DO NOT UPLOAD\n"
+                           : "WATERMARK SESSION COMPLETE\n");
+    stream << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n";
+    stream << "Output root: " << rootDir << "\n";
+    stream << "Succeeded rows: " << successCount << "\n";
+    stream << "Failed rows: " << failCount << "\n\n";
+
+    if (hasFailures) {
+        stream << "This output set is incomplete. Do not manually upload member folders until every failed row is fixed.\n\n";
+        for (auto it = failuresByMember.constBegin(); it != failuresByMember.constEnd(); ++it) {
+            const QString memberId = it.key();
+            stream << "Member: " << memberId << "\n";
+            for (const WatermarkFileInfo& failed : it.value()) {
+                stream << "  Missing output for: " << failed.fileName << "\n";
+                stream << "    Source: " << failed.filePath << "\n";
+                if (!failed.outputPath.isEmpty()) {
+                    stream << "    Expected output: " << failed.outputPath << "\n";
+                }
+                if (!failed.error.isEmpty()) {
+                    stream << "    Error: " << failed.error << "\n";
+                }
+            }
+            stream << "\n";
+        }
+    } else {
+        stream << "All rows completed successfully. Completed output rows:\n\n";
+        for (const WatermarkFileInfo& info : m_files) {
+            if (info.isHeader || (info.status != "complete" && info.status != "uploaded")) {
+                continue;
+            }
+            stream << "  " << (info.memberId.isEmpty() ? QString("global") : info.memberId)
+                   << " | " << info.fileName
+                   << " | " << info.outputPath << "\n";
+        }
+        QFile::remove(incompleteReportPath);
+    }
+
+    QFile reportFile(reportPath);
+    if (reportFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        reportFile.write(report.toUtf8());
+        reportFile.close();
+    }
+
+    for (const QString& memberId : allMemberIds) {
+        if (memberId.isEmpty()) {
+            continue;
+        }
+        const QString memberRoot = QDir(rootDir).filePath(memberId);
+        const QString markerPath = QDir(memberRoot).filePath(memberMarkerName);
+        const QList<WatermarkFileInfo> memberFailures = failuresByMember.value(memberId);
+        if (memberFailures.isEmpty()) {
+            QFile::remove(markerPath);
+            continue;
+        }
+
+        QDir().mkpath(memberRoot);
+        QString marker;
+        QTextStream markerStream(&marker);
+        markerStream << "DO NOT UPLOAD THIS MEMBER FOLDER YET\n";
+        markerStream << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n";
+        markerStream << "Member: " << memberId << "\n";
+        markerStream << "Missing watermarked outputs: " << memberFailures.size() << "\n\n";
+        for (const WatermarkFileInfo& failed : memberFailures) {
+            markerStream << "- " << failed.fileName << "\n";
+            markerStream << "  Source: " << failed.filePath << "\n";
+            if (!failed.error.isEmpty()) {
+                markerStream << "  Error: " << failed.error << "\n";
+            }
+        }
+
+        QFile markerFile(markerPath);
+        if (markerFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            markerFile.write(marker.toUtf8());
+            markerFile.close();
+        }
+    }
+
+    return reportPath;
+}
+
 void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     m_isRunning = false;
     updateButtonStates();
@@ -3796,9 +3954,28 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
     emit watermarkCompleted(finalSuccessCount, finalFailCount);
 
     AnimationHelper::animateProgress(m_progressBar, 100);
-    m_statusLabel->setText(QString("Completed: %1 success, %2 failed").arg(finalSuccessCount).arg(finalFailCount));
+    const QString reportPath = writeWatermarkCompletionReport(finalSuccessCount, finalFailCount);
+    m_statusLabel->setText(finalFailCount > 0
+        ? QString("Incomplete: %1 success, %2 failed. Do not manually upload until fixed.")
+            .arg(finalSuccessCount).arg(finalFailCount)
+        : QString("Completed: %1 success, %2 failed").arg(finalSuccessCount).arg(finalFailCount));
 
     if (!m_currentJobId.isEmpty()) {
+        OperationJobRecord record = OperationJobStore::instance().job(m_currentJobId);
+        if (!record.id.isEmpty()) {
+            QJsonObject metadata = record.metadata;
+            metadata["watermarkCompletionReportPath"] = reportPath;
+            metadata["watermarkManualUploadBlocked"] = finalFailCount > 0;
+            metadata["watermarkFinalSuccessCount"] = finalSuccessCount;
+            metadata["watermarkFinalFailCount"] = finalFailCount;
+            OperationJobStore::instance().createJob(
+                OperationJobType::Watermark,
+                record.title,
+                record.plannedCount,
+                metadata,
+                m_currentJobId);
+        }
+
         saveWatermarkCheckpoint(m_currentJobCancelled
             ? "cancelled"
             : (finalFailCount > 0 ? "finished_with_errors" : "completed"));
@@ -3825,11 +4002,19 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
 
     if (finalFailCount == 0) {
         QMessageBox::information(this, "Complete",
-            QString("Successfully watermarked %1 %2.").arg(finalSuccessCount).arg(finalSuccessCount == 1 ? "file" : "files"));
+            QString("Successfully watermarked %1 %2.\n\nCompletion manifest:\n%3")
+                .arg(finalSuccessCount)
+                .arg(finalSuccessCount == 1 ? "file" : "files")
+                .arg(reportPath));
     } else {
         QMessageBox::warning(this, "Complete with Errors",
-            QString("Completed: %1 success, %2 failed.\n\nCheck the table for error details.")
-                .arg(finalSuccessCount).arg(finalFailCount));
+            QString("This watermark session is incomplete: %1 succeeded, %2 failed.\n\n"
+                    "Do not manually upload these member folders yet.\n\n"
+                    "A DO_NOT_UPLOAD report was written here:\n%3\n\n"
+                    "Each incomplete member folder also has a marker file listing its missing outputs.")
+                .arg(finalSuccessCount)
+                .arg(finalFailCount)
+                .arg(reportPath));
     }
 
     m_currentJobId.clear();
@@ -4144,11 +4329,14 @@ void WatermarkPanel::updateButtonStates() {
 
     // Count completed files for distribution button
     int completedCount = 0;
+    int errorCount = 0;
     for (const WatermarkFileInfo& info : m_files) {
         if (info.status == "complete"
             && !info.outputPath.isEmpty()
             && QFileInfo::exists(info.outputPath)) {
             completedCount++;
+        } else if (info.status == "error") {
+            errorCount++;
         }
     }
 
@@ -4161,7 +4349,10 @@ void WatermarkPanel::updateButtonStates() {
     m_clearBtn->setEnabled(hasFiles && !m_isRunning);
     m_startBtn->setEnabled(hasFiles && !m_isRunning);
     m_stopBtn->setEnabled(m_isRunning);
-    m_sendToDistBtn->setEnabled(completedCount > 0 && !m_isRunning && !pausedForDisk);
+    m_sendToDistBtn->setEnabled(completedCount > 0 && errorCount == 0 && !m_isRunning && !pausedForDisk);
+    m_sendToDistBtn->setToolTip(errorCount > 0
+        ? "Disabled because this watermark session has failed rows. Fix or retry failed rows before sending/uploading."
+        : "Send completed watermarked outputs to the Distribution panel.");
 
     m_addFilesBtn->setEnabled(!m_isRunning && !pausedForDisk);
     m_addFolderBtn->setEnabled(!m_isRunning && !pausedForDisk);
@@ -4278,6 +4469,32 @@ QString WatermarkPanel::formatFileSize(qint64 bytes) const {
 }
 
 void WatermarkPanel::onSendToDistribution() {
+    QStringList failedRows;
+    int completedRows = 0;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader) {
+            continue;
+        }
+        if (info.status == "complete" || info.status == "uploaded") {
+            completedRows++;
+        } else if (info.status == "error") {
+            failedRows.append(QString("%1%2")
+                .arg(info.memberId.isEmpty() ? QString() : QString("%1: ").arg(info.memberId))
+                .arg(info.fileName));
+        }
+    }
+    if (!failedRows.isEmpty()) {
+        const QString reportPath = writeWatermarkCompletionReport(completedRows, failedRows.size());
+        QMessageBox::warning(this, "Watermark Session Incomplete",
+            QString("This session still has %1 failed watermark row(s), so sending to Distribution is blocked.\n\n"
+                    "Fix or retry the failed rows before uploading member folders.\n\n"
+                    "Report:\n%2\n\n%3")
+                .arg(failedRows.size())
+                .arg(reportPath)
+                .arg(failedRows.mid(0, 30).join("\n")));
+        return;
+    }
+
     // If we have a member file map from multi-member watermarking, send that
     if (!m_lastMemberFileMap.isEmpty()) {
         QMap<QString, QStringList> runnableMap;
