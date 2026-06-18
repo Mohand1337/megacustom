@@ -511,7 +511,7 @@ QString ContentRouter::resolveDestination(
             return fallbackDest;
         }
         if (!member.paths.archiveRoot.isEmpty()) {
-            return member.paths.archiveRoot + "/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses";
+            return member.paths.archiveRoot + "/NHB+ Courses";
         }
         break;
 

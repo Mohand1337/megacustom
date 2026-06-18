@@ -77,30 +77,6 @@ static bool contentTypeIsCourse(ContentType type) {
     return type == ContentType::NHB_COURSES || type == ContentType::FF_COURSES;
 }
 
-static bool pathLooksLikeCourseDestination(const QString& path) {
-    const QString p = QDir::fromNativeSeparators(path).toLower().trimmed();
-    return p.contains("nhb+ courses")
-        || p.contains("nhb courses")
-        || p.contains("nothing held back courses")
-        || p.contains("nothingheldback courses")
-        || p.contains("/courses")
-        || p.endsWith("/courses")
-        || p.contains("{fast_forward}/courses");
-}
-
-static QString cleanRoutePath(const QString& path) {
-    QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed()));
-    return clean == "." ? QString() : clean;
-}
-
-static QString lastPathSegment(const QString& path) {
-    QString clean = cleanRoutePath(path);
-    while (clean.endsWith('/') && clean.size() > 1) {
-        clean.chop(1);
-    }
-    return clean.section('/', -1).trimmed();
-}
-
 static QString normalizedMemberKey(const QString& text) {
     QString key;
     key.reserve(text.size());
@@ -110,6 +86,35 @@ static QString normalizedMemberKey(const QString& text) {
         }
     }
     return key;
+}
+
+static QString cleanRoutePath(const QString& path) {
+    QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed()));
+    return clean == "." ? QString() : clean;
+}
+
+static bool pathLooksLikeCourseDestination(const QString& path) {
+    const QString clean = cleanRoutePath(path).toLower();
+    const QStringList segments = clean.split('/', Qt::SkipEmptyParts);
+    for (const QString& segment : segments) {
+        const QString key = normalizedMemberKey(segment);
+        if (key == "courses"
+            || key.endsWith("nhbcourses")
+            || key.endsWith("ffcourses")
+            || key.endsWith("fastforwardcourses")
+            || key.endsWith("nothingheldbackcourses")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static QString lastPathSegment(const QString& path) {
+    QString clean = cleanRoutePath(path);
+    while (clean.endsWith('/') && clean.size() > 1) {
+        clean.chop(1);
+    }
+    return clean.section('/', -1).trimmed();
 }
 
 static bool sourceLooksLikeMemberWrapper(const QString& sourcePath, const QString& memberId) {
