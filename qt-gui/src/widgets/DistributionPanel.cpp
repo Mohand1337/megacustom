@@ -73,6 +73,63 @@ struct FolderCopyTask {
     bool isLocalSource = false;
 };
 
+static bool contentTypeIsCourse(ContentType type) {
+    return type == ContentType::NHB_COURSES || type == ContentType::FF_COURSES;
+}
+
+static bool pathLooksLikeCourseDestination(const QString& path) {
+    const QString p = QDir::fromNativeSeparators(path).toLower().trimmed();
+    return p.contains("nhb+ courses")
+        || p.contains("nhb courses")
+        || p.contains("nothing held back courses")
+        || p.contains("nothingheldback courses")
+        || p.contains("/courses")
+        || p.endsWith("/courses")
+        || p.contains("{fast_forward}/courses");
+}
+
+static QString cleanRoutePath(const QString& path) {
+    QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed()));
+    return clean == "." ? QString() : clean;
+}
+
+static QString lastPathSegment(const QString& path) {
+    QString clean = cleanRoutePath(path);
+    while (clean.endsWith('/') && clean.size() > 1) {
+        clean.chop(1);
+    }
+    return clean.section('/', -1).trimmed();
+}
+
+static QString normalizedMemberKey(const QString& text) {
+    QString key;
+    key.reserve(text.size());
+    for (const QChar& ch : text.toLower()) {
+        if (ch.isLetterOrNumber()) {
+            key.append(ch);
+        }
+    }
+    return key;
+}
+
+static bool sourceLooksLikeMemberWrapper(const QString& sourcePath, const QString& memberId) {
+    if (sourcePath.trimmed().isEmpty() || memberId.trimmed().isEmpty()) {
+        return false;
+    }
+    const QString sourceSegment = lastPathSegment(sourcePath);
+    if (QString::compare(sourceSegment, memberId.trimmed(), Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    return normalizedMemberKey(sourceSegment) == normalizedMemberKey(memberId);
+}
+
+static bool shouldForceCourseMemberContentsOnly(const QString& sourcePath,
+                                                const QString& destPath,
+                                                const QString& memberId) {
+    return pathLooksLikeCourseDestination(destPath)
+        && sourceLooksLikeMemberWrapper(sourcePath, memberId);
+}
+
 static QJsonArray stringListToJsonArray(const QStringList& values) {
     QJsonArray array;
     for (const QString& value : values) {
@@ -486,11 +543,15 @@ private:
                 items.append({ filePath, rel });
             }
         } else {
-            // Copy contents only — direct children files (non-recursive)
-            QDir dir(task.sourcePath);
-            const QFileInfoList entries = dir.entryInfoList(QDir::Files);
-            for (const QFileInfo& fi : entries) {
-                items.append({ fi.absoluteFilePath(), QString() });
+            // Copy contents only: upload every file under the source root while
+            // preserving child folders, but do not add the source root name.
+            QDir root(task.sourcePath);
+            QDirIterator it(task.sourcePath, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                QString filePath = it.next();
+                QString rel = root.relativeFilePath(QFileInfo(filePath).absolutePath());
+                if (rel == ".") rel.clear();
+                items.append({ filePath, rel });
             }
         }
 
@@ -951,7 +1012,7 @@ void DistributionPanel::setupUI() {
     m_quickTemplateCombo = new QComboBox();
     m_quickTemplateCombo->addItem("Distribution Folder", "{member}");
     m_quickTemplateCombo->addItem("NHB+ Courses", "{archive_root}/NHB+ Courses");
-    m_quickTemplateCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses");
+    m_quickTemplateCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses");
     m_quickTemplateCombo->addItem("FF Courses", "{archive_root}/{fast_forward}/Courses");
     m_quickTemplateCombo->addItem("Hot Seats", "{archive_root}/{fast_forward}/{hot_seats}");
     m_quickTemplateCombo->addItem("Theory Calls", "{archive_root}/{fast_forward}/{theory_calls}");
@@ -988,6 +1049,12 @@ void DistributionPanel::setupUI() {
             m_quickTemplateCombo->blockSignals(true);
             m_quickTemplateCombo->setCurrentIndex(m_quickTemplateCombo->count() - 1);
             m_quickTemplateCombo->blockSignals(false);
+        }
+        if (valid && pathLooksLikeCourseDestination(text)) {
+            if (m_copyContentsOnlyCheck) m_copyContentsOnlyCheck->setChecked(true);
+            if (m_createDestFolderCheck) m_createDestFolderCheck->setChecked(true);
+            if (m_skipExistingCheck) m_skipExistingCheck->setChecked(true);
+            if (m_moveFilesCheck) m_moveFilesCheck->setChecked(false);
         }
     });
 
@@ -1567,6 +1634,7 @@ void DistributionPanel::retryJob(const QString& jobId) {
     int missingCloudTaskCount = 0;
     int missingDestinationCount = 0;
     int partialLocalBatchCount = 0;
+    int forcedCourseContentsOnlyTasks = 0;
 
     auto appendFolderReviewRow = [&folderReviewRows](const QString& action,
                                                      const QString& member,
@@ -1638,7 +1706,18 @@ void DistributionPanel::retryJob(const QString& jobId) {
         return counts;
     }();
 
+    auto normalizeSavedTask = [&forcedCourseContentsOnlyTasks](FolderCopyTask& task) {
+        task.sourcePath = cleanRoutePath(task.sourcePath);
+        task.destPath = cleanRoutePath(task.destPath);
+        if (task.copyFolderItself
+            && shouldForceCourseMemberContentsOnly(task.sourcePath, task.destPath, task.memberId)) {
+            task.copyFolderItself = false;
+            forcedCourseContentsOnlyTasks++;
+        }
+    };
+
     for (FolderCopyTask task : tasks) {
+        normalizeSavedTask(task);
         const QString memberLabel = memberLabelForTask(task);
         if (task.isLocalSource) {
             if (!task.individualFiles.isEmpty()) {
@@ -1700,7 +1779,9 @@ void DistributionPanel::retryJob(const QString& jobId) {
                 : task.sourcePath,
             task.destPath,
             task.individualFiles.isEmpty()
-                ? "Saved task is runnable."
+                ? (task.copyFolderItself
+                    ? "Saved task is runnable."
+                    : "Saved task is runnable; course/member-wrapper safety will copy contents only.")
                 : "Saved local file list is complete and runnable.");
     }
 
@@ -1936,6 +2017,7 @@ void DistributionPanel::retryJob(const QString& jobId) {
     metadata["retryMissingDestinationCount"] = missingDestinationCount;
     metadata["retryExistingRecordedRemoteFolders"] = recordedArtifactCounts.first;
     metadata["retryExistingRecordedRemoteFiles"] = recordedArtifactCounts.second;
+    metadata["retryForcedCourseContentsOnlyTasks"] = forcedCourseContentsOnlyTasks;
 
     QJsonObject retryDetails;
     retryDetails["retryOfJobId"] = record.id;
@@ -2028,8 +2110,21 @@ QJsonArray DistributionPanel::serializeDistributionRows() const {
         object["jobId"] = m_currentJobId;
 
         auto itemText = [this, row](int column) {
+            if (column == COL_MATCHED_MEMBER) {
+                QWidget* widget = m_memberTable->cellWidget(row, column);
+                if (auto* combo = widget ? widget->findChild<QComboBox*>() : nullptr) {
+                    return combo->currentText();
+                }
+            }
             QTableWidgetItem* item = m_memberTable->item(row, column);
             return item ? item->text() : QString();
+        };
+        auto memberIdFromCell = [this, row]() {
+            QWidget* widget = m_memberTable->cellWidget(row, COL_MATCHED_MEMBER);
+            if (auto* combo = widget ? widget->findChild<QComboBox*>() : nullptr) {
+                return combo->currentData().toString();
+            }
+            return QString();
         };
         auto itemTip = [this, row](int column) {
             QTableWidgetItem* item = m_memberTable->item(row, column);
@@ -2039,6 +2134,7 @@ QJsonArray DistributionPanel::serializeDistributionRows() const {
         object["sourceText"] = itemText(COL_SOURCE_FOLDER);
         object["sourcePath"] = itemTip(COL_SOURCE_FOLDER);
         object["memberText"] = itemText(COL_MATCHED_MEMBER);
+        object["memberId"] = memberIdFromCell();
         object["matchType"] = itemText(COL_MATCH_TYPE);
         object["destinationPath"] = itemText(COL_DESTINATION);
         object["status"] = itemText(COL_STATUS);
@@ -2858,7 +2954,7 @@ void DistributionPanel::onScanLocalFolder() {
 
         WmFolderInfo info;
         info.folderName = folderName;
-        info.fullPath = entry.absoluteFilePath();
+        info.fullPath = cleanRoutePath(entry.absoluteFilePath());
         info.isLocalSource = true;
 
         QRegularExpressionMatch tsMatch = tsRe.match(folderName);
@@ -3041,6 +3137,7 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
         if (info.fullPath.isEmpty()) {
             info.fullPath = wmBasePath + folderName;
         }
+        info.fullPath = cleanRoutePath(info.fullPath);
 
         // Extract timestamp if present
         QRegularExpressionMatch tsMatch = tsRe.match(folderName);
@@ -3549,7 +3646,7 @@ QString DistributionPanel::autoDetectDistributionIntent() {
         detectedTemplate = "{archive_root}/{fast_forward}/Courses";
         label = "Auto-detected FF Courses";
     } else if (mentionsCourse && mentionsNhb && mentionsUpdated) {
-        detectedTemplate = "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses";
+        detectedTemplate = "{archive_root}/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses";
         label = "Auto-detected NHB+ Updated Courses";
     } else if (mentionsCourse && mentionsNhb) {
         detectedTemplate = "{archive_root}/NHB+ Courses";
@@ -3571,6 +3668,7 @@ QString DistributionPanel::autoDetectDistributionIntent() {
             "{member}",
             "{archive_root}/NHB+ Courses",
             "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses",
+            "{archive_root}/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses",
             "{archive_root}/{fast_forward}/Courses"
         };
         if (replaceableTemplates.contains(current)) {
@@ -3625,6 +3723,8 @@ QString DistributionPanel::buildDistributionAudit(bool includeDetails, int* bloc
     int selectedFolders = 0;
     int selectedRoutes = 0;
     int smartFolders = 0;
+    const bool requestedCopyFolderItself = m_copyContentsOnlyCheck
+        && !m_copyContentsOnlyCheck->isChecked();
 
     QStringList blockers;
     QStringList warnings;
@@ -3716,6 +3816,12 @@ QString DistributionPanel::buildDistributionAudit(bool includeDetails, int* bloc
                     .arg(info.memberId.isEmpty() ? info.folderName : info.memberId));
             } else {
                 rememberDestination(dest, info.memberId);
+                if (requestedCopyFolderItself
+                    && shouldForceCourseMemberContentsOnly(info.fullPath, dest, info.memberId)) {
+                    warnings.append(QString(
+                        "%1 is a member wrapper going into a course destination; this row will copy contents only, not create %2/%1.")
+                        .arg(info.memberId, lastPathSegment(dest)));
+                }
             }
         }
         tableRow++;
@@ -4102,7 +4208,18 @@ void DistributionPanel::onStartDistribution() {
     // Build task list from selected items
     QList<FolderCopyTask> tasks;
     bool copyFolderItself = !m_copyContentsOnlyCheck->isChecked();
+    int forcedCourseContentsOnlyTasks = 0;
     QStringList skippedNoSource;
+
+    auto finalizeTask = [&](FolderCopyTask& task) {
+        task.sourcePath = cleanRoutePath(task.sourcePath);
+        task.destPath = cleanRoutePath(task.destPath);
+        if (task.copyFolderItself
+            && shouldForceCourseMemberContentsOnly(task.sourcePath, task.destPath, task.memberId)) {
+            task.copyFolderItself = false;
+            forcedCourseContentsOnlyTasks++;
+        }
+    };
 
     // Track table row mapping for smart-routed folders
     int tableRow = 0;
@@ -4140,9 +4257,13 @@ void DistributionPanel::onStartDistribution() {
                     task.isLocalSource = route.isLocalSource || info.isLocalSource;
 
                     if (route.isFolder) {
-                        // Subfolder → respect "copy contents only" checkbox
+                        // Course child folders should be copied into the course
+                        // destination as folders. Member wrapper folders are
+                        // forced to contents-only in finalizeTask().
                         task.sourcePath = route.sourcePath;
-                        task.copyFolderItself = copyFolderItself;
+                        task.copyFolderItself = contentTypeIsCourse(route.contentType)
+                            ? true
+                            : copyFolderItself;
                     } else {
                         // Root files → copy individual files
                         task.sourcePath = route.sourcePath;
@@ -4152,6 +4273,7 @@ void DistributionPanel::onStartDistribution() {
                         task.copyFolderItself = false;
                     }
 
+                    finalizeTask(task);
                     tasks.append(task);
                 }
             }
@@ -4212,6 +4334,7 @@ void DistributionPanel::onStartDistribution() {
                     task.destPath = getDestinationPath(info.memberId, it.key());
                     task.copyFolderItself = false;
                     task.isLocalSource = info.isLocalSource;
+                    finalizeTask(task);
                     tasks.append(task);
                 }
             } else {
@@ -4233,6 +4356,7 @@ void DistributionPanel::onStartDistribution() {
                     continue;
                 }
 
+                finalizeTask(task);
                 tasks.append(task);
             }
             tableRow++;
@@ -4284,7 +4408,15 @@ void DistributionPanel::onStartDistribution() {
 
     bool moveMode = m_moveFilesCheck->isChecked();
     QString operationType = moveMode ? "MOVE" : "Copy";
-    QString copyMode = copyFolderItself ? "entire folder" : "folder contents only";
+    bool anyFolderCopy = false;
+    bool anyContentsCopy = false;
+    for (const FolderCopyTask& task : tasks) {
+        if (task.copyFolderItself) anyFolderCopy = true;
+        else anyContentsCopy = true;
+    }
+    QString copyMode = anyFolderCopy && anyContentsCopy
+        ? "mixed"
+        : (anyFolderCopy ? "entire folder" : "folder contents only");
     QString conflictMode = m_skipExistingCheck->isChecked() ? "skip existing" : "overwrite existing";
 
     // Log all tasks for debugging
@@ -4310,9 +4442,15 @@ void DistributionPanel::onStartDistribution() {
             QMessageBox::No);
         if (reply != QMessageBox::Yes) return;
     } else {
+        QString courseSafetyNote;
+        if (forcedCourseContentsOnlyTasks > 0) {
+            courseSafetyNote = QString("\n\nCourse safety: %1 member-wrapper %2 forced to contents-only so member folders are not created inside course destinations.")
+                .arg(forcedCourseContentsOnlyTasks)
+                .arg(forcedCourseContentsOnlyTasks == 1 ? "task was" : "tasks were");
+        }
         int ret = QMessageBox::question(this, "Confirm Distribution",
-            QString("Start distribution to %1 members?\n\nOperation: %2\nMode: %3\nConflict handling: %4")
-                .arg(tasks.size()).arg(operationType).arg(copyMode).arg(conflictMode),
+            QString("Start distribution to %1 members?\n\nOperation: %2\nMode: %3\nConflict handling: %4%5")
+                .arg(tasks.size()).arg(operationType).arg(copyMode).arg(conflictMode, courseSafetyNote),
             QMessageBox::Yes | QMessageBox::No);
         if (ret != QMessageBox::Yes) return;
     }
@@ -4337,6 +4475,9 @@ void DistributionPanel::onStartDistribution() {
     metadata["retryMode"] = "folder_tasks";
     metadata["operation"] = moveMode ? "move" : "copy";
     metadata["copyFolderItself"] = copyFolderItself;
+    metadata["actualCopyFolderItself"] = anyFolderCopy;
+    metadata["actualCopyContentsOnly"] = anyContentsCopy;
+    metadata["forcedCourseContentsOnlyTasks"] = forcedCourseContentsOnlyTasks;
     metadata["conflictMode"] = m_skipExistingCheck->isChecked() ? "skip_existing" : "overwrite_existing";
     metadata["skipExisting"] = m_skipExistingCheck && m_skipExistingCheck->isChecked();
     metadata["createDestFolder"] = m_createDestFolderCheck && m_createDestFolderCheck->isChecked();
@@ -4982,6 +5123,12 @@ void DistributionPanel::onQuickTemplateChanged(int index) {
     QString templateValue = m_quickTemplateCombo->itemData(index).toString();
     if (!templateValue.isEmpty()) {
         m_destTemplateEdit->setText(templateValue);
+        if (pathLooksLikeCourseDestination(templateValue)) {
+            if (m_copyContentsOnlyCheck) m_copyContentsOnlyCheck->setChecked(true);
+            if (m_createDestFolderCheck) m_createDestFolderCheck->setChecked(true);
+            if (m_skipExistingCheck) m_skipExistingCheck->setChecked(true);
+            if (m_moveFilesCheck) m_moveFilesCheck->setChecked(false);
+        }
     }
     // If "Custom" is selected (empty data), leave the edit field as-is
 }
@@ -5017,7 +5164,7 @@ void DistributionPanel::onGenerateDestinations() {
     pathTypeCombo->setToolTip("Choose which destination template to generate for the selected members");
     pathTypeCombo->addItem("Distribution Folder", "{member}");
     pathTypeCombo->addItem("NHB+ Courses", "{archive_root}/NHB+ Courses");
-    pathTypeCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses");
+    pathTypeCombo->addItem("NHB+ Updated Courses", "{archive_root}/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses");
     pathTypeCombo->addItem("FF Courses", "{archive_root}/{fast_forward}/Courses");
     pathTypeCombo->addItem("Hot Seats", "{archive_root}/{fast_forward}/{hot_seats}");
     pathTypeCombo->addItem("Theory Calls", "{archive_root}/{fast_forward}/{theory_calls}");
@@ -5232,6 +5379,12 @@ void DistributionPanel::applyJobProfile(const QVariantMap& data) {
     }
     if (m_moveFilesCheck && data.contains("moveFiles")) {
         m_moveFilesCheck->setChecked(data.value("moveFiles").toBool());
+    }
+    if (pathLooksLikeCourseDestination(templateText)) {
+        if (m_copyContentsOnlyCheck) m_copyContentsOnlyCheck->setChecked(true);
+        if (m_createDestFolderCheck) m_createDestFolderCheck->setChecked(true);
+        if (m_skipExistingCheck) m_skipExistingCheck->setChecked(true);
+        if (m_moveFilesCheck) m_moveFilesCheck->setChecked(false);
     }
 
     const bool broadcast = data.value("broadcast", false).toBool();
@@ -5813,7 +5966,7 @@ void DistributionPanel::onVariableHelpClicked() {
 <h4>Quick Templates</h4>
 <ul>
 <li><b>NHB+ Courses:</b> {archive_root}/NHB+ Courses</li>
-<li><b>NHB+ Updated Courses:</b> {archive_root}/NHB+ 2021-2024 - Regularly Updated/NHB+ Courses</li>
+<li><b>NHB+ Updated Courses:</b> {archive_root}/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses</li>
 <li><b>FF Courses:</b> {archive_root}/{fast_forward}/Courses</li>
 <li><b>Hot Seats:</b> {archive_root}/{fast_forward}/{hot_seats}</li>
 <li><b>Theory Calls:</b> {archive_root}/{fast_forward}/{theory_calls}</li>

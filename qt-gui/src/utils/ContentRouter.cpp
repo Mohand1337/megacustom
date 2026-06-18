@@ -507,8 +507,11 @@ QString ContentRouter::resolveDestination(
         break;
 
     case ContentType::NHB_COURSES:
+        if (!fallbackDest.isEmpty()) {
+            return fallbackDest;
+        }
         if (!member.paths.archiveRoot.isEmpty()) {
-            return member.paths.archiveRoot + "/NHB+ Courses";
+            return member.paths.archiveRoot + "/NHB+ 2021-2024 - Regularly Updated/5. NHB+ Courses";
         }
         break;
 
@@ -527,6 +530,9 @@ QString ContentRouter::resolveDestination(
         break;
 
     case ContentType::FF_COURSES:
+        if (!fallbackDest.isEmpty()) {
+            return fallbackDest;
+        }
         if (!member.paths.archiveRoot.isEmpty() && !member.paths.fastForwardPath.isEmpty()) {
             return member.paths.archiveRoot + "/" + member.paths.fastForwardPath + "/Courses";
         }

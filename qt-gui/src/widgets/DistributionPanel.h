@@ -204,11 +204,11 @@ private:
     QPushButton* m_uploadBannerCancelBtn = nullptr;
 
     // Options
-    QCheckBox* m_removeWatermarkSuffixCheck;
-    QCheckBox* m_createDestFolderCheck;
-    QCheckBox* m_copyContentsOnlyCheck;  // Copy contents only (standardized naming)
-    QCheckBox* m_skipExistingCheck;
-    QCheckBox* m_moveFilesCheck;
+    QCheckBox* m_removeWatermarkSuffixCheck = nullptr;
+    QCheckBox* m_createDestFolderCheck = nullptr;
+    QCheckBox* m_copyContentsOnlyCheck = nullptr;  // Copy contents only (standardized naming)
+    QCheckBox* m_skipExistingCheck = nullptr;
+    QCheckBox* m_moveFilesCheck = nullptr;
     QCheckBox* m_smartRouteCheck = nullptr;
 
     // Status
