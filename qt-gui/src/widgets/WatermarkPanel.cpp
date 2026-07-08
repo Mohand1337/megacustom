@@ -43,6 +43,7 @@
 #include <QJsonObject>
 #include <QTextStream>
 #include <QUrl>
+#include <exception>
 
 namespace MegaCustom {
 
@@ -223,59 +224,78 @@ WatermarkResult WatermarkWorker::watermarkInput(Watermarker& watermarker,
                                                 const std::string& outputDir) {
     const std::string inputStd = inputPath.toStdString();
     WatermarkResult result;
+    result.inputFile = inputStd;
 
-    if (!memberId.isEmpty()) {
-        applyMemberTemplates(watermarker, baseConfig, memberId,
-                             m_rawPrimaryTemplate, m_rawSecondaryTemplate);
+    try {
+        if (!memberId.isEmpty()) {
+            applyMemberTemplates(watermarker, baseConfig, memberId,
+                                 m_rawPrimaryTemplate, m_rawSecondaryTemplate);
 
-        const QString outputBaseDir = m_outputDir.isEmpty()
-            ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
-            : m_outputDir;
-        if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-            result.success = false;
-            result.inputFile = inputStd;
-            result.error = "Paused: insufficient disk space";
-            return result;
-        }
-
-        const std::string outPath = watermarker.buildMemberOutputPath(
-            inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
-        if (Watermarker::isVideoFile(inputStd)) {
-            result = watermarker.watermarkVideo(inputStd, outPath);
-        } else if (Watermarker::isPdfFile(inputStd)) {
-            result = watermarker.watermarkPdf(inputStd, outPath);
-        } else if (Watermarker::isAudioFile(inputStd)) {
-            result = watermarker.watermarkAudio(inputStd, outPath);
-        } else {
-            QFile sourceFile(inputPath);
-            if (sourceFile.copy(QString::fromStdString(outPath))) {
-                result.success = true;
-                result.inputFile = inputStd;
-                result.outputFile = outPath;
-            } else {
+            const QString outputBaseDir = m_outputDir.isEmpty()
+                ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                : m_outputDir;
+            if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
                 result.success = false;
-                result.inputFile = inputStd;
-                result.error = QString("Failed to copy passthrough file: %1")
-                                   .arg(sourceFile.errorString()).toStdString();
+                result.error = "Paused: insufficient disk space";
+                return result;
             }
-        }
-    } else {
-        watermarker.setConfig(baseConfig);
-        const QString outputBaseDir = outputDir.empty()
-            ? QFileInfo(inputPath).absolutePath()
-            : QString::fromStdString(outputDir);
-        if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-            result.success = false;
-            result.inputFile = inputStd;
-            result.error = "Paused: insufficient disk space";
-            return result;
-        }
 
-        std::string outputPath;
-        if (!outputDir.empty()) {
-            outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
+            const std::string outPath = watermarker.buildMemberOutputPath(
+                inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
+            if (Watermarker::isVideoFile(inputStd)) {
+                result = watermarker.watermarkVideo(inputStd, outPath);
+            } else if (Watermarker::isPdfFile(inputStd)) {
+                result = watermarker.watermarkPdf(inputStd, outPath);
+            } else if (Watermarker::isAudioFile(inputStd)) {
+                result = watermarker.watermarkAudio(inputStd, outPath);
+            } else {
+                QFile sourceFile(inputPath);
+                if (sourceFile.copy(QString::fromStdString(outPath))) {
+                    result.success = true;
+                    result.inputFile = inputStd;
+                    result.outputFile = outPath;
+                } else {
+                    result.success = false;
+                    result.inputFile = inputStd;
+                    result.error = QString("Failed to copy passthrough file: %1")
+                                       .arg(sourceFile.errorString()).toStdString();
+                }
+            }
+        } else {
+            watermarker.setConfig(baseConfig);
+            const QString outputBaseDir = outputDir.empty()
+                ? QFileInfo(inputPath).absolutePath()
+                : QString::fromStdString(outputDir);
+            if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
+                result.success = false;
+                result.error = "Paused: insufficient disk space";
+                return result;
+            }
+
+            std::string outputPath;
+            if (!outputDir.empty()) {
+                outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
+            }
+            result = watermarker.watermarkFile(inputStd, outputPath);
         }
-        result = watermarker.watermarkFile(inputStd, outputPath);
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.inputFile = inputStd;
+        result.error = QString("Watermark failed safely: %1").arg(e.what()).toStdString();
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "watermark_worker_exception",
+            QString("Watermark worker caught exception for %1: %2")
+                .arg(QFileInfo(inputPath).fileName(), QString::fromUtf8(e.what()))
+                .toStdString(),
+            inputStd);
+    } catch (...) {
+        result.success = false;
+        result.inputFile = inputStd;
+        result.error = "Watermark failed safely: unknown exception";
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "watermark_worker_exception",
+            "Watermark worker caught unknown exception for: " + inputStd,
+            inputStd);
     }
 
     if (m_metricsStore && !inputPath.isEmpty()) {
@@ -492,7 +512,6 @@ void WatermarkWorker::process() {
 
             for (int i = 0; i < m_files.size() && !m_cancelled; ++i) {
                 QString inputPath = m_files[i];
-                std::string inputStd = inputPath.toStdString();
                 QString label = QString("%1 [%2]").arg(QFileInfo(inputPath).fileName()).arg(memberId);
                 emit progress(idx, total, label, 0);
 
@@ -504,54 +523,17 @@ void WatermarkWorker::process() {
                                        static_cast<int>(progress.percentComplete));
                 });
 
-                // Expand templates with this member's data (Qt layer — single source of truth)
-                applyMemberTemplates(watermarker, baseConfig, memberId,
-                                     m_rawPrimaryTemplate, m_rawSecondaryTemplate);
-
-                const QString outputBaseDir = m_outputDir.isEmpty()
-                    ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
-                    : m_outputDir;
-                if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-                    break;
-                }
-
-                // Build member output path and watermark directly
-                std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
-                WatermarkResult result;
-                if (Watermarker::isVideoFile(inputStd)) {
-                    result = watermarker.watermarkVideo(inputStd, outPath);
-                } else if (Watermarker::isPdfFile(inputStd)) {
-                    result = watermarker.watermarkPdf(inputStd, outPath);
-                } else if (Watermarker::isAudioFile(inputStd)) {
-                    result = watermarker.watermarkAudio(inputStd, outPath);
-                } else {
-                    // Passthrough: copy file as-is (e.g., .vtt, .docx, .txt)
-                    QFile sourceFile(inputPath);
-                    if (sourceFile.copy(QString::fromStdString(outPath))) {
-                        result.success = true;
-                        result.outputFile = outPath;
-                    } else {
-                        result.success = false;
-                        result.error = QString("Failed to copy passthrough file: %1")
-                                           .arg(sourceFile.errorString()).toStdString();
-                    }
-                }
-
-                // Record metrics (Smart Engine learning)
-                if (m_metricsStore) {
-                    QString ext = QFileInfo(inputPath).suffix().toLower();
-                    m_metricsStore->recordWatermark(
-                        ext, memberId,
-                        result.inputSizeBytes, result.outputSizeBytes,
-                        result.processingTimeMs, result.success,
-                        QString::fromStdString(result.error));
-                }
+                WatermarkResult result = watermarkInput(
+                    watermarker, baseConfig, inputPath, memberId, outputDir);
 
                 if (!result.success && isDiskSpaceError(result)) {
                     if (!result.outputFile.empty()) {
                         QFile::remove(QString::fromStdString(result.outputFile));
                     }
                     if (!m_cancelled) {
+                        const QString outputBaseDir = m_outputDir.isEmpty()
+                            ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                            : m_outputDir;
                         pauseForDiskSpace(inputPath, outputBaseDir);
                     }
                     break;
@@ -682,63 +664,18 @@ void WatermarkWorker::process() {
                                static_cast<int>(progress.percentComplete));
         });
 
-        WatermarkResult result;
-        std::string inputStd = inputPath.toStdString();
-
-        if (!m_memberId.isEmpty()) {
-            // Single-member: expand templates with member data
-            applyMemberTemplates(watermarker, baseConfig, m_memberId,
-                                 m_rawPrimaryTemplate, m_rawSecondaryTemplate);
-
-            const QString outputBaseDir = m_outputDir.isEmpty()
-                ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
-                : m_outputDir;
-            if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-                break;
-            }
-
-            std::string outPath = watermarker.buildMemberOutputPath(inputStd, outputDir, m_memberId.toStdString(), m_rootDir.toStdString());
-            if (Watermarker::isVideoFile(inputStd)) {
-                result = watermarker.watermarkVideo(inputStd, outPath);
-            } else if (Watermarker::isPdfFile(inputStd)) {
-                result = watermarker.watermarkPdf(inputStd, outPath);
-            } else if (Watermarker::isAudioFile(inputStd)) {
-                result = watermarker.watermarkAudio(inputStd, outPath);
-            } else {
-                // Passthrough: copy file as-is (e.g., .vtt, .docx, .txt)
-                QFile sourceFile(inputPath);
-                if (sourceFile.copy(QString::fromStdString(outPath))) {
-                    result.success = true;
-                    result.outputFile = outPath;
-                } else {
-                    result.success = false;
-                    result.error = QString("Failed to copy passthrough file: %1")
-                                       .arg(sourceFile.errorString()).toStdString();
-                }
-            }
-        } else {
-            // Global mode: text already expanded in config
-            const QString outputBaseDir = outputDir.empty()
-                ? QFileInfo(inputPath).absolutePath()
-                : QString::fromStdString(outputDir);
-            if (!ensureDiskSpaceForNextOutput(inputPath, outputBaseDir)) {
-                break;
-            }
-
-            std::string outputPath = "";
-            if (!outputDir.empty()) {
-                outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
-            }
-            result = watermarker.watermarkFile(inputStd, outputPath);
-        }
+        WatermarkResult result = watermarkInput(
+            watermarker, baseConfig, inputPath, m_memberId, outputDir);
 
         if (!result.success && isDiskSpaceError(result)) {
             if (!result.outputFile.empty()) {
                 QFile::remove(QString::fromStdString(result.outputFile));
             }
-            const QString outputBaseDir = outputDir.empty()
-                ? QFileInfo(inputPath).absolutePath()
-                : QString::fromStdString(outputDir);
+            const QString outputBaseDir = !m_memberId.isEmpty()
+                ? (m_outputDir.isEmpty()
+                    ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                    : m_outputDir)
+                : (outputDir.empty() ? QFileInfo(inputPath).absolutePath() : QString::fromStdString(outputDir));
             if (!m_cancelled) {
                 pauseForDiskSpace(inputPath, outputBaseDir);
             }

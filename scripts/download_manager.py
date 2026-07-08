@@ -18,6 +18,7 @@ import os
 import json
 import time
 import argparse
+import unicodedata
 from hashlib import md5
 from html import unescape
 from urllib.parse import urlparse, parse_qs, unquote
@@ -369,11 +370,19 @@ class DownloadManager:
         self.save_history()
 
     def sanitize_filename(self, filename):
-        """Remove invalid characters from filename"""
+        """Normalize filename text and remove characters unsafe for filesystems."""
+        filename = unicodedata.normalize("NFC", str(filename))
+        filename = "".join(
+            "" if unicodedata.category(char) in {"Cc", "Cf"} else char
+            for char in filename
+        )
         invalid_chars = '<>:"|?*\\/'
         for char in invalid_chars:
             filename = filename.replace(char, '_')
+        filename = re.sub(r'\s+', ' ', filename)
         filename = filename.strip('. ')
+        if not filename:
+            filename = f"download_{int(time.time())}"
         name, ext = os.path.splitext(filename)
         if len(name) > 200:
             name = name[:200]

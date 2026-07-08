@@ -13,6 +13,7 @@
 #include <thread>
 #include <future>
 #include <filesystem>
+#include <stdexcept>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -145,7 +146,71 @@ FILE* utf8Popen(const std::string& cmd, const char* mode) {
 
 // Check if a file exists (use std::filesystem for Unicode path support on Windows)
 bool fileExists(const std::string& path) {
-    return std::filesystem::exists(toFsPath(path));
+    try {
+        std::error_code ec;
+        return std::filesystem::exists(toFsPath(path), ec) && !ec;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool tryToFsPath(const std::string& path, std::filesystem::path& out, std::string* error = nullptr) {
+    try {
+        out = toFsPath(path);
+        return true;
+    } catch (const std::exception& e) {
+        if (error) {
+            *error = std::string("Invalid filesystem path: ") + e.what();
+        }
+    } catch (...) {
+        if (error) {
+            *error = "Invalid filesystem path: unknown conversion error";
+        }
+    }
+    return false;
+}
+
+bool pathExistsNoThrow(const std::filesystem::path& path, std::string* error = nullptr) {
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec && error) {
+        *error = "Filesystem exists check failed: " + ec.message();
+    }
+    return !ec && exists;
+}
+
+bool fileSizeNoThrow(const std::filesystem::path& path, int64_t& size, std::string* error = nullptr) {
+    std::error_code ec;
+    const auto rawSize = std::filesystem::file_size(path, ec);
+    if (ec) {
+        if (error) {
+            *error = "Filesystem size check failed: " + ec.message();
+        }
+        return false;
+    }
+    size = static_cast<int64_t>(rawSize);
+    return true;
+}
+
+void createDirectoriesOrThrow(const std::filesystem::path& path) {
+    if (path.empty()) {
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec) {
+        throw std::runtime_error("Failed to create output directory: " + ec.message());
+    }
+}
+
+bool candidateExistsOrThrow(const std::filesystem::path& path) {
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        throw std::runtime_error("Failed to check output path: " + ec.message());
+    }
+    return exists;
 }
 
 bool isStructurallyCompletePdf(const std::filesystem::path& path) {
@@ -216,6 +281,16 @@ std::string shellEscape(const std::string& arg) {
     result += "'";
     return result;
 #endif
+}
+
+WatermarkResult failedWatermarkResult(const std::string& input,
+                                      const std::string& output,
+                                      const std::string& error) {
+    WatermarkResult result;
+    result.inputFile = input;
+    result.outputFile = output;
+    result.error = error;
+    return result;
 }
 } // anonymous namespace
 
@@ -457,7 +532,9 @@ bool Watermarker::isVideoFile(const std::string& path) {
     };
 
     std::string lower = path;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
 
     for (const auto& ext : extensions) {
         if (lower.length() >= ext.length() &&
@@ -470,7 +547,9 @@ bool Watermarker::isVideoFile(const std::string& path) {
 
 bool Watermarker::isPdfFile(const std::string& path) {
     std::string lower = path;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return lower.length() >= 4 && lower.substr(lower.length() - 4) == ".pdf";
 }
 
@@ -480,7 +559,9 @@ bool Watermarker::isAudioFile(const std::string& path) {
     };
 
     std::string lower = path;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
 
     for (const auto& ext : extensions) {
         if (lower.length() >= ext.length() &&
@@ -493,11 +574,18 @@ bool Watermarker::isAudioFile(const std::string& path) {
 
 int64_t Watermarker::getFileSize(const std::string& path) {
     namespace fs = std::filesystem;
-    std::error_code ec;
-    auto fsPath = toFsPath(path);
-    if (!fs::exists(fsPath, ec)) return 0;
-    auto sz = fs::file_size(fsPath, ec);
-    return ec ? 0 : static_cast<int64_t>(sz);
+    fs::path fsPath;
+    if (!tryToFsPath(path, fsPath)) {
+        return 0;
+    }
+
+    std::string error;
+    if (!pathExistsNoThrow(fsPath, &error)) {
+        return 0;
+    }
+
+    int64_t size = 0;
+    return fileSizeNoThrow(fsPath, size) ? size : 0;
 }
 
 // ==================== FFmpeg Filter Building ====================
@@ -809,14 +897,29 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
 
     // Check input file exists (use std::filesystem for Unicode path support)
     namespace fs = std::filesystem;
-    fs::path inputFs = toFsPath(input);
-    if (!fs::exists(inputFs)) {
+    fs::path inputFs;
+    std::string pathError;
+    if (!tryToFsPath(input, inputFs, &pathError)) {
+        result.error = pathError + ": " + input;
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "input_path_invalid", result.error, input);
+        return result;
+    }
+    if (!pathExistsNoThrow(inputFs, &pathError)) {
         result.error = "Input file not found: " + input;
+        if (!pathError.empty()) {
+            result.error += " (" + pathError + ")";
+        }
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "input_not_found", result.error);
         return result;
     }
-    result.inputSizeBytes = static_cast<int64_t>(fs::file_size(inputFs));
+    if (!fileSizeNoThrow(inputFs, result.inputSizeBytes, &pathError)) {
+        result.error = pathError + ": " + input;
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "input_size_failed", result.error, input);
+        return result;
+    }
 
     // Get video duration for progress tracking
     double duration = getVideoDuration(input);
@@ -832,10 +935,13 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         endTime - startTime).count();
 
-    fs::path outputFs = toFsPath(output);
-    if (exitCode == 0 && fs::exists(outputFs)) {
+    fs::path outputFs;
+    pathError.clear();
+    const bool outputPathValid = tryToFsPath(output, outputFs, &pathError);
+    const bool outputExists = outputPathValid && pathExistsNoThrow(outputFs, &pathError);
+    if (exitCode == 0 && outputExists) {
         result.success = true;
-        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
+        fileSizeNoThrow(outputFs, result.outputSizeBytes);
         reportProgress(input, 1, 1, 100.0, "complete");
         LogManager::instance().logWatermark("video_complete",
             "Video watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
@@ -844,6 +950,9 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
             result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
         } else {
             result.error = "FFmpeg succeeded but output file not found: " + output;
+            if (!pathError.empty()) {
+                result.error += " (" + pathError + ")";
+            }
         }
         reportProgress(input, 1, 1, 0.0, "error");
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
@@ -874,7 +983,7 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
 
     std::string scriptPath = getPdfScriptPath();
     namespace fs = std::filesystem;
-    if (!fs::exists(toFsPath(scriptPath))) {
+    if (!fileExists(scriptPath)) {
         result.error = "PDF watermark script not found at: " + scriptPath;
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "script_not_found", result.error);
@@ -882,14 +991,29 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     }
 
     // Check input file exists (use std::filesystem for Unicode path support)
-    fs::path inputFs = toFsPath(input);
-    if (!fs::exists(inputFs)) {
+    fs::path inputFs;
+    std::string pathError;
+    if (!tryToFsPath(input, inputFs, &pathError)) {
+        result.error = pathError + ": " + input;
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "input_path_invalid", result.error, input);
+        return result;
+    }
+    if (!pathExistsNoThrow(inputFs, &pathError)) {
         result.error = "Input file not found: " + input;
+        if (!pathError.empty()) {
+            result.error += " (" + pathError + ")";
+        }
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "input_not_found", result.error);
         return result;
     }
-    result.inputSizeBytes = static_cast<int64_t>(fs::file_size(inputFs));
+    if (!fileSizeNoThrow(inputFs, result.inputSizeBytes, &pathError)) {
+        result.error = pathError + ": " + input;
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "input_size_failed", result.error, input);
+        return result;
+    }
 
     // Log resolved script path for debugging
     fprintf(stderr, "PDF watermark script: %s\n", scriptPath.c_str());
@@ -945,18 +1069,21 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
     result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         endTime - startTime).count();
 
-    fs::path outputFs = toFsPath(output);
-    if (exitCode == 0 && fs::exists(outputFs)) {
+    fs::path outputFs;
+    pathError.clear();
+    const bool outputPathValid = tryToFsPath(output, outputFs, &pathError);
+    const bool outputExists = outputPathValid && pathExistsNoThrow(outputFs, &pathError);
+    if (exitCode == 0 && outputExists) {
         result.success = true;
-        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
+        fileSizeNoThrow(outputFs, result.outputSizeBytes);
         LogManager::instance().logWatermark("pdf_complete",
             "PDF watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
     } else if (exitCode != 0
-               && fs::exists(outputFs)
+               && outputExists
                && isStructurallyCompletePdf(outputFs)
                && looksLikePostWriteEncodingFailure(stdout_out + "\n" + stderr_out)) {
         result.success = true;
-        result.outputSizeBytes = static_cast<int64_t>(fs::file_size(outputFs));
+        fileSizeNoThrow(outputFs, result.outputSizeBytes);
         result.error = "PDF output was created successfully; ignored post-write Python encoding warning.";
         LogManager::instance().log(LogLevel::Warning, LogCategory::Watermark,
             "pdf_post_write_encoding_warning",
@@ -967,6 +1094,9 @@ WatermarkResult Watermarker::executePdfScript(const std::string& input,
             result.error = "PDF watermarking failed (exit code " + std::to_string(exitCode) + "): " + stdout_out;
         } else {
             result.error = "PDF script succeeded but output file not found: " + output;
+            if (!pathError.empty()) {
+                result.error += " (" + pathError + ")";
+            }
         }
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
             "pdf_watermark_failed", "PDF watermark failed: " + input + " - " + result.error, input);
@@ -990,15 +1120,23 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
 
     namespace fs = std::filesystem;
 
-    fs::path inputFs = toFsPath(inputPath);
+    fs::path inputFs;
+    std::string pathError;
+    if (!tryToFsPath(inputPath, inputFs, &pathError)) {
+        throw std::runtime_error(pathError);
+    }
     fs::path filename = inputFs.filename();
 
     // Determine base output directory
     fs::path basePath;
     if (!outputDir.empty()) {
-        basePath = toFsPath(outputDir);
+        if (!tryToFsPath(outputDir, basePath, &pathError)) {
+            throw std::runtime_error(pathError);
+        }
     } else if (!rootDir.empty()) {
-        basePath = toFsPath(rootDir);
+        if (!tryToFsPath(rootDir, basePath, &pathError)) {
+            throw std::runtime_error(pathError);
+        }
     } else {
         basePath = inputFs.parent_path();
     }
@@ -1007,33 +1145,46 @@ std::string Watermarker::buildMemberOutputPath(const std::string& inputPath,
     fs::path relativeSub;
     if (!rootDir.empty()) {
         fs::path inputParent = inputFs.parent_path();
-        fs::path rootFs = toFsPath(rootDir);
+        fs::path rootFs;
+        if (!tryToFsPath(rootDir, rootFs, &pathError)) {
+            throw std::runtime_error(pathError);
+        }
         if (inputParent != rootFs) {
             // Use lexically_relative for safe relative path computation
             relativeSub = inputParent.lexically_relative(rootFs);
             // If relative path starts with "..", it's outside rootDir — ignore
-            if (!relativeSub.empty() && relativeSub.string().substr(0, 2) == "..") {
+            const std::string relativeText = fromFsPath(relativeSub);
+            if (!relativeSub.empty() && relativeText.substr(0, 2) == "..") {
                 relativeSub.clear();
             }
         }
     }
 
     // Build: basePath / memberId / relativeSub / filename
-    fs::path memberDir = basePath / toFsPath(memberId) / relativeSub;
-    fs::create_directories(memberDir);
+    fs::path memberFs;
+    if (!tryToFsPath(memberId, memberFs, &pathError)) {
+        throw std::runtime_error(pathError);
+    }
+    fs::path memberDir = basePath / memberFs / relativeSub;
+    createDirectoriesOrThrow(memberDir);
 
     // Check for existing file and add numbered suffix if needed
     fs::path candidatePath = memberDir / filename;
-    if (fs::exists(candidatePath)) {
-        std::string fnStr = filename.string();
+    if (candidateExistsOrThrow(candidatePath)) {
+        std::string fnStr = fromFsPath(filename);
         size_t lastDot = fnStr.find_last_of('.');
         std::string baseName = (lastDot == std::string::npos) ?
             fnStr : fnStr.substr(0, lastDot);
         std::string ext = (lastDot == std::string::npos) ?
             "" : fnStr.substr(lastDot);
         for (int n = 1; n < 1000; ++n) {
-            candidatePath = memberDir / (baseName + " (" + std::to_string(n) + ")" + ext);
-            if (!fs::exists(candidatePath)) {
+            fs::path candidateName;
+            const std::string candidateText = baseName + " (" + std::to_string(n) + ")" + ext;
+            if (!tryToFsPath(candidateText, candidateName, &pathError)) {
+                throw std::runtime_error(pathError);
+            }
+            candidatePath = memberDir / candidateName;
+            if (!candidateExistsOrThrow(candidatePath)) {
                 break;
             }
         }
@@ -1046,8 +1197,12 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
                                              const std::string& rootDir) const {
     namespace fs = std::filesystem;
 
-    fs::path inputFs = toFsPath(inputPath);
-    std::string filename = inputFs.filename().string();
+    fs::path inputFs;
+    std::string pathError;
+    if (!tryToFsPath(inputPath, inputFs, &pathError)) {
+        throw std::runtime_error(pathError);
+    }
+    std::string filename = fromFsPath(inputFs.filename());
 
     // Find extension
     size_t lastDot = filename.find_last_of('.');
@@ -1058,17 +1213,26 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
 
     // Build output path
     fs::path sourceDir = inputFs.parent_path();
-    fs::path outDir = outputDir.empty() ? sourceDir : toFsPath(outputDir);
+    fs::path outDir;
+    if (outputDir.empty()) {
+        outDir = sourceDir;
+    } else if (!tryToFsPath(outputDir, outDir, &pathError)) {
+        throw std::runtime_error(pathError);
+    }
 
     // Preserve subfolder structure when rootDir is provided
     if (!rootDir.empty() && !outputDir.empty()) {
-        fs::path rootFs = toFsPath(rootDir);
+        fs::path rootFs;
+        if (!tryToFsPath(rootDir, rootFs, &pathError)) {
+            throw std::runtime_error(pathError);
+        }
         fs::path inputParent = inputFs.parent_path();
         if (inputParent != rootFs) {
             fs::path relativeSub = inputParent.lexically_relative(rootFs);
-            if (!relativeSub.empty() && relativeSub.string().substr(0, 2) != "..") {
+            const std::string relativeText = fromFsPath(relativeSub);
+            if (!relativeSub.empty() && relativeText.substr(0, 2) != "..") {
                 outDir = outDir / relativeSub;
-                fs::create_directories(outDir);
+                createDirectoriesOrThrow(outDir);
             }
         }
     }
@@ -1082,11 +1246,19 @@ std::string Watermarker::generateOutputPath(const std::string& inputPath,
     }
 
     // Check if output file already exists; if so, append (1), (2), etc.
-    fs::path candidatePath = outDir / (baseName + suffix + ext);
-    if (fs::exists(candidatePath)) {
+    fs::path candidateName;
+    if (!tryToFsPath(baseName + suffix + ext, candidateName, &pathError)) {
+        throw std::runtime_error(pathError);
+    }
+    fs::path candidatePath = outDir / candidateName;
+    if (candidateExistsOrThrow(candidatePath)) {
         for (int n = 1; n < 1000; ++n) {
-            candidatePath = outDir / (baseName + suffix + " (" + std::to_string(n) + ")" + ext);
-            if (!fs::exists(candidatePath)) {
+            const std::string candidateText = baseName + suffix + " (" + std::to_string(n) + ")" + ext;
+            if (!tryToFsPath(candidateText, candidateName, &pathError)) {
+                throw std::runtime_error(pathError);
+            }
+            candidatePath = outDir / candidateName;
+            if (!candidateExistsOrThrow(candidatePath)) {
                 break;
             }
         }
@@ -1113,14 +1285,30 @@ void Watermarker::reportProgress(const std::string& file, int current, int total
 
 WatermarkResult Watermarker::watermarkVideo(const std::string& inputPath,
                                              const std::string& outputPath) {
-    std::string outPath = outputPath.empty() ?
-        generateOutputPath(inputPath, "") : outputPath;
+    WatermarkResult fallback;
+    fallback.inputFile = inputPath;
+    fallback.outputFile = outputPath;
 
-    reportProgress(inputPath, 1, 1, 0.0, "encoding");
-    auto result = executeFFmpeg(inputPath, outPath);
-    reportProgress(inputPath, 1, 1, 100.0, result.success ? "complete" : "error");
+    try {
+        std::string outPath = outputPath.empty() ?
+            generateOutputPath(inputPath, "") : outputPath;
+        fallback.outputFile = outPath;
 
-    return result;
+        reportProgress(inputPath, 1, 1, 0.0, "encoding");
+        auto result = executeFFmpeg(inputPath, outPath);
+        reportProgress(inputPath, 1, 1, 100.0, result.success ? "complete" : "error");
+
+        return result;
+    } catch (const std::exception& e) {
+        fallback.error = std::string("Video watermark failed before processing: ") + e.what();
+    } catch (...) {
+        fallback.error = "Video watermark failed before processing: unknown error";
+    }
+
+    reportProgress(inputPath, 1, 1, 100.0, "error");
+    LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+        "video_watermark_exception", fallback.error, inputPath);
+    return fallback;
 }
 
 // Async video watermarking - runs FFmpeg in background thread
@@ -1142,14 +1330,30 @@ std::future<WatermarkResult> Watermarker::watermarkVideoAsync(
 
 WatermarkResult Watermarker::watermarkPdf(const std::string& inputPath,
                                            const std::string& outputPath) {
-    std::string outPath = outputPath.empty() ?
-        generateOutputPath(inputPath, "") : outputPath;
+    WatermarkResult fallback;
+    fallback.inputFile = inputPath;
+    fallback.outputFile = outputPath;
 
-    reportProgress(inputPath, 1, 1, 0.0, "processing");
-    auto result = executePdfScript(inputPath, outPath);
-    reportProgress(inputPath, 1, 1, 100.0, result.success ? "complete" : "error");
+    try {
+        std::string outPath = outputPath.empty() ?
+            generateOutputPath(inputPath, "") : outputPath;
+        fallback.outputFile = outPath;
 
-    return result;
+        reportProgress(inputPath, 1, 1, 0.0, "processing");
+        auto result = executePdfScript(inputPath, outPath);
+        reportProgress(inputPath, 1, 1, 100.0, result.success ? "complete" : "error");
+
+        return result;
+    } catch (const std::exception& e) {
+        fallback.error = std::string("PDF watermark failed before processing: ") + e.what();
+    } catch (...) {
+        fallback.error = "PDF watermark failed before processing: unknown error";
+    }
+
+    reportProgress(inputPath, 1, 1, 100.0, "error");
+    LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+        "pdf_watermark_exception", fallback.error, inputPath);
+    return fallback;
 }
 
 WatermarkResult Watermarker::watermarkAudio(const std::string& inputPath,
@@ -1157,74 +1361,88 @@ WatermarkResult Watermarker::watermarkAudio(const std::string& inputPath,
     WatermarkResult result;
     result.inputFile = inputPath;
 
-    if (!isFFmpegAvailable()) {
-        result.error = "FFmpeg not found. Required for audio metadata embedding.";
-        return result;
-    }
-
-    auto startTime = std::chrono::steady_clock::now();
-
-    std::string outPath = outputPath.empty() ? generateOutputPath(inputPath) : outputPath;
-    result.outputFile = outPath;
-    result.inputSizeBytes = getFileSize(inputPath);
-
-    LogManager::instance().logWatermark("audio_start", "Starting audio metadata: " + inputPath, inputPath);
-
-    // Build FFmpeg command for metadata-only embedding (no re-encoding)
-    std::string ffmpegPath = getFFmpegPath();
-    std::vector<std::string> cmd = {
-        ffmpegPath.empty() ? "ffmpeg" : ffmpegPath,
-        "-y", "-i", inputPath
-    };
-
-    // Add metadata flags
-    if (m_config.embedMetadata) {
-        if (!m_config.metadataTitle.empty()) {
-            cmd.push_back("-metadata");
-            cmd.push_back("title=" + m_config.metadataTitle);
+    try {
+        if (!isFFmpegAvailable()) {
+            result.error = "FFmpeg not found. Required for audio metadata embedding.";
+            return result;
         }
-        if (!m_config.metadataAuthor.empty()) {
-            cmd.push_back("-metadata");
-            cmd.push_back("artist=" + m_config.metadataAuthor);
+
+        auto startTime = std::chrono::steady_clock::now();
+
+        std::string outPath = outputPath.empty() ? generateOutputPath(inputPath) : outputPath;
+        result.outputFile = outPath;
+        result.inputSizeBytes = getFileSize(inputPath);
+
+        LogManager::instance().logWatermark("audio_start", "Starting audio metadata: " + inputPath, inputPath);
+
+        // Build FFmpeg command for metadata-only embedding (no re-encoding)
+        std::string ffmpegPath = getFFmpegPath();
+        std::vector<std::string> cmd = {
+            ffmpegPath.empty() ? "ffmpeg" : ffmpegPath,
+            "-y", "-i", inputPath
+        };
+
+        // Add metadata flags
+        if (m_config.embedMetadata) {
+            if (!m_config.metadataTitle.empty()) {
+                cmd.push_back("-metadata");
+                cmd.push_back("title=" + m_config.metadataTitle);
+            }
+            if (!m_config.metadataAuthor.empty()) {
+                cmd.push_back("-metadata");
+                cmd.push_back("artist=" + m_config.metadataAuthor);
+            }
+            if (!m_config.metadataComment.empty()) {
+                cmd.push_back("-metadata");
+                cmd.push_back("comment=" + m_config.metadataComment);
+            }
+            if (!m_config.metadataKeywords.empty()) {
+                cmd.push_back("-metadata");
+                cmd.push_back("description=" + m_config.metadataKeywords);
+            }
         }
-        if (!m_config.metadataComment.empty()) {
-            cmd.push_back("-metadata");
-            cmd.push_back("comment=" + m_config.metadataComment);
+
+        // If no metadata, just copy the file
+        if (!m_config.embedMetadata &&
+            m_config.metadataTitle.empty() && m_config.metadataAuthor.empty() &&
+            m_config.metadataComment.empty() && m_config.metadataKeywords.empty()) {
+            // Still use FFmpeg to copy — ensures consistent output format
         }
-        if (!m_config.metadataKeywords.empty()) {
-            cmd.push_back("-metadata");
-            cmd.push_back("description=" + m_config.metadataKeywords);
+
+        // Copy all streams without re-encoding
+        cmd.push_back("-codec");
+        cmd.push_back("copy");
+        cmd.push_back(outPath);
+
+        std::string ffmpegOutput, ffmpegErr;
+        int exitCode = runProcess(cmd, ffmpegOutput, ffmpegErr);
+
+        auto endTime = std::chrono::steady_clock::now();
+        result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            endTime - startTime).count();
+
+        if (exitCode == 0 && fileExists(outPath)) {
+            result.success = true;
+            result.outputSizeBytes = getFileSize(outPath);
+            LogManager::instance().logWatermark("audio_complete",
+                "Audio metadata complete: " + outPath + " (" + std::to_string(result.processingTimeMs) + "ms)", inputPath);
+        } else {
+            if (exitCode == 0) {
+                result.error = "FFmpeg succeeded but output file not found: " + outPath;
+            } else {
+                result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+            }
+            LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+                "audio_metadata_failed", "Audio metadata failed: " + inputPath + " - " + result.error, inputPath);
         }
-    }
-
-    // If no metadata, just copy the file
-    if (!m_config.embedMetadata &&
-        m_config.metadataTitle.empty() && m_config.metadataAuthor.empty() &&
-        m_config.metadataComment.empty() && m_config.metadataKeywords.empty()) {
-        // Still use FFmpeg to copy — ensures consistent output format
-    }
-
-    // Copy all streams without re-encoding
-    cmd.push_back("-codec");
-    cmd.push_back("copy");
-    cmd.push_back(outPath);
-
-    std::string ffmpegOutput, ffmpegErr;
-    int exitCode = runProcess(cmd, ffmpegOutput, ffmpegErr);
-
-    auto endTime = std::chrono::steady_clock::now();
-    result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        endTime - startTime).count();
-
-    if (exitCode == 0) {
-        result.success = true;
-        result.outputSizeBytes = getFileSize(outPath);
-        LogManager::instance().logWatermark("audio_complete",
-            "Audio metadata complete: " + outPath + " (" + std::to_string(result.processingTimeMs) + "ms)", inputPath);
-    } else {
-        result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+    } catch (const std::exception& e) {
+        result.error = std::string("Audio metadata failed before processing: ") + e.what();
         LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
-            "audio_metadata_failed", "Audio metadata failed: " + inputPath + " - " + result.error, inputPath);
+            "audio_metadata_exception", result.error, inputPath);
+    } catch (...) {
+        result.error = "Audio metadata failed before processing: unknown error";
+        LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+            "audio_metadata_exception", result.error, inputPath);
     }
 
     return result;
@@ -1243,18 +1461,35 @@ WatermarkResult Watermarker::watermarkFile(const std::string& inputPath,
         WatermarkResult result;
         result.inputFile = inputPath;
         namespace fs = std::filesystem;
-        std::string outPath = outputPath.empty() ? generateOutputPath(inputPath, "") : outputPath;
-        fs::path inputFs = toFsPath(inputPath);
-        fs::path outFs = toFsPath(outPath);
         try {
-            fs::create_directories(outFs.parent_path());
-            fs::copy_file(inputFs, outFs, fs::copy_options::overwrite_existing);
-            result.success = true;
+            std::string outPath = outputPath.empty() ? generateOutputPath(inputPath, "") : outputPath;
             result.outputFile = outPath;
+
+            fs::path inputFs;
+            fs::path outFs;
+            std::string pathError;
+            if (!tryToFsPath(inputPath, inputFs, &pathError)) {
+                throw std::runtime_error(pathError);
+            }
+            if (!tryToFsPath(outPath, outFs, &pathError)) {
+                throw std::runtime_error(pathError);
+            }
+
+            createDirectoriesOrThrow(outFs.parent_path());
+            std::error_code ec;
+            fs::copy_file(inputFs, outFs, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                throw std::runtime_error("Failed to copy passthrough file: " + ec.message());
+            }
+            result.success = true;
             LogManager::instance().logWatermark("passthrough_copy",
                 "Copied passthrough file: " + outPath, inputPath);
-        } catch (const fs::filesystem_error& e) {
+        } catch (const std::exception& e) {
             result.error = std::string("Failed to copy passthrough file: ") + e.what();
+            LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
+                "passthrough_failed", result.error, inputPath);
+        } catch (...) {
+            result.error = "Failed to copy passthrough file: unknown error";
             LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
                 "passthrough_failed", result.error, inputPath);
         }
@@ -1278,8 +1513,16 @@ std::vector<WatermarkResult> Watermarker::watermarkVideoBatch(
             reportProgress(inputPaths[i], i + 1, inputPaths.size(),
                           (double)i / inputPaths.size() * 100.0, "encoding");
 
-            std::string outPath = generateOutputPath(inputPaths[i], outputDir);
-            results.push_back(executeFFmpeg(inputPaths[i], outPath));
+            try {
+                std::string outPath = generateOutputPath(inputPaths[i], outputDir);
+                results.push_back(executeFFmpeg(inputPaths[i], outPath));
+            } catch (const std::exception& e) {
+                results.push_back(failedWatermarkResult(
+                    inputPaths[i], "", std::string("Video batch path failed: ") + e.what()));
+            } catch (...) {
+                results.push_back(failedWatermarkResult(
+                    inputPaths[i], "", "Video batch path failed: unknown error"));
+            }
         }
     } else {
         // Parallel processing using std::async
@@ -1289,19 +1532,43 @@ std::vector<WatermarkResult> Watermarker::watermarkVideoBatch(
             if (futures.size() >= static_cast<size_t>(parallel)) {
                 // Wait for one to complete
                 auto& f = futures.front();
-                results.push_back(f.get());
+                try {
+                    results.push_back(f.get());
+                } catch (const std::exception& e) {
+                    results.push_back(failedWatermarkResult(
+                        "", "", std::string("Video batch worker failed: ") + e.what()));
+                } catch (...) {
+                    results.push_back(failedWatermarkResult(
+                        "", "", "Video batch worker failed: unknown error"));
+                }
                 futures.erase(futures.begin());
             }
 
-            std::string outPath = generateOutputPath(inputPaths[i], outputDir);
-            futures.push_back(std::async(std::launch::async, [this, &inputPaths, i, outPath]() {
-                return executeFFmpeg(inputPaths[i], outPath);
-            }));
+            try {
+                std::string outPath = generateOutputPath(inputPaths[i], outputDir);
+                futures.push_back(std::async(std::launch::async, [this, &inputPaths, i, outPath]() {
+                    return executeFFmpeg(inputPaths[i], outPath);
+                }));
+            } catch (const std::exception& e) {
+                results.push_back(failedWatermarkResult(
+                    inputPaths[i], "", std::string("Video batch path failed: ") + e.what()));
+            } catch (...) {
+                results.push_back(failedWatermarkResult(
+                    inputPaths[i], "", "Video batch path failed: unknown error"));
+            }
         }
 
         // Wait for remaining
         for (auto& f : futures) {
-            results.push_back(f.get());
+            try {
+                results.push_back(f.get());
+            } catch (const std::exception& e) {
+                results.push_back(failedWatermarkResult(
+                    "", "", std::string("Video batch worker failed: ") + e.what()));
+            } catch (...) {
+                results.push_back(failedWatermarkResult(
+                    "", "", "Video batch worker failed: unknown error"));
+            }
         }
     }
 
@@ -1323,8 +1590,16 @@ std::vector<WatermarkResult> Watermarker::watermarkPdfBatch(
         reportProgress(inputPaths[i], i + 1, inputPaths.size(),
                       (double)i / inputPaths.size() * 100.0, "processing");
 
-        std::string outPath = generateOutputPath(inputPaths[i], outputDir);
-        results.push_back(executePdfScript(inputPaths[i], outPath));
+        try {
+            std::string outPath = generateOutputPath(inputPaths[i], outputDir);
+            results.push_back(executePdfScript(inputPaths[i], outPath));
+        } catch (const std::exception& e) {
+            results.push_back(failedWatermarkResult(
+                inputPaths[i], "", std::string("PDF batch path failed: ") + e.what()));
+        } catch (...) {
+            results.push_back(failedWatermarkResult(
+                inputPaths[i], "", "PDF batch path failed: unknown error"));
+        }
     }
 
     reportProgress("", inputPaths.size(), inputPaths.size(), 100.0, "complete");
@@ -1344,19 +1619,27 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
     // Scan directory for supported files using std::filesystem (cross-platform)
     namespace fs = std::filesystem;
     try {
+        fs::path scanRoot;
+        std::string pathError;
+        if (!tryToFsPath(inputDir, scanRoot, &pathError)) {
+            throw std::runtime_error(pathError);
+        }
+
         if (recursive) {
-            for (const auto& entry : fs::recursive_directory_iterator(inputDir)) {
-                if (entry.is_regular_file()) {
-                    std::string p = entry.path().string();
+            for (const auto& entry : fs::recursive_directory_iterator(scanRoot)) {
+                std::error_code ec;
+                if (entry.is_regular_file(ec) && !ec) {
+                    std::string p = fromFsPath(entry.path());
                     if (isVideoFile(p)) videoFiles.push_back(p);
                     else if (isPdfFile(p)) pdfFiles.push_back(p);
                     else if (isAudioFile(p)) audioFiles.push_back(p);
                 }
             }
         } else {
-            for (const auto& entry : fs::directory_iterator(inputDir)) {
-                if (entry.is_regular_file()) {
-                    std::string p = entry.path().string();
+            for (const auto& entry : fs::directory_iterator(scanRoot)) {
+                std::error_code ec;
+                if (entry.is_regular_file(ec) && !ec) {
+                    std::string p = fromFsPath(entry.path());
                     if (isVideoFile(p)) videoFiles.push_back(p);
                     else if (isPdfFile(p)) pdfFiles.push_back(p);
                     else if (isAudioFile(p)) audioFiles.push_back(p);
@@ -1387,8 +1670,16 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
         for (size_t i = 0; i < audioFiles.size() && !m_cancelled; ++i) {
             reportProgress(audioFiles[i], i + 1, audioFiles.size(),
                           (double)i / audioFiles.size() * 100.0, "processing");
-            std::string outPath = generateOutputPath(audioFiles[i], outputDir);
-            results.push_back(watermarkAudio(audioFiles[i], outPath));
+            try {
+                std::string outPath = generateOutputPath(audioFiles[i], outputDir);
+                results.push_back(watermarkAudio(audioFiles[i], outPath));
+            } catch (const std::exception& e) {
+                results.push_back(failedWatermarkResult(
+                    audioFiles[i], "", std::string("Audio directory path failed: ") + e.what()));
+            } catch (...) {
+                results.push_back(failedWatermarkResult(
+                    audioFiles[i], "", "Audio directory path failed: unknown error"));
+            }
         }
     }
 
