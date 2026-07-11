@@ -14,6 +14,8 @@
 #include <future>
 #include <filesystem>
 #include <stdexcept>
+#include <functional>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -143,6 +145,229 @@ FILE* utf8Popen(const std::string& cmd, const char* mode) {
     return popen(cmd.c_str(), mode);
 #endif
 }
+
+#ifdef _WIN32
+std::wstring utf8ToWideString(const std::string& input) {
+    if (input.empty()) {
+        return std::wstring();
+    }
+
+    int wlen = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, input.data(), static_cast<int>(input.size()), nullptr, 0);
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    if (wlen <= 0) {
+        flags = 0;
+        wlen = MultiByteToWideChar(
+            CP_UTF8, flags, input.data(), static_cast<int>(input.size()), nullptr, 0);
+    }
+    if (wlen <= 0) {
+        throw std::runtime_error("Failed to convert process argument from UTF-8 to UTF-16");
+    }
+
+    std::wstring output(static_cast<size_t>(wlen), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, flags, input.data(), static_cast<int>(input.size()), output.data(), wlen);
+    return output;
+}
+
+std::string wideToUtf8String(const std::wstring& input) {
+    if (input.empty()) {
+        return std::string();
+    }
+
+    int len = WideCharToMultiByte(
+        CP_UTF8, 0, input.data(), static_cast<int>(input.size()), nullptr, 0, nullptr, nullptr);
+    if (len <= 0) {
+        return std::string();
+    }
+
+    std::string output(static_cast<size_t>(len), '\0');
+    WideCharToMultiByte(
+        CP_UTF8, 0, input.data(), static_cast<int>(input.size()), output.data(), len, nullptr, nullptr);
+    return output;
+}
+
+std::string windowsErrorMessage(DWORD errorCode) {
+    LPWSTR rawMessage = nullptr;
+    DWORD length = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        errorCode,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        reinterpret_cast<LPWSTR>(&rawMessage),
+        0,
+        nullptr);
+
+    std::wstring message;
+    if (length > 0 && rawMessage) {
+        message.assign(rawMessage, rawMessage + length);
+        LocalFree(rawMessage);
+    } else {
+        message = L"Windows error " + std::to_wstring(errorCode);
+    }
+
+    while (!message.empty() && (message.back() == L'\n' || message.back() == L'\r' || message.back() == L' ')) {
+        message.pop_back();
+    }
+    return wideToUtf8String(message);
+}
+
+std::wstring quoteWindowsProcessArg(const std::wstring& arg) {
+    if (arg.empty()) {
+        return L"\"\"";
+    }
+
+    if (arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+        return arg;
+    }
+
+    std::wstring quoted = L"\"";
+    size_t backslashCount = 0;
+    for (wchar_t ch : arg) {
+        if (ch == L'\\') {
+            ++backslashCount;
+        } else if (ch == L'"') {
+            quoted.append(backslashCount * 2 + 1, L'\\');
+            quoted.push_back(ch);
+            backslashCount = 0;
+        } else {
+            quoted.append(backslashCount, L'\\');
+            backslashCount = 0;
+            quoted.push_back(ch);
+        }
+    }
+
+    quoted.append(backslashCount * 2, L'\\');
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+std::wstring buildWindowsProcessCommandLine(const std::vector<std::string>& args) {
+    std::wstring commandLine;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i > 0) {
+            commandLine.push_back(L' ');
+        }
+        commandLine += quoteWindowsProcessArg(utf8ToWideString(args[i]));
+    }
+    return commandLine;
+}
+
+int runWindowsProcessCapture(const std::vector<std::string>& args,
+                             const std::function<void(const char*, size_t)>& onOutput,
+                             std::string& errorOutput) {
+    if (args.empty()) {
+        errorOutput = "No process arguments provided";
+        return -1;
+    }
+
+    SECURITY_ATTRIBUTES securityAttributes;
+    ZeroMemory(&securityAttributes, sizeof(securityAttributes));
+    securityAttributes.nLength = sizeof(securityAttributes);
+    securityAttributes.bInheritHandle = TRUE;
+
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (!CreatePipe(&readPipe, &writePipe, &securityAttributes, 0)) {
+        errorOutput = "CreatePipe failed: " + windowsErrorMessage(GetLastError());
+        return -1;
+    }
+
+    if (!SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0)) {
+        DWORD err = GetLastError();
+        CloseHandle(readPipe);
+        CloseHandle(writePipe);
+        errorOutput = "SetHandleInformation failed: " + windowsErrorMessage(err);
+        return -1;
+    }
+
+    HANDLE nulInput = CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &securityAttributes,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (nulInput == INVALID_HANDLE_VALUE) {
+        nulInput = nullptr;
+    }
+
+    STARTUPINFOW startupInfo;
+    ZeroMemory(&startupInfo, sizeof(startupInfo));
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startupInfo.hStdInput = nulInput;
+    startupInfo.hStdOutput = writePipe;
+    startupInfo.hStdError = writePipe;
+
+    PROCESS_INFORMATION processInfo;
+    ZeroMemory(&processInfo, sizeof(processInfo));
+
+    std::wstring commandLine;
+    try {
+        commandLine = buildWindowsProcessCommandLine(args);
+    } catch (const std::exception& e) {
+        CloseHandle(readPipe);
+        CloseHandle(writePipe);
+        if (nulInput) {
+            CloseHandle(nulInput);
+        }
+        errorOutput = e.what();
+        return -1;
+    }
+
+    std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
+    mutableCommandLine.push_back(L'\0');
+
+    BOOL created = CreateProcessW(
+        nullptr,
+        mutableCommandLine.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        CREATE_NO_WINDOW,
+        nullptr,
+        nullptr,
+        &startupInfo,
+        &processInfo);
+
+    DWORD createError = GetLastError();
+    CloseHandle(writePipe);
+    if (nulInput) {
+        CloseHandle(nulInput);
+    }
+
+    if (!created) {
+        CloseHandle(readPipe);
+        errorOutput = "CreateProcessW failed for " + args.front() + ": " + windowsErrorMessage(createError);
+        return -1;
+    }
+
+    std::array<char, 4096> buffer;
+    DWORD bytesRead = 0;
+    while (ReadFile(readPipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) &&
+           bytesRead > 0) {
+        if (onOutput) {
+            onOutput(buffer.data(), static_cast<size_t>(bytesRead));
+        }
+    }
+
+    WaitForSingleObject(processInfo.hProcess, INFINITE);
+
+    DWORD exitCode = 0;
+    if (!GetExitCodeProcess(processInfo.hProcess, &exitCode)) {
+        errorOutput = "GetExitCodeProcess failed: " + windowsErrorMessage(GetLastError());
+        exitCode = static_cast<DWORD>(-1);
+    }
+
+    CloseHandle(readPipe);
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+
+    return static_cast<int>(exitCode);
+}
+#endif
 
 // Check if a file exists (use std::filesystem for Unicode path support on Windows)
 bool fileExists(const std::string& path) {
@@ -291,6 +516,25 @@ WatermarkResult failedWatermarkResult(const std::string& input,
     result.outputFile = output;
     result.error = error;
     return result;
+}
+
+std::string summarizeProcessOutput(std::string output) {
+    output.erase(std::remove(output.begin(), output.end(), '\0'), output.end());
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
+        output.pop_back();
+    }
+
+    if (output.empty()) {
+        return "No process output was captured.";
+    }
+
+    constexpr size_t kMaxErrorChars = 6000;
+    if (output.size() <= kMaxErrorChars) {
+        return output;
+    }
+
+    return "[showing last " + std::to_string(kMaxErrorChars) + " chars]\n" +
+           output.substr(output.size() - kMaxErrorChars);
 }
 } // anonymous namespace
 
@@ -739,6 +983,18 @@ std::vector<std::string> Watermarker::buildFFmpegCommand(const std::string& inpu
 int Watermarker::runProcess(const std::vector<std::string>& args,
                             std::string& stdout_output,
                             std::string& stderr_output) {
+#ifdef _WIN32
+    int exitCode = runWindowsProcessCapture(
+        args,
+        [&stdout_output](const char* data, size_t size) {
+            stdout_output.append(data, size);
+        },
+        stderr_output);
+    if (exitCode != 0 && stdout_output.empty() && !stderr_output.empty()) {
+        stdout_output = stderr_output;
+    }
+    return exitCode;
+#else
     // Build command string for shell execution with proper escaping
     std::ostringstream cmdStream;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -748,13 +1004,7 @@ int Watermarker::runProcess(const std::vector<std::string>& args,
     }
     cmdStream << " 2>&1";
 
-    // On Windows, wrap the entire command in outer quotes so cmd.exe /c
-    // passes inner quoted paths verbatim (cmd.exe Rule 2 workaround).
-#ifdef _WIN32
-    std::string cmd = "\"" + cmdStream.str() + "\"";
-#else
     std::string cmd = cmdStream.str();
-#endif
 
     FILE* pipe = utf8Popen(cmd, "r");
     if (!pipe) {
@@ -769,6 +1019,7 @@ int Watermarker::runProcess(const std::vector<std::string>& args,
 
     int status = pclose(pipe);
     return WEXITSTATUS(status);
+#endif
 }
 
 double Watermarker::getVideoDuration(const std::string& inputPath) {
@@ -783,36 +1034,81 @@ double Watermarker::getVideoDuration(const std::string& inputPath) {
         }
     }
 
-    // Use ffprobe to get video duration
-    std::string cmd = shellEscape(ffprobePath) + " -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ";
-    cmd += shellEscape(inputPath);
-#ifdef _WIN32
-    cmd += " 2>nul";
-    // Outer-quote wrapping for cmd.exe Rule 2 workaround
-    cmd = "\"" + cmd + "\"";
-#else
-    cmd += " 2>/dev/null";
-#endif
+    std::vector<std::string> cmd = {
+        ffprobePath,
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        inputPath
+    };
 
-    FILE* pipe = utf8Popen(cmd, "r");
-    if (!pipe) {
+    std::string output, errorOutput;
+    int exitCode = runProcess(cmd, output, errorOutput);
+    if (exitCode != 0 || output.empty()) {
         return 0.0;
     }
 
-    char buffer[64];
-    double duration = 0.0;
-    if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        duration = std::strtod(buffer, nullptr);
-    }
-    pclose(pipe);
-
-    return duration;
+    return std::strtod(output.c_str(), nullptr);
 }
 
 int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
                                         const std::string& inputFile,
                                         double durationSeconds,
                                         std::string& output) {
+#ifdef _WIN32
+    double lastPercent = 0.0;
+    std::string line;
+
+    auto flushLine = [&]() {
+        if (line.empty()) {
+            return;
+        }
+
+        output += line + "\n";
+
+        // Parse ffmpeg time progress from output like: "time=00:01:23.45"
+        size_t timePos = line.find("time=");
+        if (timePos != std::string::npos && durationSeconds > 0) {
+            std::string timeStr = line.substr(timePos + 5);
+            int hours = 0, minutes = 0;
+            double seconds = 0.0;
+            if (sscanf(timeStr.c_str(), "%d:%d:%lf", &hours, &minutes, &seconds) >= 1) {
+                double currentTime = hours * 3600.0 + minutes * 60.0 + seconds;
+                double percent = (currentTime / durationSeconds) * 100.0;
+                percent = std::min(percent, 99.0);
+
+                if (percent - lastPercent >= 1.0) {
+                    lastPercent = percent;
+                    reportProgress(inputFile, 1, 1, percent, "encoding");
+                }
+            }
+        }
+
+        line.clear();
+    };
+
+    std::string processError;
+    int exitCode = runWindowsProcessCapture(
+        args,
+        [&](const char* data, size_t size) {
+            for (size_t i = 0; i < size; ++i) {
+                char ch = data[i];
+                if (ch == '\r' || ch == '\n') {
+                    flushLine();
+                } else {
+                    line += ch;
+                }
+            }
+        },
+        processError);
+    flushLine();
+
+    if (exitCode != 0 && output.empty() && !processError.empty()) {
+        output = processError;
+    }
+
+    return exitCode;
+#else
     // Build command string
     std::ostringstream cmdStream;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -821,11 +1117,7 @@ int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
     }
     cmdStream << " 2>&1";
 
-#ifdef _WIN32
-    std::string cmd = "\"" + cmdStream.str() + "\"";
-#else
     std::string cmd = cmdStream.str();
-#endif
 
     FILE* pipe = utf8Popen(cmd, "r");
     if (!pipe) {
@@ -874,6 +1166,7 @@ int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
 
     int status = pclose(pipe);
     return WEXITSTATUS(status);
+#endif
 }
 
 WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
@@ -947,7 +1240,8 @@ WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
             "Video watermark complete: " + output + " (" + std::to_string(result.processingTimeMs) + "ms)", input);
     } else {
         if (exitCode != 0) {
-            result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+            result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " +
+                           summarizeProcessOutput(ffmpegOutput);
         } else {
             result.error = "FFmpeg succeeded but output file not found: " + output;
             if (!pathError.empty()) {
@@ -1430,7 +1724,8 @@ WatermarkResult Watermarker::watermarkAudio(const std::string& inputPath,
             if (exitCode == 0) {
                 result.error = "FFmpeg succeeded but output file not found: " + outPath;
             } else {
-                result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " + ffmpegOutput;
+                result.error = "FFmpeg failed (exit code " + std::to_string(exitCode) + "): " +
+                               summarizeProcessOutput(ffmpegOutput);
             }
             LogManager::instance().log(LogLevel::Error, LogCategory::Watermark,
                 "audio_metadata_failed", "Audio metadata failed: " + inputPath + " - " + result.error, inputPath);
