@@ -45,6 +45,9 @@ private slots:
     void onResetDefaults();
     void onPreviewWatermark();
     void onCheckDependencies();
+    void onBrowseSegmentCache();
+    void onClearSegmentCache();
+    void refreshSegmentCacheStatus();
     void updatePreview();
 
 private:
@@ -73,6 +76,13 @@ private:
     QComboBox* m_presetCombo;
     QSpinBox* m_crfSpin;
     QCheckBox* m_copyAudioCheck;
+    QCheckBox* m_fastSegmentedCheck;
+    QLineEdit* m_segmentCacheDirEdit;
+    QPushButton* m_browseSegmentCacheBtn;
+    QSpinBox* m_segmentCacheMaxGiBSpin;
+    QSpinBox* m_segmentCacheMaxAgeDaysSpin;
+    QLabel* m_segmentCacheStatusLabel;
+    QPushButton* m_clearSegmentCacheBtn;
 
     // === PDF Settings Tab ===
     QDoubleSpinBox* m_pdfOpacitySpin;

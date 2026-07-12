@@ -32,6 +32,10 @@ struct QtWatermarkConfig {
     int crf = 23;
     bool copyAudio = true;
     bool fastSegmentedEncode = false;
+    QString segmentCacheDirectory;
+    QString segmentCacheOutputRoot;
+    qint64 segmentCacheMaxBytes = 100LL * 1024LL * 1024LL * 1024LL;
+    int segmentCacheMaxAgeDays = 30;
     double pdfOpacity = 0.3;
     int pdfAngle = 45;
     double pdfCoverage = 0.5;
@@ -56,6 +60,9 @@ struct QtWatermarkResult {
     qint64 processingTimeMs = 0;
     qint64 inputSizeBytes = 0;
     qint64 outputSizeBytes = 0;
+    QString processingMode;
+    QString diagnostic;
+    bool segmentCacheHit = false;
 };
 
 /**

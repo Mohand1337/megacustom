@@ -13,8 +13,19 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QScrollArea>
+#include <QDir>
 
 namespace MegaCustom {
+
+static QString formatCacheBytes(qint64 bytes) {
+    if (bytes < 1024LL * 1024LL) {
+        return QString::number(bytes / 1024.0, 'f', 1) + " KB";
+    }
+    if (bytes < 1024LL * 1024LL * 1024LL) {
+        return QString::number(bytes / (1024.0 * 1024.0), 'f', 1) + " MB";
+    }
+    return QString::number(bytes / (1024.0 * 1024.0 * 1024.0), 'f', 1) + " GB";
+}
 
 WatermarkSettingsDialog::WatermarkSettingsDialog(QWidget* parent)
     : QDialog(parent)
@@ -183,7 +194,57 @@ void WatermarkSettingsDialog::setupUI() {
     m_copyAudioCheck->setToolTip("Faster and preserves original audio quality");
     encodingForm->addRow("", m_copyAudioCheck);
 
+    m_fastSegmentedCheck = new QCheckBox("Use shared fast-segment cache when compatible");
+    m_fastSegmentedCheck->setToolTip(
+        "Encodes only watermark windows for compatible MP4/H.264/AAC videos. "
+        "Other media automatically uses the standard full encode.");
+    encodingForm->addRow("", m_fastSegmentedCheck);
+
     videoLayout->addWidget(encodingGroup);
+
+    QGroupBox* cacheGroup = new QGroupBox("Shared Clean-Segment Cache");
+    QFormLayout* cacheForm = new QFormLayout(cacheGroup);
+
+    QHBoxLayout* cachePathRow = new QHBoxLayout();
+    m_segmentCacheDirEdit = new QLineEdit();
+    m_segmentCacheDirEdit->setPlaceholderText(
+        QString::fromStdString(Watermarker::getDefaultSegmentCacheDirectory()));
+    m_segmentCacheDirEdit->setToolTip(
+        "Leave empty to use the private per-user cache. Choose a fast local SSD when overriding it.");
+    cachePathRow->addWidget(m_segmentCacheDirEdit);
+    m_browseSegmentCacheBtn = ButtonFactory::createSecondary("Browse...", this);
+    connect(m_browseSegmentCacheBtn, &QPushButton::clicked,
+            this, &WatermarkSettingsDialog::onBrowseSegmentCache);
+    cachePathRow->addWidget(m_browseSegmentCacheBtn);
+    cacheForm->addRow("Cache folder:", cachePathRow);
+
+    m_segmentCacheMaxGiBSpin = new QSpinBox();
+    m_segmentCacheMaxGiBSpin->setRange(1, 2048);
+    m_segmentCacheMaxGiBSpin->setValue(100);
+    m_segmentCacheMaxGiBSpin->setSuffix(" GB");
+    m_segmentCacheMaxGiBSpin->setToolTip(
+        "Soft limit applied before the next watermark job. A running multi-member job may temporarily exceed it.");
+    cacheForm->addRow("Maximum size:", m_segmentCacheMaxGiBSpin);
+
+    m_segmentCacheMaxAgeDaysSpin = new QSpinBox();
+    m_segmentCacheMaxAgeDaysSpin->setRange(1, 365);
+    m_segmentCacheMaxAgeDaysSpin->setValue(30);
+    m_segmentCacheMaxAgeDaysSpin->setSuffix(" days");
+    cacheForm->addRow("Keep unused entries:", m_segmentCacheMaxAgeDaysSpin);
+
+    QHBoxLayout* cacheStatusRow = new QHBoxLayout();
+    m_segmentCacheStatusLabel = new QLabel("Checking...");
+    m_segmentCacheStatusLabel->setWordWrap(true);
+    cacheStatusRow->addWidget(m_segmentCacheStatusLabel, 1);
+    m_clearSegmentCacheBtn = ButtonFactory::createOutline("Clear Cache", this);
+    connect(m_clearSegmentCacheBtn, &QPushButton::clicked,
+            this, &WatermarkSettingsDialog::onClearSegmentCache);
+    cacheStatusRow->addWidget(m_clearSegmentCacheBtn);
+    cacheForm->addRow("Current cache:", cacheStatusRow);
+
+    connect(m_segmentCacheDirEdit, &QLineEdit::editingFinished,
+            this, &WatermarkSettingsDialog::refreshSegmentCacheStatus);
+    videoLayout->addWidget(cacheGroup);
     videoLayout->addStretch();
 
     m_tabWidget->addTab(videoTab, "Video");
@@ -363,6 +424,11 @@ WatermarkConfig WatermarkSettingsDialog::getConfig() const {
     config.preset = m_presetCombo->currentText().toStdString();
     config.crf = m_crfSpin->value();
     config.copyAudio = m_copyAudioCheck->isChecked();
+    config.fastSegmentedEncode = m_fastSegmentedCheck->isChecked();
+    config.segmentCacheDirectory = m_segmentCacheDirEdit->text().trimmed().toStdString();
+    config.segmentCacheMaxBytes = static_cast<int64_t>(m_segmentCacheMaxGiBSpin->value())
+        * 1024LL * 1024LL * 1024LL;
+    config.segmentCacheMaxAgeDays = m_segmentCacheMaxAgeDaysSpin->value();
 
     // PDF
     config.pdfOpacity = m_pdfOpacitySpin->value();
@@ -396,6 +462,12 @@ void WatermarkSettingsDialog::loadConfig(const WatermarkConfig& config) {
     m_presetCombo->setCurrentText(QString::fromStdString(config.preset));
     m_crfSpin->setValue(config.crf);
     m_copyAudioCheck->setChecked(config.copyAudio);
+    m_fastSegmentedCheck->setChecked(config.fastSegmentedEncode);
+    m_segmentCacheDirEdit->setText(QString::fromStdString(config.segmentCacheDirectory));
+    const qint64 cacheGiB = qMax<qint64>(1, config.segmentCacheMaxBytes / (1024LL * 1024LL * 1024LL));
+    m_segmentCacheMaxGiBSpin->setValue(static_cast<int>(qMin<qint64>(2048, cacheGiB)));
+    m_segmentCacheMaxAgeDaysSpin->setValue(config.segmentCacheMaxAgeDays);
+    refreshSegmentCacheStatus();
 
     // PDF
     m_pdfOpacitySpin->setValue(config.pdfOpacity);
@@ -431,6 +503,10 @@ void WatermarkSettingsDialog::saveToSettings() {
     settings.setValue("preset", m_presetCombo->currentText());
     settings.setValue("crf", m_crfSpin->value());
     settings.setValue("copyAudio", m_copyAudioCheck->isChecked());
+    settings.setValue("fastSegmentedEncode", m_fastSegmentedCheck->isChecked());
+    settings.setValue("segmentCacheDirectory", m_segmentCacheDirEdit->text().trimmed());
+    settings.setValue("segmentCacheMaxGiB", m_segmentCacheMaxGiBSpin->value());
+    settings.setValue("segmentCacheMaxAgeDays", m_segmentCacheMaxAgeDaysSpin->value());
 
     // PDF
     settings.setValue("pdfOpacity", m_pdfOpacitySpin->value());
@@ -468,6 +544,10 @@ void WatermarkSettingsDialog::loadFromSettings() {
     m_presetCombo->setCurrentText(settings.value("preset", "ultrafast").toString());
     m_crfSpin->setValue(settings.value("crf", 23).toInt());
     m_copyAudioCheck->setChecked(settings.value("copyAudio", true).toBool());
+    m_fastSegmentedCheck->setChecked(settings.value("fastSegmentedEncode", false).toBool());
+    m_segmentCacheDirEdit->setText(settings.value("segmentCacheDirectory").toString());
+    m_segmentCacheMaxGiBSpin->setValue(settings.value("segmentCacheMaxGiB", 100).toInt());
+    m_segmentCacheMaxAgeDaysSpin->setValue(settings.value("segmentCacheMaxAgeDays", 30).toInt());
 
     // PDF
     m_pdfOpacitySpin->setValue(settings.value("pdfOpacity", 0.3).toDouble());
@@ -480,6 +560,7 @@ void WatermarkSettingsDialog::loadFromSettings() {
     m_overwriteCheck->setChecked(settings.value("overwrite", true).toBool());
 
     settings.endGroup();
+    refreshSegmentCacheStatus();
 }
 
 void WatermarkSettingsDialog::onBrowseFont() {
@@ -491,6 +572,57 @@ void WatermarkSettingsDialog::onBrowseFont() {
     if (!fontPath.isEmpty()) {
         m_fontPathEdit->setText(fontPath);
     }
+}
+
+void WatermarkSettingsDialog::onBrowseSegmentCache() {
+    QString initial = m_segmentCacheDirEdit->text().trimmed();
+    if (initial.isEmpty()) {
+        initial = QString::fromStdString(Watermarker::getDefaultSegmentCacheDirectory());
+    }
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, "Select Shared Segment Cache", initial,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (!directory.isEmpty()) {
+        m_segmentCacheDirEdit->setText(QDir::cleanPath(directory));
+        refreshSegmentCacheStatus();
+    }
+}
+
+void WatermarkSettingsDialog::onClearSegmentCache() {
+    const int reply = QMessageBox::question(
+        this,
+        "Clear Segment Cache",
+        "Delete all cached clean video segments? Future member runs will rebuild them from the source videos.",
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    std::string error;
+    if (!Watermarker::clearSegmentCache(m_segmentCacheDirEdit->text().trimmed().toStdString(), error)) {
+        QMessageBox::warning(this, "Cache In Use",
+            QString::fromStdString(error.empty() ? "The segment cache could not be cleared." : error));
+    }
+    refreshSegmentCacheStatus();
+}
+
+void WatermarkSettingsDialog::refreshSegmentCacheStatus() {
+    const SegmentCacheStats stats = Watermarker::getSegmentCacheStats(
+        m_segmentCacheDirEdit->text().trimmed().toStdString());
+    if (!stats.error.empty()) {
+        m_segmentCacheStatusLabel->setText("Unavailable: " + QString::fromStdString(stats.error));
+        return;
+    }
+
+    m_segmentCacheStatusLabel->setText(QString("%1 across %2 reusable source %3%4")
+        .arg(formatCacheBytes(stats.sizeBytes))
+        .arg(stats.entryCount)
+        .arg(stats.entryCount == 1 ? "entry" : "entries")
+        .arg(stats.incompleteEntryCount > 0
+            ? QString("; %1 incomplete").arg(stats.incompleteEntryCount)
+            : QString()));
+    m_segmentCacheStatusLabel->setToolTip(QString::fromStdString(stats.directory));
 }
 
 void WatermarkSettingsDialog::onResetDefaults() {

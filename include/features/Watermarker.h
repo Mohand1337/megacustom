@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <future>
 #include <atomic>
+#include <mutex>
 
 namespace MegaCustom {
 
@@ -36,6 +37,10 @@ struct WatermarkConfig {
     int crf = 23;                      // Quality (18-28, lower = better)
     bool copyAudio = true;             // Copy audio stream without re-encoding
     bool fastSegmentedEncode = false;  // Encode only watermark windows when safe; fallback otherwise
+    std::string segmentCacheDirectory; // Empty = per-user application cache
+    std::string segmentCacheOutputRoot; // Output-tree boundary used to prevent cache leakage
+    int64_t segmentCacheMaxBytes = 100LL * 1024LL * 1024LL * 1024LL;
+    int segmentCacheMaxAgeDays = 30;
 
     // PDF-specific
     double pdfOpacity = 0.3;           // Watermark opacity (0.0-1.0)
@@ -66,6 +71,22 @@ struct WatermarkResult {
     int64_t processingTimeMs = 0;
     int64_t inputSizeBytes = 0;
     int64_t outputSizeBytes = 0;
+    std::string processingMode;  // e.g. fast_segment_cache_hit, fast_segment_cache_build, full_encode
+    std::string diagnostic;      // Non-fatal optimization/fallback details
+    bool segmentCacheHit = false;
+    double sourceDurationSeconds = 0.0;
+    double encodedDurationSeconds = 0.0;
+};
+
+/**
+ * Summary of the reusable clean-segment cache.
+ */
+struct SegmentCacheStats {
+    std::string directory;
+    int64_t sizeBytes = 0;
+    int entryCount = 0;
+    int incompleteEntryCount = 0;
+    std::string error;
 };
 
 /**
@@ -129,6 +150,14 @@ public:
      * Get path to bundled PDF watermark script
      */
     static std::string getPdfScriptPath();
+
+    /**
+     * Get, inspect, or clear the reusable clean-segment cache.
+     * An empty directory argument selects the per-user default cache.
+     */
+    static std::string getDefaultSegmentCacheDirectory();
+    static SegmentCacheStats getSegmentCacheStats(const std::string& directory = "");
+    static bool clearSegmentCache(const std::string& directory, std::string& error);
 
     // ==================== Video Watermarking ====================
 
@@ -265,14 +294,16 @@ private:
     WatermarkConfig m_config;
     WatermarkProgressCallback m_progressCallback;
     std::atomic<bool> m_cancelled{false};
-    mutable std::string m_filterScriptPath;  // Temp file for Windows filter_script
+    std::atomic<bool> m_segmentCacheMaintenanceDone{false};
+    std::mutex m_segmentCacheMaintenanceMutex;
 
     // Build FFmpeg filter string for video watermark
     std::string buildFFmpegFilter() const;
 
     // Build FFmpeg command line
     std::vector<std::string> buildFFmpegCommand(const std::string& input,
-                                                 const std::string& output) const;
+                                                 const std::string& output,
+                                                 std::string* filterScriptPath = nullptr) const;
 
     // Execute FFmpeg command
     WatermarkResult executeFFmpeg(const std::string& input,

@@ -2356,6 +2356,8 @@ int handleWatermark(const std::vector<std::string>& args) {
         std::cout << "  member <input> <member-id> [dir]    Watermark for specific member\n";
         std::cout << "  all-members <input> [output-dir]    Watermark for all members\n";
         std::cout << "  check                               Check FFmpeg/Python availability\n";
+        std::cout << "  cache-status                        Show shared segment-cache usage\n";
+        std::cout << "  cache-clear                         Clear the shared segment cache\n";
         std::cout << "\nOptions:\n";
         std::cout << "  --text <text>                       Primary watermark text\n";
         std::cout << "  --secondary <text>                  Secondary line text\n";
@@ -2365,6 +2367,9 @@ int handleWatermark(const std::vector<std::string>& args) {
         std::cout << "  --preset <preset>                   FFmpeg preset (ultrafast/fast/medium)\n";
         std::cout << "  --crf <value>                       Quality 18-28 (default: 23)\n";
         std::cout << "  --fast-segments                     Try cached segmented video encoding with fallback\n";
+        std::cout << "  --cache-dir <path>                  Override the per-user shared segment cache\n";
+        std::cout << "  --cache-max-gb <n>                  Soft cache limit (default: 100)\n";
+        std::cout << "  --cache-days <n>                    Remove entries unused this many days (default: 30)\n";
         std::cout << "  --opacity <value>                   PDF opacity 0.0-1.0 (default: 0.3)\n";
         std::cout << "  --coverage <value>                  PDF page coverage 0.0-1.0 (default: 0.5)\n";
         std::cout << "  --parallel <n>                      Parallel jobs for batch (default: 1)\n";
@@ -2399,6 +2404,37 @@ int handleWatermark(const std::vector<std::string>& args) {
         }
 
         return (ffmpegOk && pythonOk) ? 0 : 1;
+    }
+
+    if (args[0] == "cache-status" || args[0] == "cache-clear") {
+        std::string cacheDir;
+        for (size_t i = 0; i + 1 < args.size(); ++i) {
+            if (args[i] == "--cache-dir") {
+                cacheDir = args[i + 1];
+                break;
+            }
+        }
+
+        if (args[0] == "cache-clear") {
+            std::string error;
+            if (!MegaCustom::Watermarker::clearSegmentCache(cacheDir, error)) {
+                std::cerr << "Could not clear segment cache: " << error << "\n";
+                return 1;
+            }
+            std::cout << "Segment cache cleared.\n";
+            return 0;
+        }
+
+        const auto stats = MegaCustom::Watermarker::getSegmentCacheStats(cacheDir);
+        if (!stats.error.empty()) {
+            std::cerr << "Could not inspect segment cache: " << stats.error << "\n";
+            return 1;
+        }
+        std::cout << "Segment cache: " << stats.directory << "\n";
+        std::cout << "Reusable sources: " << stats.entryCount << "\n";
+        std::cout << "Incomplete entries: " << stats.incompleteEntryCount << "\n";
+        std::cout << "Size: " << stats.sizeBytes << " bytes\n";
+        return 0;
     }
 
     MegaCustom::Watermarker watermarker;
@@ -2446,6 +2482,10 @@ int handleWatermark(const std::vector<std::string>& args) {
     config.durationSeconds = getIntOption("--duration", 3);
     config.crf = getIntOption("--crf", 23);
     config.fastSegmentedEncode = std::find(args.begin(), args.end(), "--fast-segments") != args.end();
+    config.segmentCacheDirectory = getOption("--cache-dir");
+    config.segmentCacheMaxBytes = static_cast<int64_t>(
+        std::max(1, getIntOption("--cache-max-gb", 100))) * 1024LL * 1024LL * 1024LL;
+    config.segmentCacheMaxAgeDays = std::max(1, getIntOption("--cache-days", 30));
     config.pdfOpacity = getDoubleOption("--opacity", 0.3);
     config.pdfCoverage = getDoubleOption("--coverage", 0.5);
 
@@ -2492,6 +2532,10 @@ int handleWatermark(const std::vector<std::string>& args) {
             std::cout << "\n✓ Video watermarked successfully\n";
             std::cout << "  Output: " << result.outputFile << "\n";
             std::cout << "  Time: " << (result.processingTimeMs / 1000) << "s\n";
+            std::cout << "  Mode: " << result.processingMode << "\n";
+            if (!result.diagnostic.empty()) {
+                std::cout << "  Detail: " << result.diagnostic << "\n";
+            }
             return 0;
         } else {
             std::cerr << "\n✗ Failed: " << result.error << "\n";

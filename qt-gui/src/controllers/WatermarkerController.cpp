@@ -26,6 +26,10 @@ static WatermarkConfig toNativeConfig(const QtWatermarkConfig& qtConfig) {
     config.crf = qtConfig.crf;
     config.copyAudio = qtConfig.copyAudio;
     config.fastSegmentedEncode = qtConfig.fastSegmentedEncode;
+    config.segmentCacheDirectory = qtConfig.segmentCacheDirectory.toStdString();
+    config.segmentCacheOutputRoot = qtConfig.segmentCacheOutputRoot.toStdString();
+    config.segmentCacheMaxBytes = qtConfig.segmentCacheMaxBytes;
+    config.segmentCacheMaxAgeDays = qtConfig.segmentCacheMaxAgeDays;
     config.pdfOpacity = qtConfig.pdfOpacity;
     config.pdfAngle = qtConfig.pdfAngle;
     config.pdfCoverage = qtConfig.pdfCoverage;
@@ -49,6 +53,9 @@ static QtWatermarkResult toQtResult(const WatermarkResult& result) {
     qt.processingTimeMs = result.processingTimeMs;
     qt.inputSizeBytes = result.inputSizeBytes;
     qt.outputSizeBytes = result.outputSizeBytes;
+    qt.processingMode = QString::fromStdString(result.processingMode);
+    qt.diagnostic = QString::fromStdString(result.diagnostic);
+    qt.segmentCacheHit = result.segmentCacheHit;
     return qt;
 }
 

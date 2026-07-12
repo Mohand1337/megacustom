@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <memory>
 #include <atomic>
+#include <mutex>
 
 class EmptyStateWidget;
 
@@ -47,6 +48,9 @@ struct WatermarkFileInfo {
     QString status;         // "pending", "processing", "complete", "error", "uploading", "uploaded"
     QString outputPath;
     QString error;
+    QString processingMode;
+    QString diagnostic;
+    bool segmentCacheHit = false;
     QString jobId;          // owning watermark job while live table state is available
     int progressPercent = 0;
     bool isHeader = false;  // true for member section header rows
@@ -86,8 +90,11 @@ public slots:
 
 signals:
     void started();
-    void progress(int fileIndex, int totalFiles, const QString& currentFile, int percent);
-    void fileCompleted(int fileIndex, bool success, const QString& outputPath, const QString& error);
+    void progress(int fileIndex, int totalFiles, const QString& currentFile, int percent,
+                  const QString& phase);
+    void fileCompleted(int fileIndex, bool success, const QString& outputPath, const QString& error,
+                       const QString& processingMode, const QString& diagnostic,
+                       bool segmentCacheHit);
     void finished(int successCount, int failCount);
     void finishedWithMapping(int successCount, int failCount,
                              const QMap<QString, QStringList>& memberFileMap);
@@ -127,6 +134,8 @@ private:
     QString m_rootDir;
     MetricsStore* m_metricsStore = nullptr;
     QList<WatermarkResumeTask> m_resumeTasks;
+    std::mutex m_activeWatermarkerMutex;
+    std::shared_ptr<Watermarker> m_activeWatermarker;
 };
 
 /**
@@ -187,8 +196,11 @@ private slots:
     void onPresetChanged(int index);
 
     // Worker signals
-    void onWorkerProgress(int fileIndex, int totalFiles, const QString& currentFile, int percent);
-    void onWorkerFileCompleted(int fileIndex, bool success, const QString& outputPath, const QString& error);
+    void onWorkerProgress(int fileIndex, int totalFiles, const QString& currentFile, int percent,
+                          const QString& phase);
+    void onWorkerFileCompleted(int fileIndex, bool success, const QString& outputPath, const QString& error,
+                               const QString& processingMode, const QString& diagnostic,
+                               bool segmentCacheHit);
     void onWorkerFinished(int successCount, int failCount);
 
 private:
@@ -206,6 +218,7 @@ private:
     QJsonArray serializeWatermarkRows() const;
     bool restoreWatermarkRowsFromJob(const OperationJobRecord& record);
     void applyWatermarkJobMetadataToUi(const QJsonObject& metadata);
+    void applyAdvancedWatermarkJobMetadata(const QJsonObject& metadata);
     void onResumePausedWatermark();
     void loadMembers();
     QStringList getSelectedMemberIds() const;
@@ -335,6 +348,7 @@ private:
     QLabel* m_smartEstimateLabel = nullptr;
     mega::MegaApi* m_megaApi = nullptr;
     MetricsStore* m_metricsStore = nullptr;
+    std::shared_ptr<WatermarkConfig> m_advancedConfig;
 };
 
 } // namespace MegaCustom

@@ -73,6 +73,10 @@
 - Pre-start validation warns about missing member fields
 - Save/load/delete named presets (text, CRF, interval, duration, FFmpeg preset)
 - Batch processing with progress tracking
+- Shared clean-segment cache for compatible MP4/H.264/AAC sources across members
+- Fast-path cache hit/build/fallback reporting in rows and saved job metadata
+- Cache size/age controls, custom cache location, stale-work cleanup, and manual clear
+- Active FFmpeg process cancellation with partial-output cleanup and resumable pending rows
 - Member combo with groups: `[Group] NHB2026 (5)` entries with separators
 - GROUP: prefix resolution for watermarking group members
 

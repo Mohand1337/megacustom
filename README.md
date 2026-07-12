@@ -54,6 +54,9 @@ make && ./megacustom help
 - **Video Watermarking** — FFmpeg-based with configurable text, position, opacity, interval, duration
 - **Template Variables** — 13 variables: `{brand}`, `{member_name}`, `{member_id}`, `{member_email}`, `{member_ip}`, `{member_mac}`, `{member_social}`, `{member}`, `{month}`, `{month_num}`, `{year}`, `{date}`, `{timestamp}`
 - **Per-Member Personalization** — Each member gets unique watermark text
+- **Shared Fast-Segment Cache** — Reuses clean H.264/AAC chunks across members and encodes only watermark windows, with automatic full-encode fallback
+- **Bounded Cache Management** — Per-user cache location, size/age limits, stale-work cleanup, cache status, and manual clear controls
+- **Transparent Processing Modes** — Per-file cache hit/build/fallback diagnostics are retained in the Watermark table and job checkpoints
 - **Preset System** — Save/load/delete named watermark presets
 - **Auto-Upload Pipeline** — Watermark → Upload to MEGA → Delete local → Next member (saves disk space)
 - **Pipeline Integration** — Downloader → Watermark → Distribution (auto-send between panels)
