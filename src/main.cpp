@@ -2364,6 +2364,7 @@ int handleWatermark(const std::vector<std::string>& args) {
         std::cout << "  --font <path>                       Path to font file\n";
         std::cout << "  --preset <preset>                   FFmpeg preset (ultrafast/fast/medium)\n";
         std::cout << "  --crf <value>                       Quality 18-28 (default: 23)\n";
+        std::cout << "  --fast-segments                     Try cached segmented video encoding with fallback\n";
         std::cout << "  --opacity <value>                   PDF opacity 0.0-1.0 (default: 0.3)\n";
         std::cout << "  --coverage <value>                  PDF page coverage 0.0-1.0 (default: 0.5)\n";
         std::cout << "  --parallel <n>                      Parallel jobs for batch (default: 1)\n";
@@ -2444,6 +2445,7 @@ int handleWatermark(const std::vector<std::string>& args) {
     config.intervalSeconds = getIntOption("--interval", 600);
     config.durationSeconds = getIntOption("--duration", 3);
     config.crf = getIntOption("--crf", 23);
+    config.fastSegmentedEncode = std::find(args.begin(), args.end(), "--fast-segments") != args.end();
     config.pdfOpacity = getDoubleOption("--opacity", 0.3);
     config.pdfCoverage = getDoubleOption("--coverage", 0.5);
 

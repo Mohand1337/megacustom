@@ -1092,6 +1092,12 @@ void WatermarkPanel::setupUI() {
     m_durationSpin->setToolTip("How long watermark stays visible");
     videoSettingsLayout->addWidget(m_durationSpin);
 
+    m_fastSegmentedCheck = new QCheckBox("Fast segments");
+    m_fastSegmentedCheck->setToolTip(
+        "Try cached segmented video watermarking for MP4/H.264/AAC files. "
+        "Unsupported files automatically fall back to standard encoding.");
+    videoSettingsLayout->addWidget(m_fastSegmentedCheck);
+
     videoSettingsLayout->addStretch();
 
     m_settingsBtn = new QPushButton("More Settings...");
@@ -1446,6 +1452,9 @@ void WatermarkPanel::retryJob(const QString& jobId) {
     if (metadata.contains("durationSeconds")) {
         m_durationSpin->setValue(metadata["durationSeconds"].toInt(m_durationSpin->value()));
     }
+    if (m_fastSegmentedCheck) {
+        m_fastSegmentedCheck->setChecked(metadata["fastSegmentedEncode"].toBool(false));
+    }
 
     m_embedMetadataCheck->setChecked(metadata["embedMetadata"].toBool(false));
     m_metaTitleEdit->setText(metadata["metadataTitle"].toString());
@@ -1715,6 +1724,9 @@ void WatermarkPanel::applyWatermarkJobMetadataToUi(const QJsonObject& metadata) 
     }
     if (metadata.contains("durationSeconds")) {
         m_durationSpin->setValue(metadata["durationSeconds"].toInt(m_durationSpin->value()));
+    }
+    if (m_fastSegmentedCheck) {
+        m_fastSegmentedCheck->setChecked(metadata["fastSegmentedEncode"].toBool(false));
     }
 
     m_embedMetadataCheck->setChecked(metadata["embedMetadata"].toBool(false));
@@ -2710,6 +2722,7 @@ void WatermarkPanel::onStartWatermark() {
     metadata["crf"] = m_crfSpin->value();
     metadata["intervalSeconds"] = m_intervalSpin->value();
     metadata["durationSeconds"] = m_durationSpin->value();
+    metadata["fastSegmentedEncode"] = m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked();
     metadata["embedMetadata"] = m_embedMetadataCheck->isChecked();
     metadata["metadataTitle"] = m_metaTitleEdit->text();
     metadata["metadataAuthor"] = m_metaAuthorEdit->text();
@@ -5152,6 +5165,9 @@ void WatermarkPanel::updateButtonStates() {
     m_crfSpin->setEnabled(!m_isRunning && !pausedForDisk);
     m_intervalSpin->setEnabled(!m_isRunning && !pausedForDisk);
     m_durationSpin->setEnabled(!m_isRunning && !pausedForDisk);
+    if (m_fastSegmentedCheck) {
+        m_fastSegmentedCheck->setEnabled(!m_isRunning && !pausedForDisk);
+    }
     m_settingsBtn->setEnabled(!m_isRunning && !pausedForDisk);
     m_presetNameCombo->setEnabled(!m_isRunning && !pausedForDisk);
     m_savePresetBtn->setEnabled(!m_isRunning && !pausedForDisk);
@@ -5211,6 +5227,7 @@ WatermarkConfig WatermarkPanel::buildConfig() const {
     config.crf = m_crfSpin->value();
     config.intervalSeconds = m_intervalSpin->value();
     config.durationSeconds = m_durationSpin->value();
+    config.fastSegmentedEncode = m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked();
 
     // Metadata embedding
     config.embedMetadata = m_embedMetadataCheck->isChecked();
@@ -5427,6 +5444,9 @@ void WatermarkPanel::applyPreset(const QString& presetName) {
     m_crfSpin->setValue(settings.value("crf", 23).toInt());
     m_intervalSpin->setValue(settings.value("interval", 600).toInt());
     m_durationSpin->setValue(settings.value("duration", 3).toInt());
+    if (m_fastSegmentedCheck) {
+        m_fastSegmentedCheck->setChecked(settings.value("fastSegmentedEncode", false).toBool());
+    }
 
     // Metadata settings
     m_embedMetadataCheck->setChecked(settings.value("embedMetadata", false).toBool());
@@ -5455,6 +5475,7 @@ void WatermarkPanel::onSavePreset() {
     settings.setValue("crf", m_crfSpin->value());
     settings.setValue("interval", m_intervalSpin->value());
     settings.setValue("duration", m_durationSpin->value());
+    settings.setValue("fastSegmentedEncode", m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked());
 
     // Metadata settings
     settings.setValue("embedMetadata", m_embedMetadataCheck->isChecked());

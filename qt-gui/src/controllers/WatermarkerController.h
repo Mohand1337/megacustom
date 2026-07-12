@@ -31,6 +31,7 @@ struct QtWatermarkConfig {
     QString preset = "ultrafast";
     int crf = 23;
     bool copyAudio = true;
+    bool fastSegmentedEncode = false;
     double pdfOpacity = 0.3;
     int pdfAngle = 45;
     double pdfCoverage = 0.5;

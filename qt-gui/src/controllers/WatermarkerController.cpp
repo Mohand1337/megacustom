@@ -25,6 +25,7 @@ static WatermarkConfig toNativeConfig(const QtWatermarkConfig& qtConfig) {
     config.preset = qtConfig.preset.toStdString();
     config.crf = qtConfig.crf;
     config.copyAudio = qtConfig.copyAudio;
+    config.fastSegmentedEncode = qtConfig.fastSegmentedEncode;
     config.pdfOpacity = qtConfig.pdfOpacity;
     config.pdfAngle = qtConfig.pdfAngle;
     config.pdfCoverage = qtConfig.pdfCoverage;

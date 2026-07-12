@@ -16,6 +16,12 @@
 #include <stdexcept>
 #include <functional>
 #include <vector>
+#include <cmath>
+#include <cstdio>
+#include <iomanip>
+#include <limits>
+#include <map>
+#include <set>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -535,6 +541,255 @@ std::string summarizeProcessOutput(std::string output) {
 
     return "[showing last " + std::to_string(kMaxErrorChars) + " chars]\n" +
            output.substr(output.size() - kMaxErrorChars);
+}
+
+std::string trimCopy(const std::string& value) {
+    const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    const auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::istringstream stream(text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+double parseRational(const std::string& value) {
+    const auto slash = value.find('/');
+    if (slash == std::string::npos) {
+        return std::strtod(value.c_str(), nullptr);
+    }
+
+    const double num = std::strtod(value.substr(0, slash).c_str(), nullptr);
+    const double den = std::strtod(value.substr(slash + 1).c_str(), nullptr);
+    return den == 0.0 ? 0.0 : num / den;
+}
+
+uint64_t fnv1aAppend(uint64_t hash, const std::string& value) {
+    constexpr uint64_t kPrime = 1099511628211ULL;
+    for (unsigned char c : value) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= kPrime;
+    }
+    return hash;
+}
+
+std::string stableHashHex(const std::vector<std::string>& parts) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (const auto& part : parts) {
+        hash = fnv1aAppend(hash, part);
+        hash = fnv1aAppend(hash, "\x1f");
+    }
+
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return out.str();
+}
+
+std::string formatSeconds(double seconds) {
+    if (!std::isfinite(seconds)) {
+        seconds = 0.0;
+    }
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(6) << seconds;
+    return out.str();
+}
+
+std::string concatManifestEscape(const std::string& path) {
+    std::string escaped = "'";
+    for (char c : path) {
+        if (c == '\'') {
+            escaped += "'\\''";
+        } else {
+            escaped += c;
+        }
+    }
+    escaped += "'";
+    return escaped;
+}
+
+std::string ffmpegFilterEscape(const std::string& text) {
+    std::string result;
+    for (char c : text) {
+        if (c == '\'' || c == ':' || c == '\\') {
+            result += '\\';
+        }
+        result += c;
+    }
+    return result;
+}
+
+std::map<std::string, std::string> parseKeyValueProbe(const std::string& output) {
+    std::map<std::string, std::string> values;
+    for (const std::string& line : splitLines(output)) {
+        const auto equals = line.find('=');
+        if (equals == std::string::npos) {
+            continue;
+        }
+        values[line.substr(0, equals)] = trimCopy(line.substr(equals + 1));
+    }
+    return values;
+}
+
+struct SegmentProbe {
+    std::string videoCodec;
+    std::string audioCodec;
+    std::string pixelFormat;
+    std::string avgFrameRate;
+    std::string timeBase;
+    int width = 0;
+    int height = 0;
+    double frameRate = 0.0;
+    double duration = 0.0;
+    int videoStreams = 0;
+    int audioStreams = 0;
+    int otherStreams = 0;
+    bool hasAudio = false;
+    std::vector<double> keyframes;
+};
+
+struct VisibleWatermarkWindow {
+    double sourceStart = 0.0;
+    double sourceEnd = 0.0;
+    double localStart = 0.0;
+    double localEnd = 0.0;
+    double xFraction = 0.0;
+    double yFraction = 0.0;
+};
+
+struct EncodedSegmentWindow {
+    double start = 0.0;
+    double end = 0.0;
+    std::vector<VisibleWatermarkWindow> visibleWindows;
+};
+
+struct PlannedPiece {
+    double start = 0.0;
+    double end = 0.0;
+    bool watermark = false;
+    int watermarkIndex = -1;
+    std::string sourceSegmentPath;
+    std::string memberSegmentPath;
+};
+
+double previousKeyframeAtOrBefore(const std::vector<double>& keyframes, double target) {
+    double selected = 0.0;
+    for (double keyframe : keyframes) {
+        if (keyframe <= target + 0.0005) {
+            selected = keyframe;
+        } else {
+            break;
+        }
+    }
+    return selected;
+}
+
+double nextKeyframeAtOrAfter(const std::vector<double>& keyframes, double target, double duration) {
+    for (double keyframe : keyframes) {
+        if (keyframe >= target - 0.0005) {
+            return std::min(keyframe, duration);
+        }
+    }
+    return duration;
+}
+
+double deterministicFraction(const std::string& seed, double minValue = 0.0, double maxValue = 1.0) {
+    const std::string hash = stableHashHex({seed});
+    const uint64_t raw = std::strtoull(hash.substr(0, 12).c_str(), nullptr, 16);
+    const double unit = static_cast<double>(raw % 1000000ULL) / 1000000.0;
+    return minValue + (maxValue - minValue) * unit;
+}
+
+std::string ffprobePathFromFFmpegPath(const std::string& ffmpegPath) {
+    if (ffmpegPath.empty()) {
+        return "ffprobe";
+    }
+    size_t pos = ffmpegPath.rfind("ffmpeg");
+    if (pos != std::string::npos) {
+        return ffmpegPath.substr(0, pos) + "ffprobe" + ffmpegPath.substr(pos + 6);
+    }
+    return "ffprobe";
+}
+
+std::string buildScheduledDrawtextFilter(const WatermarkConfig& config,
+                                         const std::vector<VisibleWatermarkWindow>& windows) {
+    std::string fontFilePath = config.fontPath;
+#ifdef _WIN32
+    if (fontFilePath.empty()) {
+        const char* windir = std::getenv("WINDIR");
+        std::string winFontsDir = windir ? std::string(windir) + "\\Fonts" : "C:\\Windows\\Fonts";
+        std::string arialPath = winFontsDir + "\\arial.ttf";
+        struct stat st;
+        if (stat(arialPath.c_str(), &st) == 0) {
+            fontFilePath = arialPath;
+        }
+    }
+#endif
+    std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
+#ifdef _WIN32
+    if (fontFilePath.size() >= 2 && fontFilePath[1] == ':') {
+        fontFilePath = fontFilePath.substr(2);
+    }
+#endif
+
+    const std::string fontFile = fontFilePath.empty() ? "" : "fontfile=" + fontFilePath + ":";
+
+    std::ostringstream filter;
+    bool first = true;
+    auto appendDrawtext = [&](const VisibleWatermarkWindow& window,
+                              const std::string& text,
+                              int fontSize,
+                              const std::string& color,
+                              bool secondary) {
+        if (text.empty()) {
+            return;
+        }
+        if (!first) {
+            filter << ",";
+        }
+        first = false;
+
+        filter << "drawtext=" << fontFile
+               << "text='" << ffmpegFilterEscape(text) << "':"
+               << "fontsize=" << fontSize << ":"
+               << "fontcolor=" << color << ":"
+               << "x=(w-text_w)*" << formatSeconds(window.xFraction) << ":"
+               << "y=((h-text_h-40)*" << formatSeconds(window.yFraction) << ")";
+        if (secondary) {
+            filter << "+30";
+        }
+        filter << ":enable=between(t\\," << formatSeconds(window.localStart)
+               << "\\," << formatSeconds(window.localEnd) << ")";
+    };
+
+    for (const auto& window : windows) {
+        appendDrawtext(window, config.primaryText, config.primaryFontSize, config.primaryColor, false);
+        appendDrawtext(window, config.secondaryText, config.secondaryFontSize, config.secondaryColor, true);
+    }
+
+    return filter.str();
 }
 } // anonymous namespace
 
@@ -1169,6 +1424,538 @@ int Watermarker::runFFmpegWithProgress(const std::vector<std::string>& args,
 #endif
 }
 
+WatermarkResult Watermarker::executeSegmentedFFmpeg(const std::string& input,
+                                                    const std::string& output) {
+    WatermarkResult result;
+    result.inputFile = input;
+    result.outputFile = output;
+
+    auto startTime = std::chrono::steady_clock::now();
+    auto fail = [&](const std::string& reason) {
+        result.error = reason;
+        LogManager::instance().log(LogLevel::Warning, LogCategory::Watermark,
+            "fast_segmented_watermark_skip", reason, input);
+        return result;
+    };
+
+    if (!isFFmpegAvailable()) {
+        return fail("Fast segmented encode skipped: FFmpeg is not available.");
+    }
+    if (m_config.intervalSeconds <= 0 || m_config.durationSeconds <= 0) {
+        return fail("Fast segmented encode skipped: interval and duration must be positive.");
+    }
+
+    namespace fs = std::filesystem;
+    fs::path inputFs;
+    fs::path outputFs;
+    std::string pathError;
+    if (!tryToFsPath(input, inputFs, &pathError)) {
+        return fail("Fast segmented encode skipped: " + pathError);
+    }
+    if (!tryToFsPath(output, outputFs, &pathError)) {
+        return fail("Fast segmented encode skipped: " + pathError);
+    }
+    if (!pathExistsNoThrow(inputFs, &pathError)) {
+        return fail("Fast segmented encode skipped: input file not found.");
+    }
+
+    const std::string ext = lowerAscii(inputFs.extension().string());
+    if (ext != ".mp4") {
+        return fail("Fast segmented encode skipped: only MP4/H.264 files are enabled in this first version.");
+    }
+
+    if (!outputFs.parent_path().empty()) {
+        createDirectoriesOrThrow(outputFs.parent_path());
+    }
+
+    int64_t inputSize = 0;
+    fileSizeNoThrow(inputFs, inputSize);
+    result.inputSizeBytes = inputSize;
+
+    const double duration = getVideoDuration(input);
+    if (!(duration > 0.0) || !std::isfinite(duration)) {
+        return fail("Fast segmented encode skipped: source duration could not be read.");
+    }
+
+    const std::string resolvedFFmpegPath = getFFmpegPath();
+    const std::string ffmpegPath = resolvedFFmpegPath.empty() ? "ffmpeg" : resolvedFFmpegPath;
+    const std::string ffprobePath = ffprobePathFromFFmpegPath(ffmpegPath);
+
+    auto runProbe = [&](const std::vector<std::string>& args, std::string& out) {
+        std::string err;
+        const int code = runProcess(args, out, err);
+        if (code != 0 && out.empty()) {
+            out = err;
+        }
+        return code;
+    };
+
+    SegmentProbe probe;
+    probe.duration = duration;
+
+    std::string videoProbeOutput;
+    int probeCode = runProbe({
+        ffprobePath,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name,width,height,pix_fmt,avg_frame_rate,r_frame_rate,time_base",
+        "-of", "default=noprint_wrappers=1",
+        input
+    }, videoProbeOutput);
+    if (probeCode != 0 || videoProbeOutput.empty()) {
+        return fail("Fast segmented encode skipped: ffprobe could not read the video stream.");
+    }
+
+    const auto videoValues = parseKeyValueProbe(videoProbeOutput);
+    auto valueOrEmpty = [](const std::map<std::string, std::string>& values, const std::string& key) {
+        auto it = values.find(key);
+        return it == values.end() ? std::string() : it->second;
+    };
+
+    probe.videoCodec = lowerAscii(valueOrEmpty(videoValues, "codec_name"));
+    probe.pixelFormat = lowerAscii(valueOrEmpty(videoValues, "pix_fmt"));
+    probe.avgFrameRate = valueOrEmpty(videoValues, "avg_frame_rate");
+    probe.timeBase = valueOrEmpty(videoValues, "time_base");
+    probe.width = std::atoi(valueOrEmpty(videoValues, "width").c_str());
+    probe.height = std::atoi(valueOrEmpty(videoValues, "height").c_str());
+    probe.frameRate = parseRational(probe.avgFrameRate);
+    if (probe.frameRate <= 0.0) {
+        probe.frameRate = parseRational(valueOrEmpty(videoValues, "r_frame_rate"));
+    }
+
+    std::string streamProbeOutput;
+    probeCode = runProbe({
+        ffprobePath,
+        "-v", "error",
+        "-show_entries", "stream=codec_type,codec_name",
+        "-of", "csv=p=0",
+        input
+    }, streamProbeOutput);
+    if (probeCode != 0 || streamProbeOutput.empty()) {
+        return fail("Fast segmented encode skipped: ffprobe could not read stream layout.");
+    }
+
+    for (const std::string& rawLine : splitLines(streamProbeOutput)) {
+        const std::string line = trimCopy(rawLine);
+        if (line.empty()) {
+            continue;
+        }
+        const auto comma = line.find(',');
+        const std::string codec = lowerAscii(comma == std::string::npos ? line : line.substr(0, comma));
+        const std::string type = lowerAscii(comma == std::string::npos ? "" : line.substr(comma + 1));
+        if (type == "video") {
+            ++probe.videoStreams;
+        } else if (type == "audio") {
+            ++probe.audioStreams;
+            if (probe.audioCodec.empty()) {
+                probe.audioCodec = codec;
+            }
+        } else {
+            ++probe.otherStreams;
+        }
+    }
+    probe.hasAudio = probe.audioStreams > 0;
+
+    if (probe.videoCodec != "h264") {
+        return fail("Fast segmented encode skipped: video codec is " + probe.videoCodec + ", expected h264.");
+    }
+    if (probe.videoStreams != 1) {
+        return fail("Fast segmented encode skipped: expected exactly one video stream.");
+    }
+    if (probe.audioStreams > 1) {
+        return fail("Fast segmented encode skipped: multiple audio streams are not supported yet.");
+    }
+    if (probe.hasAudio && probe.audioCodec != "aac") {
+        return fail("Fast segmented encode skipped: audio codec is " + probe.audioCodec + ", expected aac.");
+    }
+    if (probe.otherStreams != 0) {
+        return fail("Fast segmented encode skipped: subtitle/data/attachment streams are not supported yet.");
+    }
+    if (probe.width <= 0 || probe.height <= 0 || probe.frameRate <= 0.0) {
+        return fail("Fast segmented encode skipped: video dimensions or frame rate could not be read.");
+    }
+
+    std::string keyframeOutput;
+    probeCode = runProbe({
+        ffprobePath,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-skip_frame", "nokey",
+        "-show_entries", "frame=best_effort_timestamp_time",
+        "-of", "csv=p=0",
+        input
+    }, keyframeOutput);
+    if (probeCode != 0 || keyframeOutput.empty()) {
+        return fail("Fast segmented encode skipped: keyframe map could not be read.");
+    }
+
+    for (const std::string& rawLine : splitLines(keyframeOutput)) {
+        const std::string line = trimCopy(rawLine);
+        if (line.empty()) {
+            continue;
+        }
+        const double t = std::strtod(line.c_str(), nullptr);
+        if (std::isfinite(t) && t >= 0.0 && t <= duration + 0.5) {
+            if (probe.keyframes.empty() || std::fabs(probe.keyframes.back() - t) > 0.001) {
+                probe.keyframes.push_back(t);
+            }
+        }
+    }
+    if (probe.keyframes.empty() || probe.keyframes.front() > 0.5) {
+        probe.keyframes.insert(probe.keyframes.begin(), 0.0);
+    }
+    std::sort(probe.keyframes.begin(), probe.keyframes.end());
+
+    std::vector<EncodedSegmentWindow> encodedWindows;
+    const int intervalSeconds = m_config.intervalSeconds;
+    const double visibleDuration = static_cast<double>(m_config.durationSeconds);
+    int windowIndex = 0;
+    for (double visibleStart = 0.0; visibleStart < duration - 0.001; visibleStart += intervalSeconds) {
+        const double visibleEnd = std::min(visibleStart + visibleDuration, duration);
+        if (visibleEnd <= visibleStart + 0.001) {
+            continue;
+        }
+
+        const double segmentStart = previousKeyframeAtOrBefore(probe.keyframes, visibleStart);
+        const double segmentEnd = nextKeyframeAtOrAfter(probe.keyframes, visibleEnd, duration);
+        if (segmentEnd <= segmentStart + 0.001) {
+            return fail("Fast segmented encode skipped: invalid keyframe window around watermark time.");
+        }
+
+        VisibleWatermarkWindow visible;
+        visible.sourceStart = visibleStart;
+        visible.sourceEnd = visibleEnd;
+        visible.localStart = visibleStart - segmentStart;
+        visible.localEnd = visibleEnd - segmentStart;
+        const std::string positionSeed = fromFsPath(inputFs) + "|" + std::to_string(windowIndex) + "|" +
+            formatSeconds(visibleStart) + "|" + std::to_string(intervalSeconds) + "|" +
+            std::to_string(m_config.durationSeconds);
+        visible.xFraction = deterministicFraction(positionSeed + "|x", 0.02, 0.98);
+        visible.yFraction = deterministicFraction(positionSeed + "|y", 0.02, 0.92);
+
+        if (!encodedWindows.empty() && segmentStart <= encodedWindows.back().end + 0.001) {
+            EncodedSegmentWindow& merged = encodedWindows.back();
+            const double mergedStart = merged.start;
+            merged.end = std::max(merged.end, segmentEnd);
+            visible.localStart = visible.sourceStart - mergedStart;
+            visible.localEnd = visible.sourceEnd - mergedStart;
+            merged.visibleWindows.push_back(visible);
+        } else {
+            EncodedSegmentWindow encoded;
+            encoded.start = segmentStart;
+            encoded.end = segmentEnd;
+            encoded.visibleWindows.push_back(visible);
+            encodedWindows.push_back(encoded);
+        }
+        ++windowIndex;
+    }
+
+    if (encodedWindows.empty()) {
+        return fail("Fast segmented encode skipped: no watermark windows were planned.");
+    }
+
+    double encodedDuration = 0.0;
+    for (const auto& window : encodedWindows) {
+        encodedDuration += std::max(0.0, window.end - window.start);
+    }
+    if (encodedDuration / duration > 0.45) {
+        return fail("Fast segmented encode skipped: padded watermark windows cover too much of the video.");
+    }
+
+    std::set<double> boundarySet;
+    for (const auto& window : encodedWindows) {
+        if (window.start > 0.001 && window.start < duration - 0.001) {
+            boundarySet.insert(window.start);
+        }
+        if (window.end > 0.001 && window.end < duration - 0.001) {
+            boundarySet.insert(window.end);
+        }
+    }
+    if (boundarySet.empty()) {
+        return fail("Fast segmented encode skipped: source is too short for useful segmentation.");
+    }
+
+    std::vector<double> boundaries(boundarySet.begin(), boundarySet.end());
+    std::vector<double> points;
+    points.push_back(0.0);
+    points.insert(points.end(), boundaries.begin(), boundaries.end());
+    points.push_back(duration);
+
+    std::vector<PlannedPiece> pieces;
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const double pieceStart = points[i];
+        const double pieceEnd = points[i + 1];
+        if (pieceEnd <= pieceStart + 0.001) {
+            continue;
+        }
+
+        PlannedPiece piece;
+        piece.start = pieceStart;
+        piece.end = pieceEnd;
+        for (size_t w = 0; w < encodedWindows.size(); ++w) {
+            if (std::fabs(pieceStart - encodedWindows[w].start) <= 0.01 &&
+                std::fabs(pieceEnd - encodedWindows[w].end) <= 0.01) {
+                piece.watermark = true;
+                piece.watermarkIndex = static_cast<int>(w);
+                break;
+            }
+        }
+        pieces.push_back(piece);
+    }
+    if (pieces.empty()) {
+        return fail("Fast segmented encode skipped: no segment pieces were planned.");
+    }
+
+    std::error_code timeError;
+    const auto mtime = fs::last_write_time(inputFs, timeError);
+    if (timeError) {
+        return fail("Fast segmented encode skipped: source modified time could not be read.");
+    }
+
+    const std::string cacheHash = stableHashHex({
+        fromFsPath(inputFs),
+        std::to_string(inputSize),
+        std::to_string(mtime.time_since_epoch().count()),
+        formatSeconds(duration),
+        probe.videoCodec,
+        probe.audioCodec,
+        probe.pixelFormat,
+        probe.avgFrameRate,
+        probe.timeBase,
+        std::to_string(probe.width),
+        std::to_string(probe.height),
+        std::to_string(m_config.intervalSeconds),
+        std::to_string(m_config.durationSeconds),
+        "fast_segment_v1"
+    });
+
+    fs::path cacheRoot = outputFs.parent_path();
+    if (cacheRoot.empty()) {
+        cacheRoot = inputFs.parent_path();
+    }
+    const fs::path cacheDir = cacheRoot / "_megacustom_segment_cache" / cacheHash;
+    const fs::path readyPath = cacheDir / "source_segments.ready";
+
+    auto segmentPathFor = [&](size_t index) {
+        std::ostringstream name;
+        name << "src_seg_" << std::setw(5) << std::setfill('0') << index << ".mp4";
+        return cacheDir / name.str();
+    };
+
+    bool cacheReady = pathExistsNoThrow(readyPath);
+    if (cacheReady) {
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            if (!pathExistsNoThrow(segmentPathFor(i))) {
+                cacheReady = false;
+                break;
+            }
+        }
+    }
+
+    if (!cacheReady) {
+        std::error_code removeError;
+        fs::remove_all(cacheDir, removeError);
+        createDirectoriesOrThrow(cacheDir);
+
+        std::ostringstream times;
+        for (size_t i = 0; i < boundaries.size(); ++i) {
+            if (i > 0) {
+                times << ",";
+            }
+            times << formatSeconds(boundaries[i]);
+        }
+
+        const fs::path pattern = cacheDir / "src_seg_%05d.mp4";
+        std::vector<std::string> segmentCmd = {
+            ffmpegPath,
+            "-y",
+            "-i", input,
+            "-map", "0",
+            "-c", "copy",
+            "-f", "segment",
+            "-segment_times", times.str(),
+            "-segment_time_delta", "0.05",
+            "-reset_timestamps", "1",
+            fromFsPath(pattern)
+        };
+
+        reportProgress(input, 1, 1, 3.0, "building segment cache");
+        std::string segmentOutput;
+        const int segmentExit = runFFmpegWithProgress(segmentCmd, input, duration, segmentOutput);
+        if (segmentExit != 0) {
+            return fail("Fast segmented encode failed while building source segment cache: " +
+                        summarizeProcessOutput(segmentOutput));
+        }
+
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            if (!pathExistsNoThrow(segmentPathFor(i))) {
+                return fail("Fast segmented encode failed: source segment cache is incomplete.");
+            }
+        }
+
+        std::ofstream ready(readyPath);
+        ready << "source=" << fromFsPath(inputFs) << "\n";
+        ready << "pieces=" << pieces.size() << "\n";
+        ready << "duration=" << formatSeconds(duration) << "\n";
+        ready.close();
+    }
+
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        pieces[i].sourceSegmentPath = fromFsPath(segmentPathFor(i));
+    }
+
+    const std::string memberHash = stableHashHex({
+        output,
+        m_config.primaryText,
+        m_config.secondaryText,
+        m_config.metadataTitle,
+        m_config.metadataAuthor,
+        m_config.metadataComment,
+        m_config.metadataKeywords,
+        std::to_string(m_config.crf),
+        m_config.preset,
+        "member_v1"
+    });
+    const fs::path memberDir = cacheDir / ("member_" + memberHash);
+    std::error_code removeMemberError;
+    fs::remove_all(memberDir, removeMemberError);
+    createDirectoriesOrThrow(memberDir);
+
+    int watermarkPieceCount = 0;
+    for (const auto& piece : pieces) {
+        if (piece.watermark) {
+            ++watermarkPieceCount;
+        }
+    }
+
+    int watermarkPieceIndex = 0;
+    for (PlannedPiece& piece : pieces) {
+        if (!piece.watermark) {
+            continue;
+        }
+
+        const EncodedSegmentWindow& encoded = encodedWindows[static_cast<size_t>(piece.watermarkIndex)];
+        std::ostringstream name;
+        name << "wm_" << std::setw(5) << std::setfill('0') << watermarkPieceIndex << ".mp4";
+        const fs::path memberSegment = memberDir / name.str();
+        piece.memberSegmentPath = fromFsPath(memberSegment);
+
+        const std::string filter = buildScheduledDrawtextFilter(m_config, encoded.visibleWindows);
+        if (filter.empty()) {
+            return fail("Fast segmented encode skipped: scheduled watermark filter was empty.");
+        }
+
+        std::vector<std::string> encodeCmd = {
+            ffmpegPath,
+            "-y",
+            "-i", piece.sourceSegmentPath,
+            "-map", "0",
+            "-vf", filter,
+            "-c:v", "libx264",
+            "-crf", std::to_string(m_config.crf),
+            "-preset", m_config.preset,
+            "-pix_fmt", "yuv420p"
+        };
+        if (probe.hasAudio) {
+            encodeCmd.push_back("-c:a");
+            encodeCmd.push_back(m_config.copyAudio ? "copy" : "aac");
+        }
+        encodeCmd.push_back("-movflags");
+        encodeCmd.push_back("+faststart");
+        encodeCmd.push_back(piece.memberSegmentPath);
+
+        const double basePercent = 10.0 + (70.0 * watermarkPieceIndex / std::max(1, watermarkPieceCount));
+        reportProgress(input, 1, 1, basePercent, "encoding watermark segment");
+        std::string encodeOutput;
+        const int encodeExit = runFFmpegWithProgress(
+            encodeCmd, input, std::max(0.1, piece.end - piece.start), encodeOutput);
+        if (encodeExit != 0 || !pathExistsNoThrow(memberSegment)) {
+            return fail("Fast segmented encode failed while encoding a watermark segment: " +
+                        summarizeProcessOutput(encodeOutput));
+        }
+        ++watermarkPieceIndex;
+    }
+
+    const fs::path concatPath = memberDir / "concat.txt";
+    {
+        std::ofstream concat(concatPath);
+        if (!concat) {
+            return fail("Fast segmented encode failed: could not create concat manifest.");
+        }
+        for (const PlannedPiece& piece : pieces) {
+            const std::string path = piece.watermark ? piece.memberSegmentPath : piece.sourceSegmentPath;
+            concat << "file " << concatManifestEscape(path) << "\n";
+        }
+    }
+
+    std::vector<std::string> concatCmd = {
+        ffmpegPath,
+        "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", fromFsPath(concatPath),
+        "-map", "0",
+        "-c", "copy"
+    };
+
+    if (m_config.embedMetadata) {
+        if (!m_config.metadataTitle.empty()) {
+            concatCmd.push_back("-metadata");
+            concatCmd.push_back("title=" + m_config.metadataTitle);
+        }
+        if (!m_config.metadataAuthor.empty()) {
+            concatCmd.push_back("-metadata");
+            concatCmd.push_back("artist=" + m_config.metadataAuthor);
+        }
+        if (!m_config.metadataComment.empty()) {
+            concatCmd.push_back("-metadata");
+            concatCmd.push_back("comment=" + m_config.metadataComment);
+        }
+        if (!m_config.metadataKeywords.empty()) {
+            concatCmd.push_back("-metadata");
+            concatCmd.push_back("description=" + m_config.metadataKeywords);
+        }
+    }
+    concatCmd.push_back("-movflags");
+    concatCmd.push_back("+faststart");
+    concatCmd.push_back(output);
+
+    reportProgress(input, 1, 1, 88.0, "stitching segments");
+    std::string concatOutput;
+    const int concatExit = runFFmpegWithProgress(concatCmd, input, duration, concatOutput);
+    if (concatExit != 0 || !pathExistsNoThrow(outputFs)) {
+        return fail("Fast segmented encode failed while stitching segments: " +
+                    summarizeProcessOutput(concatOutput));
+    }
+
+    const double outputDuration = getVideoDuration(output);
+    const double allowedDrift = std::max(0.25, duration * 0.001);
+    if (!(outputDuration > 0.0) || std::fabs(outputDuration - duration) > allowedDrift) {
+        return fail("Fast segmented encode failed validation: output duration drift is " +
+                    formatSeconds(std::fabs(outputDuration - duration)) + " seconds.");
+    }
+
+    fs::path finalOutputFs;
+    if (!tryToFsPath(output, finalOutputFs, &pathError) || !pathExistsNoThrow(finalOutputFs, &pathError)) {
+        return fail("Fast segmented encode failed validation: final output is missing.");
+    }
+
+    result.success = true;
+    fileSizeNoThrow(finalOutputFs, result.outputSizeBytes);
+    auto endTime = std::chrono::steady_clock::now();
+    result.processingTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        endTime - startTime).count();
+
+    reportProgress(input, 1, 1, 100.0, "complete");
+    LogManager::instance().logWatermark("fast_segmented_video_complete",
+        "Fast segmented video watermark complete: " + output + " (" +
+            std::to_string(result.processingTimeMs) + "ms, encoded " +
+            formatSeconds(encodedDuration) + "s of " + formatSeconds(duration) + "s)",
+        input);
+
+    return result;
+}
+
 WatermarkResult Watermarker::executeFFmpeg(const std::string& input,
                                             const std::string& output) {
     WatermarkResult result;
@@ -1589,6 +2376,20 @@ WatermarkResult Watermarker::watermarkVideo(const std::string& inputPath,
         fallback.outputFile = outPath;
 
         reportProgress(inputPath, 1, 1, 0.0, "encoding");
+        if (m_config.fastSegmentedEncode) {
+            auto fastResult = executeSegmentedFFmpeg(inputPath, outPath);
+            if (fastResult.success) {
+                reportProgress(inputPath, 1, 1, 100.0, "complete");
+                return fastResult;
+            }
+
+            LogManager::instance().log(LogLevel::Info, LogCategory::Watermark,
+                "fast_segmented_watermark_fallback",
+                fastResult.error + " Falling back to standard full encode.",
+                inputPath);
+            reportProgress(inputPath, 1, 1, 0.0, "encoding fallback");
+        }
+
         auto result = executeFFmpeg(inputPath, outPath);
         reportProgress(inputPath, 1, 1, 100.0, result.success ? "complete" : "error");
 

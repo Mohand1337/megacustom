@@ -273,6 +273,7 @@ private:
     QSpinBox* m_crfSpin;              // Quality
     QSpinBox* m_intervalSpin;         // Watermark interval (seconds)
     QSpinBox* m_durationSpin;         // Watermark duration (seconds)
+    QCheckBox* m_fastSegmentedCheck;  // Fast segmented video encode
     QPushButton* m_settingsBtn;       // Open full settings dialog
 
     // Metadata embedding

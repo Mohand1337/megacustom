@@ -35,6 +35,7 @@ struct WatermarkConfig {
     std::string preset = "ultrafast";  // FFmpeg preset: ultrafast/fast/medium/slow
     int crf = 23;                      // Quality (18-28, lower = better)
     bool copyAudio = true;             // Copy audio stream without re-encoding
+    bool fastSegmentedEncode = false;  // Encode only watermark windows when safe; fallback otherwise
 
     // PDF-specific
     double pdfOpacity = 0.3;           // Watermark opacity (0.0-1.0)
@@ -276,6 +277,12 @@ private:
     // Execute FFmpeg command
     WatermarkResult executeFFmpeg(const std::string& input,
                                   const std::string& output);
+
+    // Execute FFmpeg with cached clean segments and per-window re-encoding.
+    // Returns success only when the optimized output validates; caller should
+    // fallback to executeFFmpeg() when this fails or is skipped.
+    WatermarkResult executeSegmentedFFmpeg(const std::string& input,
+                                           const std::string& output);
 
     // Execute Python PDF script
     WatermarkResult executePdfScript(const std::string& input,
