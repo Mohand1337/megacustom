@@ -52,8 +52,13 @@ qt_standard_project_setup()
 # Optional: QtKeychain for secure credential storage
 # If not found, CredentialStore falls back to encrypted file storage
 find_package(Qt6Keychain QUIET)
-if(Qt6Keychain_FOUND)
-    add_definitions(-DHAVE_QTKEYCHAIN)
+set(QTKEYCHAIN_TARGET "")
+if(TARGET Qt6Keychain::Qt6Keychain)
+    set(QTKEYCHAIN_TARGET Qt6Keychain::Qt6Keychain)
+elseif(TARGET qt6keychain)
+    set(QTKEYCHAIN_TARGET qt6keychain)
+endif()
+if(QTKEYCHAIN_TARGET)
     message(STATUS "QtKeychain found - using OS secure storage")
 else()
     message(STATUS "QtKeychain not found - using encrypted file fallback")
@@ -369,7 +374,11 @@ target_link_libraries(MegaCustomGUI PRIVATE
     Qt6::Svg
     ${MEGA_SDK_LIB}
     ${CCRONEXPR_LIB}
+    ${QTKEYCHAIN_TARGET}
 )
+if(QTKEYCHAIN_TARGET)
+    target_compile_definitions(MegaCustomGUI PRIVATE HAVE_QTKEYCHAIN)
+endif()
 
 # Platform-specific library linking
 if(WIN32)
@@ -392,6 +401,12 @@ if(WIN32)
         iphlpapi    # IP Helper API
         shlwapi     # Shell API (PathIsRelativeW)
     )
+    if(MSVC)
+        target_link_options(MegaCustomGUI PRIVATE
+            "/MANIFEST:EMBED"
+            "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/resources/app.manifest"
+        )
+    endif()
 else()
     target_link_libraries(MegaCustomGUI PRIVATE
         # System libraries needed by Mega SDK (Linux)
@@ -409,6 +424,14 @@ else()
         cares
         dl
         rt
+    )
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests
+        ${CMAKE_CURRENT_BINARY_DIR}/tests
     )
 endif()
 

@@ -131,7 +131,13 @@ public:
 
     // State queries
     bool isSyncing() const { return m_isSyncing; }
+    bool isOperational() const { return false; }
     int getProfileCount() const { return m_profiles.size(); }
+    bool setMegaApi(void* megaApi) {
+        if (m_isSyncing) return false;
+        m_megaApi = megaApi;
+        return true;
+    }
 
 signals:
     // Profile signals

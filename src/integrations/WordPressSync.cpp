@@ -44,6 +44,84 @@ std::string getHomeDirectory() {
     return home ? std::string(home) : "/tmp";
 #endif
 }
+
+std::string pathToUtf8(const fs::path& path) {
+    return path.u8string();
+}
+
+fs::path configuredDataFile(const char* fileName, const fs::path& legacyPath) {
+    fs::path target = legacyPath;
+    if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR")) {
+        if (*configured != '\0') {
+            target = fs::u8path(configured) / fileName;
+        }
+    }
+
+    std::error_code ec;
+    if (target != legacyPath && !fs::exists(target, ec) && fs::exists(legacyPath, ec)) {
+        fs::create_directories(target.parent_path(), ec);
+        if (!ec) {
+            fs::copy_file(legacyPath, target, fs::copy_options::none, ec);
+        }
+    }
+
+    return target;
+}
+
+bool writeJsonAtomically(const fs::path& target, const nlohmann::json& document,
+                         std::string& error) {
+    fs::path temporary = target;
+    temporary += ".tmp";
+    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        error = "Cannot open temporary config file";
+        return false;
+    }
+
+    file << document.dump(2) << '\n';
+    file.flush();
+    if (!file.good()) {
+        file.close();
+        std::error_code cleanupError;
+        fs::remove(temporary, cleanupError);
+        error = "Failed while writing config file";
+        return false;
+    }
+    file.close();
+
+#ifndef _WIN32
+    std::error_code permissionError;
+    fs::permissions(temporary,
+                    fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, permissionError);
+    if (permissionError) {
+        error = "Failed to secure config file permissions: " + permissionError.message();
+        fs::remove(temporary, permissionError);
+        return false;
+    }
+#endif
+
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), target.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        error = "Failed to replace config file: Windows error "
+            + std::to_string(GetLastError());
+        std::error_code cleanupError;
+        fs::remove(temporary, cleanupError);
+        return false;
+    }
+#else
+    std::error_code ec;
+    fs::rename(temporary, target, ec);
+    if (ec) {
+        error = "Failed to replace config file: " + ec.message();
+        std::error_code cleanupError;
+        fs::remove(temporary, cleanupError);
+        return false;
+    }
+#endif
+    return true;
+}
 } // anonymous namespace
 
 namespace MegaCustom {
@@ -58,15 +136,9 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
 // ==================== Constructor ====================
 
 WordPressSync::WordPressSync() {
-    // Default member database path
-    std::string homeDir = getHomeDirectory();
-    if (!homeDir.empty()) {
-#ifdef _WIN32
-        m_memberDbPath = homeDir + "\\.megacustom\\members.json";
-#else
-        m_memberDbPath = homeDir + "/.megacustom/members.json";
-#endif
-    }
+    const fs::path legacyMembers = fs::u8path(getHomeDirectory())
+        / ".megacustom" / "members.json";
+    m_memberDbPath = pathToUtf8(configuredDataFile("members.json", legacyMembers));
 
     // Set default field mappings
     m_config.fieldMappings = getDefaultFieldMappings();
@@ -159,21 +231,15 @@ std::string WordPressSync::base64Encode(const std::string& str) {
 // ==================== Configuration ====================
 
 std::string WordPressSync::getConfigFilePath() const {
-    std::string homeDir = getHomeDirectory();
-    if (!homeDir.empty()) {
-#ifdef _WIN32
-        return homeDir + "\\.megacustom\\wordpress.json";
-#else
-        return homeDir + "/.megacustom/wordpress.json";
-#endif
-    }
-    return "./wordpress.json";
+    const fs::path legacyConfig = fs::u8path(getHomeDirectory())
+        / ".megacustom" / "wordpress.json";
+    return pathToUtf8(configuredDataFile("wordpress.json", legacyConfig));
 }
 
 bool WordPressSync::loadConfig(const std::string& configPath) {
     std::string path = configPath.empty() ? getConfigFilePath() : configPath;
 
-    std::ifstream file(path);
+    std::ifstream file(fs::u8path(path));
     if (!file.is_open()) {
         m_lastError = "Cannot open config file: " + path;
         return false;
@@ -184,10 +250,15 @@ bool WordPressSync::loadConfig(const std::string& configPath) {
     std::string content = buffer.str();
     file.close();
 
-    // Parse JSON config using nlohmann::json
-    nlohmann::json configJson = nlohmann::json::parse(content);
-    if (configJson.is_null()) {
-        m_lastError = "Config JSON parse error: invalid JSON";
+    nlohmann::json configJson;
+    try {
+        configJson = nlohmann::json::parse(content);
+    } catch (const std::exception& e) {
+        m_lastError = "Config JSON parse error: " + std::string(e.what());
+        return false;
+    }
+    if (!configJson.is_object()) {
+        m_lastError = "Config JSON parse error: invalid root object";
         return false;
     }
 
@@ -199,65 +270,96 @@ bool WordPressSync::loadConfig(const std::string& configPath) {
         return "";
     };
 
-    m_config.siteUrl = getString("siteUrl");
-    m_config.username = getString("username");
+    WordPressConfig loaded;
+    loaded.siteUrl = getString("siteUrl");
+    loaded.username = getString("username");
     std::string storedPassword = getString("applicationPassword");
 
     // Check if password is encrypted
     bool isEncrypted = configJson.contains("encrypted") &&
                        configJson["encrypted"].is_boolean() &&
                        configJson["encrypted"].get<bool>();
+    bool decryptionFailed = false;
 
     if (isEncrypted && !storedPassword.empty()) {
         // Decrypt the password
         try {
             std::string machineKey = Crypto::getMachineKey();
-            m_config.applicationPassword = Crypto::decrypt(storedPassword, machineKey);
+            loaded.applicationPassword = Crypto::decrypt(storedPassword, machineKey);
         } catch (const CryptoException& e) {
+            decryptionFailed = true;
             m_lastError = "Failed to decrypt password: " + std::string(e.what());
             // Still allow loading - user may need to re-enter password
-            m_config.applicationPassword = "";
+            loaded.applicationPassword = "";
         }
     } else {
         // Old format - password stored in plaintext (migrate on next save)
-        m_config.applicationPassword = storedPassword;
+        loaded.applicationPassword = storedPassword;
     }
 
     std::string customEndpoint = getString("customEndpoint");
     if (!customEndpoint.empty()) {
-        m_config.customEndpoint = customEndpoint;
+        loaded.customEndpoint = customEndpoint;
     }
 
-    return !m_config.siteUrl.empty();
+    std::string usersEndpoint = getString("usersEndpoint");
+    if (!usersEndpoint.empty()) {
+        loaded.usersEndpoint = usersEndpoint;
+    }
+    if (configJson.contains("syncAllFields") && configJson["syncAllFields"].is_boolean()) {
+        loaded.syncAllFields = configJson["syncAllFields"].get<bool>();
+    }
+    if (configJson.contains("createNewMembers") && configJson["createNewMembers"].is_boolean()) {
+        loaded.createNewMembers = configJson["createNewMembers"].get<bool>();
+    }
+    if (configJson.contains("updateExisting") && configJson["updateExisting"].is_boolean()) {
+        loaded.updateExisting = configJson["updateExisting"].get<bool>();
+    }
+    if (configJson.contains("perPage") && configJson["perPage"].is_number()) {
+        loaded.perPage = std::max(1, configJson["perPage"].get<int>());
+    }
+    if (configJson.contains("timeout") && configJson["timeout"].is_number()) {
+        loaded.timeout = std::max(1, configJson["timeout"].get<int>());
+    }
+    loaded.roleFilter = getString("roleFilter");
+
+    const nlohmann::json& mappings = configJson["fieldMappings"];
+    if (mappings.is_object()) {
+        for (const auto& [source, destination] : mappings.items()) {
+            if (destination.is_string()) {
+                loaded.fieldMappings[source] = destination.get<std::string>();
+            }
+        }
+    }
+
+    if (loaded.siteUrl.empty()) {
+        m_lastError = "Config is missing siteUrl";
+        return false;
+    }
+    m_config = std::move(loaded);
+    if (!decryptionFailed) {
+        m_lastError.clear();
+    }
+    return true;
 }
 
 bool WordPressSync::saveConfig(const std::string& configPath) {
     std::string path = configPath.empty() ? getConfigFilePath() : configPath;
 
-    // Ensure directory exists (safe, no shell injection)
-#ifdef _WIN32
-    size_t lastSep = path.find_last_of("\\/");
-#else
-    size_t lastSep = path.find_last_of('/');
-#endif
-    std::string dir = (lastSep != std::string::npos) ? path.substr(0, lastSep) : "";
-    if (!dir.empty()) {
-        if (!PathValidator::isValidPath(dir)) {
+    const fs::path configFile = fs::u8path(path);
+    const fs::path parent = configFile.parent_path();
+    if (!parent.empty()) {
+        const std::string parentUtf8 = pathToUtf8(parent);
+        if (!PathValidator::isValidPath(parentUtf8)) {
             m_lastError = "Invalid config directory path";
             return false;
         }
         try {
-            fs::create_directories(dir);
+            fs::create_directories(parent);
         } catch (const fs::filesystem_error& e) {
             m_lastError = "Failed to create config directory: " + std::string(e.what());
             return false;
         }
-    }
-
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        m_lastError = "Cannot write config file: " + path;
-        return false;
     }
 
     // Encrypt the application password before saving
@@ -270,17 +372,32 @@ bool WordPressSync::saveConfig(const std::string& configPath) {
         return false;
     }
 
-    file << "{\n";
-    file << "  \"siteUrl\": \"" << m_config.siteUrl << "\",\n";
-    file << "  \"username\": \"" << m_config.username << "\",\n";
-    file << "  \"applicationPassword\": \"" << encryptedPassword << "\",\n";
-    file << "  \"encrypted\": true";
-    if (!m_config.customEndpoint.empty()) {
-        file << ",\n  \"customEndpoint\": \"" << m_config.customEndpoint << "\"";
-    }
-    file << "\n}\n";
+    nlohmann::json document = nlohmann::json::object();
+    document["siteUrl"] = m_config.siteUrl;
+    document["username"] = m_config.username;
+    document["applicationPassword"] = encryptedPassword;
+    document["encrypted"] = true;
+    document["usersEndpoint"] = m_config.usersEndpoint;
+    document["customEndpoint"] = m_config.customEndpoint;
+    document["syncAllFields"] = m_config.syncAllFields;
+    document["createNewMembers"] = m_config.createNewMembers;
+    document["updateExisting"] = m_config.updateExisting;
+    document["perPage"] = m_config.perPage;
+    document["timeout"] = m_config.timeout;
+    document["roleFilter"] = m_config.roleFilter;
 
-    file.close();
+    nlohmann::json mappings = nlohmann::json::object();
+    for (const auto& [source, destination] : m_config.fieldMappings) {
+        mappings[source] = destination;
+    }
+    document["fieldMappings"] = mappings;
+
+    std::string writeError;
+    if (!writeJsonAtomically(configFile, document, writeError)) {
+        m_lastError = writeError + ": " + path;
+        return false;
+    }
+    m_lastError.clear();
     return true;
 }
 

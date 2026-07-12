@@ -1,12 +1,25 @@
 // MainWindowSlots.cpp - Slot implementations for MainWindow
 #include "MainWindow.h"
 #include "widgets/FileExplorer.h"
+#include "widgets/TopToolbar.h"
+#include "controllers/AuthController.h"
+#include "accounts/AccountManager.h"
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QMenu>
 #include <QDebug>
 
 namespace MegaCustom {
+
+void MainWindow::requestLogout() {
+    if (!canSwitchAccounts()) {
+        return;
+    }
+    AccountManager::instance().logoutActiveAccount(true);
+    if (m_authController) {
+        m_authController->logout();
+    }
+}
 
 // File menu slots
 void MainWindow::onProperties() {
@@ -39,7 +52,9 @@ void MainWindow::onSelectAll() {
 }
 
 void MainWindow::onFind() {
-    qDebug() << "Find action triggered";
+    if (m_topToolbar) {
+        m_topToolbar->focusSearch();
+    }
 }
 
 // View menu slots
@@ -160,12 +175,14 @@ void MainWindow::onContextMenuRequested(const QPoint& pos) {
 
 // State management
 QByteArray MainWindow::saveState() const {
-    return QByteArray(); // Return empty for now
+    return QMainWindow::saveState();
 }
 
 bool MainWindow::restoreState(const QByteArray& state) {
-    Q_UNUSED(state);
-    return true; // Always succeed for now
+    if (state.isEmpty()) {
+        return true;
+    }
+    return QMainWindow::restoreState(state);
 }
 
 } // namespace MegaCustom

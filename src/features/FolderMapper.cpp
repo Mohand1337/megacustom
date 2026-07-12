@@ -15,6 +15,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <memory>
 #include <set>
 #include <map>
 #include <cstdlib>
@@ -44,6 +45,108 @@ std::string getHomeDirectory() {
     return home ? std::string(home) : "/tmp";
 #endif
 }
+
+class BlockingRequestListener final : public mega::MegaRequestListener {
+public:
+    void onRequestFinish(mega::MegaApi*, mega::MegaRequest*, mega::MegaError* error) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_success = error && error->getErrorCode() == mega::MegaError::API_OK;
+        m_error = error && error->getErrorString() ? error->getErrorString() : "Unknown error";
+        m_finished = true;
+        m_cv.notify_all();
+    }
+
+    bool waitFor(std::chrono::seconds timeout) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, timeout, [this] { return m_finished; });
+    }
+
+    bool success() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_success;
+    }
+
+    std::string error() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_error;
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_finished = false;
+    bool m_success = false;
+    std::string m_error;
+};
+
+class BlockingTransferListener final : public mega::MegaTransferListener {
+public:
+    struct Snapshot {
+        long long transferred = 0;
+        long long total = 0;
+        long long speed = 0;
+    };
+
+    void onTransferStart(mega::MegaApi*, mega::MegaTransfer* transfer) override {
+        updateSnapshot(transfer);
+    }
+
+    void onTransferUpdate(mega::MegaApi*, mega::MegaTransfer* transfer) override {
+        updateSnapshot(transfer);
+    }
+
+    void onTransferFinish(mega::MegaApi*, mega::MegaTransfer* transfer,
+                          mega::MegaError* error) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (transfer) {
+            m_snapshot.transferred = transfer->getTransferredBytes();
+            m_snapshot.total = transfer->getTotalBytes();
+            m_snapshot.speed = transfer->getSpeed();
+        }
+        m_success = error && error->getErrorCode() == mega::MegaError::API_OK;
+        m_error = error && error->getErrorString() ? error->getErrorString() : "Unknown error";
+        m_finished = true;
+        m_cv.notify_all();
+    }
+
+    bool waitFor(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, timeout, [this] { return m_finished; });
+    }
+
+    bool success() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_success;
+    }
+
+    std::string error() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_error;
+    }
+
+    Snapshot snapshot() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_snapshot;
+    }
+
+private:
+    void updateSnapshot(mega::MegaTransfer* transfer) {
+        if (!transfer) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_snapshot.transferred = transfer->getTransferredBytes();
+        m_snapshot.total = transfer->getTotalBytes();
+        m_snapshot.speed = transfer->getSpeed();
+    }
+
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
+    Snapshot m_snapshot;
+    bool m_finished = false;
+    bool m_success = false;
+    std::string m_error;
+};
 } // anonymous namespace
 using json = nlohmann::json;
 
@@ -69,6 +172,18 @@ FolderMapper::~FolderMapper() {
 // ============================================================================
 
 std::string FolderMapper::getDefaultConfigPath() {
+    if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR")) {
+        std::error_code ec;
+        const fs::path configDir = fs::u8path(configured);
+        fs::create_directories(configDir, ec);
+        const fs::path target = configDir / "mappings.json";
+        const fs::path legacy = fs::path(getHomeDirectory()) / ".megacustom" / "mappings.json";
+        if (!fs::exists(target, ec) && fs::exists(legacy, ec)) {
+            fs::copy_file(legacy, target, fs::copy_options::skip_existing, ec);
+        }
+        return target.u8string();
+    }
+
     std::string homeDir = getHomeDirectory();
     if (!homeDir.empty()) {
         fs::path configDir = fs::path(homeDir) / ".megacustom";
@@ -434,6 +549,9 @@ mega::MegaNode* FolderMapper::getRemoteNode(const std::string& path) {
 }
 
 mega::MegaNode* FolderMapper::ensureRemotePath(const std::string& path) {
+    if (!m_megaApi) {
+        return nullptr;
+    }
     if (path.empty() || path == "/") {
         return m_megaApi->getRootNode();
     }
@@ -460,47 +578,35 @@ mega::MegaNode* FolderMapper::ensureRemotePath(const std::string& path) {
         parts.push_back(current);
     }
 
-    // Store root node pointer once - getRootNode() returns a NEW pointer each call
-    mega::MegaNode* rootNode = m_megaApi->getRootNode();
-    mega::MegaNode* parent = rootNode;
-    std::string builtPath;
+    std::unique_ptr<mega::MegaNode> parent(m_megaApi->getRootNode());
+    if (!parent) {
+        return nullptr;
+    }
 
     for (const auto& part : parts) {
-        builtPath += "/" + part;
-        mega::MegaNode* child = m_megaApi->getNodeByPath(builtPath.c_str());
+        std::unique_ptr<mega::MegaNode> child(
+            m_megaApi->getChildNode(parent.get(), part.c_str()));
 
         if (!child) {
-            // Create folder
-            m_megaApi->createFolder(part.c_str(), parent);
+            BlockingRequestListener listener;
+            m_megaApi->createFolder(part.c_str(), parent.get(), &listener);
+            const bool completed = listener.waitFor(std::chrono::seconds(60));
 
-            // Wait for creation
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-            child = m_megaApi->getNodeByPath(builtPath.c_str());
-            if (!child) {
-                std::cerr << "Failed to create remote folder: " << builtPath << std::endl;
-                // Clean up root node before returning
-                if (parent != rootNode) {
-                    delete parent;
-                }
-                delete rootNode;
+            // A concurrent creator can return EEXIST even though the desired
+            // folder is now available, so resolve the child after completion.
+            child.reset(m_megaApi->getChildNode(parent.get(), part.c_str()));
+            if (!completed || !child) {
+                std::cerr << "Failed to create remote folder component '" << part
+                          << "': " << (completed ? listener.error() : "request timed out")
+                          << std::endl;
                 return nullptr;
             }
         }
 
-        // Only delete non-root nodes (compare against stored pointer)
-        if (parent != rootNode) {
-            delete parent;
-        }
-        parent = child;
+        parent = std::move(child);
     }
 
-    // Clean up root node if it wasn't returned as the final result
-    if (parent != rootNode) {
-        delete rootNode;
-    }
-
-    return parent;
+    return parent.release();
 }
 
 std::map<std::string, mega::MegaNode*> FolderMapper::buildRemoteFileMap(
@@ -672,6 +778,10 @@ std::vector<FileCompareResult> FolderMapper::previewUpload(
     const std::string& nameOrIndex,
     const UploadOptions& options) {
 
+    if (options.shouldCancel && options.shouldCancel()) {
+        return {};
+    }
+
     FolderMapping* mapping = findMapping(nameOrIndex);
     if (!mapping) {
         std::cerr << "Error: Mapping not found: " << nameOrIndex << std::endl;
@@ -692,6 +802,9 @@ std::vector<FileCompareResult> FolderMapper::previewUpload(
     // Apply filters
     std::vector<FileCompareResult> filtered;
     for (const auto& r : results) {
+        if (options.shouldCancel && options.shouldCancel()) {
+            break;
+        }
         // Check exclude patterns
         if (matchesExcludePattern(r.localPath, options.excludePatterns)) {
             continue;
@@ -725,6 +838,15 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
 
     result.mappingName = mapping->name;
 
+    const auto isCancelled = [&options]() {
+        return options.shouldCancel && options.shouldCancel();
+    };
+    if (isCancelled()) {
+        result.cancelled = true;
+        result.errors.push_back("Upload cancelled");
+        return result;
+    }
+
     // Validate mapping
     auto errors = validateMapping(*mapping);
     if (!errors.empty()) {
@@ -756,6 +878,12 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
         }
     }
 
+    if (isCancelled()) {
+        result.cancelled = true;
+        result.errors.push_back("Upload cancelled");
+        return result;
+    }
+
     // Calculate totals
     MapUploadProgress progress;
     progress.mappingName = mapping->name;
@@ -779,6 +907,11 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
         long long newBytes = 0, modifiedBytes = 0;
 
         for (const auto& f : filesToProcess) {
+            if (isCancelled()) {
+                result.cancelled = true;
+                result.errors.push_back("Upload cancelled");
+                break;
+            }
             if (!f.needsUpload) {
                 skipCount++;
                 result.skippedFiles.push_back(f.localPath);
@@ -805,13 +938,13 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
         std::cout << "  Total upload:   " << (newCount + modifiedCount) << " files ("
                   << formatSize(newBytes + modifiedBytes) << ")\n";
 
-        result.success = true;
+        result.success = !result.cancelled;
         result.filesSkipped = skipCount;
         return result;
     }
 
     // Ensure remote path exists
-    mega::MegaNode* remoteBase = ensureRemotePath(mapping->remotePath);
+    std::unique_ptr<mega::MegaNode> remoteBase(ensureRemotePath(mapping->remotePath));
     if (!remoteBase) {
         result.success = false;
         result.errors.push_back("Failed to access/create remote path: " + mapping->remotePath);
@@ -827,10 +960,15 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
     auto uploadStartTime = std::chrono::steady_clock::now();
 
     // Cache for created remote paths to avoid duplicate creation attempts
-    std::map<std::string, mega::MegaNode*> pathCache;
+    std::map<std::string, std::unique_ptr<mega::MegaNode>> pathCache;
     std::set<std::string> failedPaths;
 
     for (const auto& f : filesToProcess) {
+        if (isCancelled()) {
+            result.cancelled = true;
+            result.errors.push_back("Upload cancelled");
+            break;
+        }
         if (!f.needsUpload) {
             result.filesSkipped++;
             result.skippedFiles.push_back(f.localPath);
@@ -847,7 +985,7 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
 
         // Check cache first
         if (pathCache.count(parentPathStr)) {
-            parentNode = pathCache[parentPathStr];
+            parentNode = pathCache[parentPathStr].get();
         } else if (failedPaths.count(parentPathStr)) {
             // Already tried and failed
             result.filesFailed++;
@@ -857,7 +995,7 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
             // First time trying this path
             parentNode = ensureRemotePath(parentPathStr);
             if (parentNode) {
-                pathCache[parentPathStr] = parentNode;
+                pathCache[parentPathStr].reset(parentNode);
             } else {
                 failedPaths.insert(parentPathStr);
             }
@@ -881,15 +1019,15 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
         // Start upload using proper API
         std::string filename = fs::path(f.localPath).filename().string();
 
-        // Check if file already exists and delete it first
+        // Keep existing same-name nodes until the replacement upload succeeds.
+        // This avoids data loss when the new transfer fails or is cancelled.
+        std::vector<std::unique_ptr<mega::MegaNode>> replacedNodes;
         std::unique_ptr<mega::MegaNodeList> children(m_megaApi->getChildren(parentNode));
         if (children) {
             for (int i = 0; i < children->size(); i++) {
                 mega::MegaNode* child = children->get(i);
                 if (child->isFile() && std::string(child->getName()) == filename) {
-                    m_megaApi->remove(child);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                    break;
+                    replacedNodes.emplace_back(child->copy());
                 }
             }
         }
@@ -907,37 +1045,82 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
 #ifdef _WIN32
         std::replace(nativeLocal.begin(), nativeLocal.end(), '/', '\\');
 #endif
+        std::unique_ptr<mega::MegaCancelToken> cancelToken(
+            mega::MegaCancelToken::createInstance());
+        BlockingTransferListener transferListener;
         m_megaApi->startUpload(nativeLocal.c_str(), parentNode, filename.c_str(),
-                               mtimeSeconds, nullptr, false, false, nullptr, nullptr);
+                               mtimeSeconds, nullptr, false, false,
+                               cancelToken.get(), &transferListener);
 
-        // Simple wait for upload (in production, use proper listener)
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        // Wait for transfer to complete (poll-based)
-        int waitCount = 0;
-        const int maxWait = 600;  // 60 seconds max per file
-        while (waitCount < maxWait) {
-            std::unique_ptr<mega::MegaTransferList> transfers(m_megaApi->getTransfers(mega::MegaTransfer::TYPE_UPLOAD));
-            if (!transfers || transfers->size() == 0) {
-                break;
+        bool cancellationIssued = false;
+        bool timedOut = false;
+        const auto transferStartedAt = std::chrono::steady_clock::now();
+        while (!transferListener.waitFor(std::chrono::milliseconds(100))) {
+            const auto snapshot = transferListener.snapshot();
+            progress.currentFile = relativePath;
+            progress.uploadedBytes = result.bytesUploaded + snapshot.transferred;
+            progress.speedBytesPerSec = static_cast<double>(snapshot.speed);
+            if (m_progressCallback) {
+                m_progressCallback(progress);
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            waitCount++;
+
+            if (!cancellationIssued && isCancelled()) {
+                cancelToken->cancel();
+                cancellationIssued = true;
+            }
+            if (!cancellationIssued && options.transferTimeoutSeconds > 0
+                && std::chrono::steady_clock::now() - transferStartedAt
+                    >= std::chrono::seconds(options.transferTimeoutSeconds)) {
+                cancelToken->cancel();
+                cancellationIssued = true;
+                timedOut = true;
+            }
         }
 
-        if (waitCount >= maxWait) {
+        bool fileSucceeded = false;
+        if (cancellationIssued && !timedOut) {
+            if (options.showProgress) std::cout << "CANCELLED\n";
+            result.cancelled = true;
+            result.errors.push_back("Upload cancelled");
+        } else if (timedOut) {
             if (options.showProgress) std::cout << "TIMEOUT\n";
             result.filesFailed++;
             result.errors.push_back("Upload timeout: " + relativePath);
+        } else if (!transferListener.success()) {
+            if (options.showProgress) std::cout << "FAILED\n";
+            result.filesFailed++;
+            result.errors.push_back("Upload failed for " + relativePath + ": "
+                                    + transferListener.error());
         } else {
-            if (options.showProgress) std::cout << "OK\n";
             result.filesUploaded++;
             result.uploadedFiles.push_back(relativePath);
             result.bytesUploaded += f.localSize;
+            fileSucceeded = true;
+
+            for (const auto& replacedNode : replacedNodes) {
+                BlockingRequestListener removeListener;
+                m_megaApi->remove(replacedNode.get(), &removeListener);
+                const bool removed = removeListener.waitFor(std::chrono::seconds(60))
+                    && removeListener.success();
+                if (!removed) {
+                    fileSucceeded = false;
+                    result.filesFailed++;
+                    result.errors.push_back(
+                        "Uploaded " + relativePath
+                        + " but could not remove an older same-name node: "
+                        + removeListener.error());
+                    break;
+                }
+            }
+            if (options.showProgress) {
+                std::cout << (fileSucceeded ? "OK\n" : "CLEANUP FAILED\n");
+            }
         }
 
-        progress.uploadedFiles++;
-        progress.uploadedBytes += f.localSize;
+        if (!result.cancelled) {
+            progress.uploadedFiles++;
+        }
+        progress.uploadedBytes = result.bytesUploaded;
 
         // Calculate speed and ETA
         auto elapsed = std::chrono::steady_clock::now() - uploadStartTime;
@@ -956,20 +1139,24 @@ MapUploadResult FolderMapper::uploadMapping(const std::string& nameOrIndex,
         }
 
         if (m_fileCallback) {
-            m_fileCallback(relativePath, true);
+            m_fileCallback(relativePath, fileSucceeded);
+        }
+        if (result.cancelled) {
+            break;
         }
     }
-
-    // Update mapping stats
-    mapping->lastSync = std::chrono::system_clock::now();
-    mapping->lastFileCount = result.filesUploaded;
-    mapping->lastByteCount = result.bytesUploaded;
-    saveMappings();
 
     // Calculate duration
     auto endTime = std::chrono::steady_clock::now();
     result.duration = std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime);
-    result.success = (result.filesFailed == 0);
+    result.success = !result.cancelled && result.filesFailed == 0;
+
+    if (result.success) {
+        mapping->lastSync = std::chrono::system_clock::now();
+        mapping->lastFileCount = result.filesUploaded;
+        mapping->lastByteCount = result.bytesUploaded;
+        saveMappings();
+    }
 
     if (options.showProgress) {
         std::cout << "\n=== Upload Complete ===\n";
@@ -991,6 +1178,9 @@ std::vector<MapUploadResult> FolderMapper::uploadMappings(
     for (const auto& nameOrIndex : namesOrIndices) {
         auto result = uploadMapping(nameOrIndex, options);
         results.push_back(result);
+        if (result.cancelled) {
+            break;
+        }
     }
 
     return results;
@@ -1003,6 +1193,9 @@ std::vector<MapUploadResult> FolderMapper::uploadAll(const UploadOptions& option
         if (mapping.enabled) {
             auto result = uploadMapping(mapping.name, options);
             results.push_back(result);
+            if (result.cancelled) {
+                break;
+            }
         }
     }
 

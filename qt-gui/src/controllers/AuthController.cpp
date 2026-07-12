@@ -9,6 +9,7 @@
 #include <QDebug>
 #include <QMetaObject>
 #include <QCoreApplication>
+#include <QPointer>
 
 namespace MegaCustom {
 
@@ -28,47 +29,30 @@ public:
 
         bool success = (error->getErrorCode() == mega::MegaError::API_OK);
         QString errorMsg = success ? QString() : QString::fromUtf8(error->getErrorString());
-        QString sessionKey;
-
-        // Get session for login operations
-        if (success && (m_operation == Operation::Login || m_operation == Operation::FastLogin)) {
-            const char* session = api->dumpSession();
-            if (session) {
-                sessionKey = QString::fromUtf8(session);
-                delete[] session;
+        QPointer<AuthController> controller = m_controller;
+        QMetaObject::invokeMethod(qApp, [this, controller, success, errorMsg]() {
+            if (controller) {
+                switch (m_operation) {
+                    case Operation::Login:
+                    case Operation::FastLogin:
+                        controller->handleLoginComplete(success, errorMsg);
+                        break;
+                    case Operation::FetchNodes:
+                        controller->handleFetchNodesComplete(success, errorMsg);
+                        break;
+                    case Operation::Logout:
+                        if (success) {
+                            emit controller->logoutComplete();
+                        }
+                        break;
+                }
             }
-        }
-
-        // Marshal to main thread
-        QMetaObject::invokeMethod(m_controller, [this, success, errorMsg, sessionKey]() {
-            switch (m_operation) {
-                case Operation::Login:
-                case Operation::FastLogin:
-                    m_controller->handleLoginComplete(success, errorMsg);
-                    break;
-                case Operation::FetchNodes:
-                    m_controller->handleFetchNodesComplete(success, errorMsg);
-                    break;
-                case Operation::Logout:
-                    if (success) {
-                        emit m_controller->logoutComplete();
-                    }
-                    break;
-            }
-            // Self-delete after callback
-            deleteLater();
-        }, Qt::QueuedConnection);
-    }
-
-    void deleteLater() {
-        // Will be deleted by Qt's event loop
-        QMetaObject::invokeMethod(qApp, [this]() {
             delete this;
         }, Qt::QueuedConnection);
     }
 
 private:
-    AuthController* m_controller;
+    QPointer<AuthController> m_controller;
     Operation m_operation;
 };
 

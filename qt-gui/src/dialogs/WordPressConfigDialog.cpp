@@ -4,6 +4,8 @@
 #include "widgets/ButtonFactory.h"
 #include "styles/ThemeManager.h"
 #include "utils/DpiScaler.h"
+#include "utils/Settings.h"
+#include <QDir>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -333,7 +335,7 @@ void WordPressConfigDialog::setupUI()
     buttonLayout->addStretch();
 
     m_saveBtn = ButtonFactory::createPrimary("Save Config", this);
-    m_saveBtn->setIcon(QIcon(":/icons/save.svg"));
+    m_saveBtn->setIcon(QIcon(":/icons/check.svg"));
     connect(m_saveBtn, &QPushButton::clicked, this, &WordPressConfigDialog::onSaveConfig);
     buttonLayout->addWidget(m_saveBtn);
 
@@ -368,7 +370,8 @@ void WordPressConfigDialog::loadConfig()
             }
         }
 
-        updateStatus("Configuration loaded from ~/.megacustom/wordpress.json");
+        const QString configPath = Settings::instance().configDirectory() + "/wordpress.json";
+        updateStatus("Configuration loaded from " + QDir::toNativeSeparators(configPath));
     }
 }
 

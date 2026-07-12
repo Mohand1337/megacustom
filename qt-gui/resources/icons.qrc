@@ -28,6 +28,8 @@
         <file>icons/scissors.svg</file>
         <file>icons/clipboard.svg</file>
         <file>icons/share.svg</file>
+        <file>icons/megacustom.svg</file>
+        <file>icons/megacustom.ico</file>
 
         <!-- Views -->
         <file>icons/list.svg</file>

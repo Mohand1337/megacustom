@@ -2,15 +2,32 @@
 #include "../controllers/FolderMapperController.h"
 #include "../controllers/SmartSyncController.h"
 #include "../controllers/MultiUploaderController.h"
+#include "../utils/Settings.h"
 #include <QSettings>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFile>
+#include <QSaveFile>
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 
 namespace MegaCustom {
+
+namespace {
+QString schedulerPath() {
+    const QString configDir = Settings::instance().configDirectory();
+    QDir().mkpath(configDir);
+    const QString target = configDir + "/scheduler.json";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
+        + "/MegaCustom/scheduler.json";
+    if (legacy != target && !QFile::exists(target) && QFile::exists(legacy)) {
+        QFile::copy(legacy, target);
+    }
+    return target;
+}
+}
 
 SyncScheduler::SyncScheduler(QObject* parent)
     : QObject(parent)
@@ -369,10 +386,7 @@ int SyncScheduler::generateTaskId() {
 }
 
 void SyncScheduler::loadTasks() {
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
-                         + "/MegaCustom/scheduler.json";
-
-    QFile file(configPath);
+    QFile file(schedulerPath());
     if (!file.open(QIODevice::ReadOnly)) {
         qDebug() << "No scheduler config found, starting fresh";
         return;
@@ -414,13 +428,6 @@ void SyncScheduler::loadTasks() {
 }
 
 void SyncScheduler::saveTasks() {
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
-                         + "/MegaCustom";
-    if (!QDir().mkpath(configPath)) {
-        qWarning() << "SyncScheduler: Failed to create config directory:" << configPath;
-        return;
-    }
-
     QJsonObject root;
     root["nextTaskId"] = m_nextTaskId;
     root["checkInterval"] = m_checkIntervalSec;
@@ -445,11 +452,16 @@ void SyncScheduler::saveTasks() {
     }
     root["tasks"] = tasksArray;
 
-    QFile file(configPath + "/scheduler.json");
+    QSaveFile file(schedulerPath());
     if (file.open(QIODevice::WriteOnly)) {
-        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-        file.close();
-        qDebug() << "Saved" << m_tasks.size() << "scheduled tasks";
+        const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        if (file.write(data) == data.size() && file.commit()) {
+            qDebug() << "Saved" << m_tasks.size() << "scheduled tasks";
+        } else {
+            qWarning() << "Failed to commit scheduler config:" << file.errorString();
+        }
+    } else {
+        qWarning() << "Failed to open scheduler config:" << file.errorString();
     }
 }
 

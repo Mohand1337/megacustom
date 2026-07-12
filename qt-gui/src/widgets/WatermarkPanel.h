@@ -17,6 +17,8 @@
 #include <QMap>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <memory>
 #include <atomic>
 #include <mutex>
@@ -40,6 +42,7 @@ struct OperationJobRecord;
  */
 struct WatermarkFileInfo {
     QString filePath;
+    QString sourceRootDir;  // Per-file root used to preserve relative subfolders
     QString fileName;
     qint64 fileSize;
     QString fileType;       // "video", "pdf", or "audio"
@@ -81,6 +84,7 @@ public:
     void setAutoUpload(bool enabled, void* megaApi);
     void setCustomUploadPath(const QString& path);
     void setRootDir(const QString& rootDir);
+    void setSourceRoots(const QMap<QString, QString>& sourceRoots);
     void setMetricsStore(MetricsStore* store);
     void setResumeTasks(const QList<WatermarkResumeTask>& tasks);
 
@@ -108,6 +112,7 @@ private:
     bool ensureDiskSpaceForNextOutput(const QString& inputPath, const QString& outputBaseDir);
     void pauseForDiskSpace(const QString& inputPath, const QString& outputBaseDir);
     bool isDiskSpaceError(const WatermarkResult& result) const;
+    QString sourceRootForInput(const QString& inputPath) const;
     WatermarkResult watermarkInput(Watermarker& watermarker,
                                    const WatermarkConfig& baseConfig,
                                    const QString& inputPath,
@@ -132,6 +137,7 @@ private:
     void* m_megaApi = nullptr;
     QString m_customUploadPath;
     QString m_rootDir;
+    QMap<QString, QString> m_sourceRoots;
     MetricsStore* m_metricsStore = nullptr;
     QList<WatermarkResumeTask> m_resumeTasks;
     std::mutex m_activeWatermarkerMutex;
@@ -152,6 +158,7 @@ public:
     void setController(WatermarkerController* controller);
     void setMegaApi(mega::MegaApi* api);
     void setMetricsStore(MetricsStore* store);
+    bool isRunning() const { return m_isRunning; }
 
 signals:
     void watermarkStarted();
@@ -214,8 +221,10 @@ private:
     QString watermarkReportRootDir() const;
     QString latestWatermarkReportPath() const;
     QString writeWatermarkCompletionReport(int successCount, int failCount) const;
-    void saveWatermarkCheckpoint(const QString& reason, const QString& jobId = {});
+    void saveWatermarkCheckpoint(const QString& reason, const QString& jobId = {},
+                                 bool forcePersist = false);
     QJsonArray serializeWatermarkRows() const;
+    QMap<QString, QString> sourceRootMap() const;
     bool restoreWatermarkRowsFromJob(const OperationJobRecord& record);
     void applyWatermarkJobMetadataToUi(const QJsonObject& metadata);
     void applyAdvancedWatermarkJobMetadata(const QJsonObject& metadata);
@@ -326,6 +335,11 @@ private:
     QString m_retrySourceJobId;
     bool m_currentJobCancelled = false;
     QString m_sourceRootDir;  // Root folder from "Add Folder" for subfolder structure
+    QElapsedTimer m_checkpointTimer;
+    int m_checkpointDirtyEvents = 0;
+    QTimer m_checkpointFlushTimer;
+    QString m_pendingCheckpointReason;
+    QString m_pendingCheckpointJobId;
 
     // Stored member file map from last multi-member watermark (for manual send to distribution)
     QMap<QString, QStringList> m_lastMemberFileMap;

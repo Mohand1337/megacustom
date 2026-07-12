@@ -1,6 +1,5 @@
 /**
  * ConfigManager Implementation
- * Stub implementation for initial compilation
  */
 
 #include "core/ConfigManager.h"
@@ -11,12 +10,40 @@
 #include <chrono>
 #include <cstdlib>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace MegaCustom {
 
+namespace {
+bool replaceFileAtomically(const fs::path& temporary, const fs::path& target,
+                           std::error_code& error) {
+#ifdef _WIN32
+    if (MoveFileExW(temporary.c_str(), target.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        error.clear();
+        return true;
+    }
+    error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    return false;
+#else
+    fs::rename(temporary, target, error);
+    return !error;
+#endif
+}
+} // namespace
+
 // Helper function to get profiles directory
 static std::string getProfilesDir() {
+    if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR")) {
+        if (*configured != '\0') {
+            return (fs::u8path(configured) / "profiles").u8string();
+        }
+    }
+
     std::string home;
 #ifdef _WIN32
     char* userProfile = std::getenv("USERPROFILE");
@@ -32,7 +59,7 @@ static std::string getProfilesDir() {
     if (home.empty()) {
         home = ".";
     }
-    return home + "/.megacustom/profiles";
+    return (fs::u8path(home) / ".megacustom" / "profiles").u8string();
 }
 
 // Helper function to ensure profiles directory exists
@@ -73,11 +100,17 @@ bool ConfigManager::loadConfig(const std::string& filePath) {
             return false;
         }
 
-        file >> m_config;
-        m_configFilePath = filePath;
+        nlohmann::json loaded;
+        file >> loaded;
+        if (!loaded.is_object()) {
+            std::cerr << "Invalid config root object: " << filePath << std::endl;
+            return false;
+        }
 
         // Merge with defaults
-        m_config = mergeConfigs(m_defaultConfig, m_config);
+        loaded = mergeConfigs(m_defaultConfig, loaded);
+        m_config = std::move(loaded);
+        m_configFilePath = filePath;
 
         if (m_changeCallback) {
             m_changeCallback("config_loaded");
@@ -98,13 +131,52 @@ bool ConfigManager::saveConfig(const std::string& filePath) {
             return false;
         }
 
-        std::ofstream file(targetPath);
+        const fs::path target = fs::u8path(targetPath);
+        std::error_code error;
+        if (!target.parent_path().empty()) {
+            fs::create_directories(target.parent_path(), error);
+        }
+        if (error) {
+            std::cerr << "Failed to create config directory: " << error.message() << std::endl;
+            return false;
+        }
+
+        fs::path temporary = target;
+        temporary += ".tmp";
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file.is_open()) {
             std::cerr << "Failed to open config file for writing: " << targetPath << std::endl;
             return false;
         }
 
-        file << m_config.dump(4); // Pretty print with 4 spaces
+        file << m_config.dump(4) << '\n';
+        file.flush();
+        if (!file.good()) {
+            file.close();
+            fs::remove(temporary, error);
+            std::cerr << "Failed while writing config file: " << targetPath << std::endl;
+            return false;
+        }
+        file.close();
+
+#ifndef _WIN32
+        fs::permissions(temporary,
+                        fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace, error);
+        if (error) {
+            fs::remove(temporary, error);
+            std::cerr << "Failed to secure config file permissions" << std::endl;
+            return false;
+        }
+#endif
+
+        if (!replaceFileAtomically(temporary, target, error)) {
+            std::error_code cleanupError;
+            fs::remove(temporary, cleanupError);
+            std::cerr << "Failed to replace config file: " << error.message() << std::endl;
+            return false;
+        }
+        m_configFilePath = targetPath;
         return true;
     } catch (const std::exception& e) {
         std::cerr << "Error saving config: " << e.what() << std::endl;
@@ -264,17 +336,16 @@ void ConfigManager::initializeDefaults() {
 
 nlohmann::json ConfigManager::navigateToKey(const std::string& key) const {
     auto keys = splitKey(key);
-    nlohmann::json current = m_config;
+    const nlohmann::json* current = &m_config;
 
     for (const auto& k : keys) {
-        if (current.contains(k)) {
-            current = current[k];
-        } else {
+        if (!current->contains(k)) {
             throw std::runtime_error("Key not found: " + key);
         }
+        current = &(*current)[k];
     }
 
-    return current;
+    return *current;
 }
 
 void ConfigManager::setValueAtKey(const std::string& key, const nlohmann::json& value) {
@@ -560,8 +631,21 @@ bool ConfigManager::deleteProfile(const std::string& profileName) {
 }
 
 std::vector<std::string> ConfigManager::getArray(const std::string& key) const {
-    // TODO: Implement array getter
-    return std::vector<std::string>();
+    std::vector<std::string> result;
+    try {
+        const auto value = navigateToKey(key);
+        if (!value.is_array()) {
+            return result;
+        }
+        for (size_t i = 0; i < value.size(); ++i) {
+            if (value[i].is_string()) {
+                result.push_back(value[i].get<std::string>());
+            }
+        }
+    } catch (...) {
+        return {};
+    }
+    return result;
 }
 
 nlohmann::json ConfigManager::getObject(const std::string& key) const {

@@ -19,6 +19,7 @@
 #include <string>
 #include <functional>
 #include <memory>
+#include <algorithm>
 
 namespace MegaCustom {
 
@@ -70,6 +71,25 @@ FileController::FileController(void* api)
     }
 }
 
+FileController::~FileController() {
+    for (QFuture<void>& task : m_backgroundTasks) {
+        task.waitForFinished();
+    }
+}
+
+bool FileController::hasActiveTasks() const {
+    return std::any_of(m_backgroundTasks.cbegin(), m_backgroundTasks.cend(),
+                       [](const QFuture<void>& task) { return !task.isFinished(); });
+}
+
+void FileController::trackTask(QFuture<void> future) {
+    m_backgroundTasks.erase(
+        std::remove_if(m_backgroundTasks.begin(), m_backgroundTasks.end(),
+                       [](const QFuture<void>& task) { return task.isFinished(); }),
+        m_backgroundTasks.end());
+    m_backgroundTasks.append(std::move(future));
+}
+
 QString FileController::currentLocalPath() const {
     return m_currentLocalPath;
 }
@@ -96,30 +116,18 @@ void FileController::refreshRemote(const QString& path) {
     QString targetPath = path.isEmpty() ? "/" : path;
     m_currentRemotePath = targetPath;
 
+    mega::MegaApi* megaApi = getMegaApiForController(m_megaApi);
+    if (!megaApi || megaApi->isLoggedIn() <= 0) {
+        const QString error = megaApi ? "Not logged in" : "MegaApi not initialized";
+        emit loadingError(error);
+        emit operationFailed(error);
+        emit loadingFinished();
+        return;
+    }
+
     emit loadingStarted(targetPath);
 
-    void* storedApi = m_megaApi;
-
-    QtConcurrent::run([this, targetPath, storedApi]() {
-        mega::MegaApi* megaApi = getMegaApiForController(storedApi);
-
-        if (!megaApi) {
-            QMetaObject::invokeMethod(this, [this]() {
-                emit loadingError("MegaApi not initialized");
-                emit operationFailed("MegaApi not initialized");
-                emit loadingFinished();
-            }, Qt::QueuedConnection);
-            return;
-        }
-
-        if (megaApi->isLoggedIn() <= 0) {
-            QMetaObject::invokeMethod(this, [this]() {
-                emit loadingError("Not logged in");
-                emit operationFailed("Not logged in");
-                emit loadingFinished();
-            }, Qt::QueuedConnection);
-            return;
-        }
+    trackTask(QtConcurrent::run([this, targetPath, megaApi]() {
 
         MegaNodePtr folderNode;
         if (targetPath == "/") {
@@ -162,7 +170,7 @@ void FileController::refreshRemote(const QString& path) {
             emit remoteListUpdated();
             emit loadingFinished();
         }, Qt::QueuedConnection);
-    });
+    }));
 }
 
 void FileController::createRemoteFolder(const QString& name) {
@@ -306,7 +314,7 @@ void FileController::searchRemote(const QString& query) {
 
     mega::MegaApi* capturedApi = megaApi;
 
-    QtConcurrent::run([this, query, capturedApi]() {
+    trackTask(QtConcurrent::run([this, query, capturedApi]() {
         MegaNodePtr rootNode(capturedApi->getRootNode());
         if (!rootNode) {
             QMetaObject::invokeMethod(this, [this]() {
@@ -350,7 +358,7 @@ void FileController::searchRemote(const QString& query) {
             emit searchResultsReceived(results);
             emit loadingFinished();
         }, Qt::QueuedConnection);
-    });
+    }));
 }
 
 void FileController::getStorageInfo() {
@@ -364,7 +372,7 @@ void FileController::getStorageInfo() {
 
     mega::MegaApi* capturedApi = megaApi;
 
-    QtConcurrent::run([this, capturedApi]() {
+    trackTask(QtConcurrent::run([this, capturedApi]() {
         MegaNodePtr rootNode(capturedApi->getRootNode());
         qint64 used = 0;
         if (rootNode) {
@@ -386,7 +394,7 @@ void FileController::getStorageInfo() {
         QMetaObject::invokeMethod(this, [this, used, total]() {
             emit storageInfoReceived(used, total);
         }, Qt::QueuedConnection);
-    });
+    }));
 }
 
 void FileController::buildSearchIndex(CloudSearchIndex* index) {
@@ -412,7 +420,7 @@ void FileController::buildSearchIndex(CloudSearchIndex* index) {
 
     emit searchIndexBuildStarted();
 
-    QtConcurrent::run([this, index, capturedApi, buildGeneration]() {
+    trackTask(QtConcurrent::run([this, index, capturedApi, buildGeneration]() {
         QElapsedTimer timer;
         timer.start();
 
@@ -491,7 +499,7 @@ void FileController::buildSearchIndex(CloudSearchIndex* index) {
         QMetaObject::invokeMethod(this, [this, nodeCount]() {
             emit searchIndexBuildCompleted(nodeCount);
         }, Qt::QueuedConnection);
-    });
+    }));
 }
 
 } // namespace MegaCustom

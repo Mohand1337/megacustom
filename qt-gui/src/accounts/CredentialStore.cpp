@@ -1,13 +1,18 @@
 #include "CredentialStore.h"
+#include "utils/Settings.h"
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
+#include <QSettings>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QCryptographicHash>
 #include <QSysInfo>
 #include <QDebug>
 #include <QRandomGenerator>
+#include <QMutex>
+#include <QMutexLocker>
 
 // OpenSSL for AES-256-GCM encryption
 #include <openssl/evp.h>
@@ -21,6 +26,45 @@
 
 namespace MegaCustom {
 
+namespace {
+QString configFilePath(const QString& fileName, bool privateFile = false) {
+    const QString directory = Settings::instance().configDirectory();
+    QDir().mkpath(directory);
+    const QString target = directory + "/" + fileName;
+
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
+        + "/MegaCustom/" + fileName;
+    if (legacy != target && !QFile::exists(target) && QFile::exists(legacy)) {
+        if (QFile::copy(legacy, target) && privateFile) {
+#ifndef Q_OS_WIN
+            QFile::setPermissions(target, QFile::ReadOwner | QFile::WriteOwner);
+#endif
+        }
+    }
+
+    return target;
+}
+
+QMutex& fallbackStorageMutex() {
+    static QMutex mutex;
+    return mutex;
+}
+
+QString keychainIndexPath() {
+    return configFilePath("keychain-index.ini");
+}
+
+void setKeychainIndexEntry(const QString& accountId, bool present) {
+    QSettings index(keychainIndexPath(), QSettings::IniFormat);
+    if (present) {
+        index.setValue("sessions/" + accountId, true);
+    } else {
+        index.remove("sessions/" + accountId);
+    }
+    index.sync();
+}
+}
+
 const QString CredentialStore::SERVICE_NAME = "MegaCustomApp";
 
 CredentialStore::CredentialStore(QObject* parent)
@@ -31,6 +75,12 @@ CredentialStore::CredentialStore(QObject* parent)
 #ifdef HAVE_QTKEYCHAIN
     // Check if QtKeychain is functional
     m_useSecureStorage = true;
+    QSettings index(keychainIndexPath(), QSettings::IniFormat);
+    index.beginGroup("sessions");
+    for (const QString& accountId : index.childKeys()) {
+        m_sessionCache.insert(accountId, QString());
+    }
+    index.endGroup();
     qDebug() << "CredentialStore: Using OS secure storage (QtKeychain)";
 #else
     // Use fallback encrypted file storage
@@ -42,10 +92,6 @@ CredentialStore::CredentialStore(QObject* parent)
 
 CredentialStore::~CredentialStore()
 {
-    // Save any pending changes to fallback storage
-    if (!m_useSecureStorage && m_fallbackLoaded) {
-        saveFallbackStorage();
-    }
 }
 
 bool CredentialStore::isSecureStorageAvailable() const
@@ -68,6 +114,8 @@ void CredentialStore::saveSession(const QString& accountId, const QString& sessi
 
         connect(job, &QKeychain::Job::finished, this, [this, accountId](QKeychain::Job* job) {
             if (job->error() == QKeychain::NoError) {
+                m_sessionCache.insert(accountId, QString());
+                setKeychainIndexEntry(accountId, true);
                 emit sessionSaved(accountId, true);
             } else {
                 qWarning() << "CredentialStore: Failed to save session:" << job->errorString();
@@ -83,6 +131,8 @@ void CredentialStore::saveSession(const QString& accountId, const QString& sessi
 #endif
 
     // Fallback: encrypted file storage
+    QMutexLocker locker(&fallbackStorageMutex());
+    loadFallbackStorage();
     m_sessionCache[accountId] = sessionToken;
     bool success = saveFallbackStorage();
     emit sessionSaved(accountId, success);
@@ -106,8 +156,12 @@ void CredentialStore::loadSession(const QString& accountId)
         connect(job, &QKeychain::Job::finished, this, [this, accountId](QKeychain::Job* job) {
             auto* readJob = qobject_cast<QKeychain::ReadPasswordJob*>(job);
             if (job->error() == QKeychain::NoError && readJob) {
+                m_sessionCache.insert(accountId, QString());
+                setKeychainIndexEntry(accountId, true);
                 emit sessionLoaded(accountId, readJob->textData());
             } else if (job->error() == QKeychain::EntryNotFound) {
+                m_sessionCache.remove(accountId);
+                setKeychainIndexEntry(accountId, false);
                 emit error(accountId, "Session not found");
             } else {
                 qWarning() << "CredentialStore: Failed to load session:" << job->errorString();
@@ -122,9 +176,8 @@ void CredentialStore::loadSession(const QString& accountId)
 #endif
 
     // Fallback: encrypted file storage
-    if (!m_fallbackLoaded) {
-        loadFallbackStorage();
-    }
+    QMutexLocker locker(&fallbackStorageMutex());
+    loadFallbackStorage();
 
     if (m_sessionCache.contains(accountId)) {
         emit sessionLoaded(accountId, m_sessionCache[accountId]);
@@ -147,6 +200,8 @@ void CredentialStore::deleteSession(const QString& accountId)
 
         connect(job, &QKeychain::Job::finished, this, [this, accountId](QKeychain::Job* job) {
             if (job->error() == QKeychain::NoError || job->error() == QKeychain::EntryNotFound) {
+                m_sessionCache.remove(accountId);
+                setKeychainIndexEntry(accountId, false);
                 emit sessionDeleted(accountId);
             } else {
                 qWarning() << "CredentialStore: Failed to delete session:" << job->errorString();
@@ -161,6 +216,8 @@ void CredentialStore::deleteSession(const QString& accountId)
 #endif
 
     // Fallback: encrypted file storage
+    QMutexLocker locker(&fallbackStorageMutex());
+    loadFallbackStorage();
     m_sessionCache.remove(accountId);
     saveFallbackStorage();
     emit sessionDeleted(accountId);
@@ -170,9 +227,7 @@ bool CredentialStore::hasSession(const QString& accountId) const
 {
 #ifdef HAVE_QTKEYCHAIN
     if (m_useSecureStorage) {
-        // For keychain, we can't synchronously check - caller should use loadSession()
-        // This is a limitation; for UI purposes, we maintain a local cache
-        return false;
+        return m_sessionCache.contains(accountId);
     }
 #endif
 
@@ -198,7 +253,9 @@ void CredentialStore::clearAll()
 #endif
 
     // Fallback: clear cache and file
+    QMutexLocker locker(&fallbackStorageMutex());
     m_sessionCache.clear();
+    m_fallbackLoaded = true;
     saveFallbackStorage();
 }
 
@@ -209,17 +266,13 @@ void CredentialStore::clearAll()
 void CredentialStore::initializeFallbackStorage()
 {
     m_encryptionKey = generateMachineKey();
+    QMutexLocker locker(&fallbackStorageMutex());
     loadFallbackStorage();
 }
 
 QString CredentialStore::getFallbackFilePath() const
 {
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
-    QDir dir(configPath);
-    if (!dir.exists("MegaCustom")) {
-        dir.mkpath("MegaCustom");
-    }
-    return configPath + "/MegaCustom/.sessions.enc";
+    return configFilePath(".sessions.enc", true);
 }
 
 bool CredentialStore::saveFallbackStorage()
@@ -232,18 +285,20 @@ bool CredentialStore::saveFallbackStorage()
     QJsonDocument doc(root);
     QByteArray data = doc.toJson(QJsonDocument::Compact);
 
-    QFile file(getFallbackFilePath());
+    QSaveFile file(getFallbackFilePath());
     if (!file.open(QIODevice::WriteOnly)) {
         qWarning() << "CredentialStore: Cannot open file for writing:" << file.errorString();
         return false;
     }
 
-    file.write(data);
-    file.close();
+    if (file.write(data) < 0 || !file.commit()) {
+        qWarning() << "CredentialStore: Cannot commit encrypted session file:" << file.errorString();
+        return false;
+    }
 
     // Set restrictive permissions (owner read/write only)
 #ifndef Q_OS_WIN
-    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+    QFile::setPermissions(getFallbackFilePath(), QFile::ReadOwner | QFile::WriteOwner);
 #endif
 
     return true;
@@ -461,8 +516,7 @@ QString CredentialStore::generateMachineKey() const
 QString CredentialStore::getOrCreateSalt() const
 {
     // Get or create a per-installation random salt
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
-    QString saltPath = configPath + "/MegaCustom/.salt.bin";
+    const QString saltPath = configFilePath(".salt.bin", true);
 
     QFile file(saltPath);
 
@@ -484,19 +538,19 @@ QString CredentialStore::getOrCreateSalt() const
         }
     }
 
-    // Ensure directory exists
-    QDir dir(configPath);
-    if (!dir.exists("MegaCustom")) {
-        dir.mkpath("MegaCustom");
-    }
-
     // Save salt to file with restrictive permissions
-    if (file.open(QIODevice::WriteOnly)) {
+    QSaveFile saveFile(saltPath);
+    if (saveFile.open(QIODevice::WriteOnly)) {
+        const bool written = saveFile.write(salt) == salt.size();
+        const bool committed = written && saveFile.commit();
+        if (!committed) {
+            qWarning() << "CredentialStore: Failed to commit salt file:" << saveFile.errorString();
+        }
 #ifndef Q_OS_WIN
-        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+        if (committed) {
+            QFile::setPermissions(saltPath, QFile::ReadOwner | QFile::WriteOwner);
+        }
 #endif
-        file.write(salt);
-        file.close();
     } else {
         qWarning() << "CredentialStore: Failed to save salt file";
     }

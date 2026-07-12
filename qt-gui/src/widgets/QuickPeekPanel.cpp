@@ -343,7 +343,7 @@ void QuickPeekPanel::onItemContextMenu(const QPoint& pos)
 
     menu.addSeparator();
 
-    QAction* linkAction = menu.addAction(QIcon(":/icons/link.svg"), "Get Public Link");
+    QAction* linkAction = menu.addAction(QIcon(":/icons/share.svg"), "Get Public Link");
     connect(linkAction, &QAction::triggered, this, &QuickPeekPanel::onGetLink);
 
     QAction* downloadAction = menu.addAction(QIcon(":/icons/download.svg"), "Download");

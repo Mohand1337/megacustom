@@ -2,6 +2,7 @@
 #include "features/Watermarker.h"
 #include "widgets/ButtonFactory.h"
 #include "utils/DpiScaler.h"
+#include "utils/Settings.h"
 #include "styles/ThemeManager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -484,7 +485,8 @@ void WatermarkSettingsDialog::loadConfig(const WatermarkConfig& config) {
 }
 
 void WatermarkSettingsDialog::saveToSettings() {
-    QSettings settings;
+    QSettings settings(Settings::instance().configDirectory() + "/watermark.ini",
+                       QSettings::IniFormat);
     settings.beginGroup("Watermark");
 
     // Video timing
@@ -525,7 +527,8 @@ void WatermarkSettingsDialog::saveToSettings() {
 }
 
 void WatermarkSettingsDialog::loadFromSettings() {
-    QSettings settings;
+    QSettings settings(Settings::instance().configDirectory() + "/watermark.ini",
+                       QSettings::IniFormat);
     settings.beginGroup("Watermark");
 
     // Video timing

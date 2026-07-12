@@ -1,6 +1,7 @@
 #include "SessionPool.h"
 #include "CredentialStore.h"
 #include "../utils/Constants.h"
+#include "../utils/Settings.h"
 #include <megaapi.h>
 #include <QDebug>
 #include <QCoreApplication>
@@ -244,6 +245,11 @@ void SessionPool::releaseSession(const QString& accountId, bool keepCredentials)
     QMutexLocker locker(&m_poolMutex);
 
     if (!m_pool.contains(accountId)) {
+        locker.unlock();
+        if (!keepCredentials) {
+            m_credentialStore->deleteSession(accountId);
+        }
+        emit sessionReleased(accountId);
         return;
     }
 
@@ -431,8 +437,8 @@ mega::MegaApi* SessionPool::createApiInstance(const QString& accountId)
     // Create per-account cache directory for node caching
     // This is CRITICAL - without a valid basePath, the SDK disables local node caching
     // and re-downloads the entire filesystem tree on every restart
-    QString cachePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                        + "/mega_cache/" + accountId;
+    QString cachePath = Settings::instance().configDirectory()
+                        + "/mega_cache/accounts/" + accountId;
     QDir().mkpath(cachePath);
 
     qDebug() << "SessionPool: Creating MegaApi with cache path:" << cachePath;

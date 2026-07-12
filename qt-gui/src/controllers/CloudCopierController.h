@@ -125,6 +125,7 @@ public:
     int getDestinationCount() const { return m_destinations.size(); }
     int getPendingTaskCount() const;
     int getCompletedTaskCount() const;
+    bool setMegaApi(void* megaApi);
 
     // Template access
     QStringList getTemplateNames() const;

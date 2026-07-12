@@ -18,6 +18,7 @@ public:
     ~TransferController();
 
     bool hasActiveTransfers() const;
+    bool setMegaApi(void* api);
     void cancelAllTransfers();
     void uploadFile(const QString& localPath, const QString& remotePath);
     void uploadFolder(const QString& localPath, const QString& remotePath);

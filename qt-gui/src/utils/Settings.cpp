@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 
 namespace MegaCustom {
 
@@ -148,8 +149,36 @@ void Settings::save() {
 }
 
 void Settings::loadFromFile(const QString& file) {
+    if (!QFileInfo::exists(file)) {
+        qWarning() << "Settings::loadFromFile() file does not exist:" << file;
+        return;
+    }
     QSettings settings(file, QSettings::IniFormat);
-    // Load from custom file - implementation similar to load()
+    if (settings.status() != QSettings::NoError) {
+        qWarning() << "Settings::loadFromFile() could not read" << file;
+        return;
+    }
+
+    m_rememberLogin = settings.value("auth/rememberLogin", m_rememberLogin).toBool();
+    m_lastEmail = settings.value("auth/lastEmail", m_lastEmail).toString();
+    m_apiKey = settings.value("auth/apiKey", m_apiKey).toString();
+    m_lastLocalPath = settings.value("paths/lastLocal", m_lastLocalPath).toString();
+    m_lastRemotePath = settings.value("paths/lastRemote", m_lastRemotePath).toString();
+    m_darkMode = settings.value("ui/darkMode", m_darkMode).toBool();
+    m_showHidden = settings.value("ui/showHidden", m_showHidden).toBool();
+    m_showTrayIcon = settings.value("ui/showTrayIcon", m_showTrayIcon).toBool();
+    m_showNotifications = settings.value("ui/showNotifications", m_showNotifications).toBool();
+    m_windowGeometry = settings.value("ui/windowGeometry", m_windowGeometry).toByteArray();
+    m_windowState = settings.value("ui/windowState", m_windowState).toByteArray();
+    m_syncInterval = settings.value("sync/interval", m_syncInterval).toInt();
+    m_syncOnStartup = settings.value("sync/onStartup", m_syncOnStartup).toBool();
+    m_uploadBandwidthLimit = settings.value("advanced/uploadLimit", m_uploadBandwidthLimit).toInt();
+    m_downloadBandwidthLimit = settings.value("advanced/downloadLimit", m_downloadBandwidthLimit).toInt();
+    m_parallelTransfers = settings.value("advanced/parallelTransfers", m_parallelTransfers).toInt();
+    m_excludePatterns = settings.value("advanced/excludePatterns", m_excludePatterns).toString();
+    m_skipHiddenFiles = settings.value("advanced/skipHidden", m_skipHiddenFiles).toBool();
+    m_cachePath = settings.value("advanced/cachePath", m_cachePath).toString();
+    m_loggingEnabled = settings.value("advanced/logging", m_loggingEnabled).toBool();
     qDebug() << "Settings::loadFromFile() from" << file;
 }
 

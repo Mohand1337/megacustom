@@ -257,7 +257,8 @@ echo This is a portable version of MegaCustomGUI.
 echo.
 echo To run: Double-click MegaCustomGUI.exe
 echo.
-echo Portable mode is enabled - all settings are stored in this folder.
+echo Portable mode stores settings, jobs, logs, member data, and local caches in this folder.
+echo Secrets saved to Windows Credential Manager remain managed by Windows.
 echo To use standard Windows settings ^(AppData^), delete the portable.marker file.
 echo.
 echo System Requirements:

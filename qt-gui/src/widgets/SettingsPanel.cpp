@@ -45,8 +45,6 @@ void SettingsPanel::setupUI()
     m_contentStack->setObjectName("SettingsStack");
 
     setupGeneralPage();
-    setupSyncPage();
-    setupAdvancedPage();
     setupAboutPage();
 
     contentLayout->addWidget(m_contentStack, 1);
@@ -94,8 +92,6 @@ void SettingsPanel::setupNavigation()
     m_navigationList->setSpacing(2);
 
     addNavigationItem(":/icons/settings.svg", "General");
-    addNavigationItem(":/icons/folder-sync.svg", "Sync");
-    addNavigationItem(":/icons/sliders-horizontal.svg", "Advanced");
     addNavigationItem(":/icons/info.svg", "About");
 
     m_navigationList->setCurrentRow(0);
@@ -134,10 +130,6 @@ void SettingsPanel::setupGeneralPage()
     QGroupBox* startupGroup = new QGroupBox("Startup", page);
     QVBoxLayout* startupLayout = new QVBoxLayout(startupGroup);
 
-    m_startAtLoginCheck = new QCheckBox("Start at system login", startupGroup);
-    connect(m_startAtLoginCheck, &QCheckBox::toggled, this, &SettingsPanel::onSettingChanged);
-    startupLayout->addWidget(m_startAtLoginCheck);
-
     m_showTrayIconCheck = new QCheckBox("Show system tray icon", startupGroup);
     connect(m_showTrayIconCheck, &QCheckBox::toggled, this, &SettingsPanel::onSettingChanged);
     startupLayout->addWidget(m_showTrayIconCheck);
@@ -155,16 +147,6 @@ void SettingsPanel::setupGeneralPage()
     m_darkModeCheck = new QCheckBox("Enable dark mode", appearanceGroup);
     connect(m_darkModeCheck, &QCheckBox::toggled, this, &SettingsPanel::onSettingChanged);
     appearanceLayout->addWidget(m_darkModeCheck);
-
-    QHBoxLayout* langLayout = new QHBoxLayout();
-    langLayout->addWidget(new QLabel("Language:", appearanceGroup));
-    m_languageCombo = new QComboBox(appearanceGroup);
-    m_languageCombo->addItems({"English", "Spanish", "French", "German", "Chinese", "Japanese"});
-    connect(m_languageCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SettingsPanel::onSettingChanged);
-    langLayout->addWidget(m_languageCombo);
-    langLayout->addStretch();
-    appearanceLayout->addLayout(langLayout);
 
     layout->addWidget(appearanceGroup);
     layout->addStretch();
@@ -488,11 +470,11 @@ void SettingsPanel::setupAboutPage()
     infoLayout->addSpacing(DpiScaler::scale(16));
 
     QLabel* descLabel = new QLabel(
-        "Advanced file management and synchronization tool for MEGA cloud storage.\n\n"
+        "File management and content-processing tool for MEGA cloud storage.\n\n"
         "Features:\n"
         "  - Folder Mapper: Map local folders to cloud destinations\n"
         "  - Multi Uploader: Upload files to multiple destinations\n"
-        "  - Smart Sync: Bidirectional synchronization with conflict resolution",
+        "  - Watermark: Personalize video, audio, and document libraries",
         infoGroup
     );
     descLabel->setWordWrap(true);
@@ -539,19 +521,6 @@ void SettingsPanel::loadSettings()
     if (m_darkModeCheck) m_darkModeCheck->setChecked(settings.darkMode());
     if (m_showNotificationsCheck) m_showNotificationsCheck->setChecked(settings.showNotifications());
 
-    // Sync
-    if (m_schedulerIntervalSpin) m_schedulerIntervalSpin->setValue(settings.syncInterval());
-    if (m_syncOnStartupCheck) m_syncOnStartupCheck->setChecked(settings.syncOnStartup());
-
-    // Advanced
-    if (m_uploadLimitSpin) m_uploadLimitSpin->setValue(settings.uploadBandwidthLimit());
-    if (m_downloadLimitSpin) m_downloadLimitSpin->setValue(settings.downloadBandwidthLimit());
-    if (m_parallelTransfersSpin) m_parallelTransfersSpin->setValue(settings.parallelTransfers());
-    if (m_excludePatternsEdit) m_excludePatternsEdit->setText(settings.excludePatterns());
-    if (m_skipHiddenCheck) m_skipHiddenCheck->setChecked(settings.skipHiddenFiles());
-    if (m_cachePathEdit) m_cachePathEdit->setText(settings.cachePath());
-    if (m_enableLoggingCheck) m_enableLoggingCheck->setChecked(settings.loggingEnabled());
-
     m_hasUnsavedChanges = false;
     if (m_saveButton) m_saveButton->setEnabled(false);
 }
@@ -565,22 +534,6 @@ void SettingsPanel::saveSettings()
     if (m_darkModeCheck) settings.setDarkMode(m_darkModeCheck->isChecked());
     if (m_showNotificationsCheck) settings.setShowNotifications(m_showNotificationsCheck->isChecked());
 
-    // Sync
-    if (m_schedulerEnabledCheck && m_schedulerIntervalSpin) {
-        settings.setSyncInterval(m_schedulerEnabledCheck->isChecked() ?
-                                 m_schedulerIntervalSpin->value() : 0);
-    }
-    if (m_syncOnStartupCheck) settings.setSyncOnStartup(m_syncOnStartupCheck->isChecked());
-
-    // Advanced
-    if (m_uploadLimitSpin) settings.setUploadBandwidthLimit(m_uploadLimitSpin->value());
-    if (m_downloadLimitSpin) settings.setDownloadBandwidthLimit(m_downloadLimitSpin->value());
-    if (m_parallelTransfersSpin) settings.setParallelTransfers(m_parallelTransfersSpin->value());
-    if (m_excludePatternsEdit) settings.setExcludePatterns(m_excludePatternsEdit->text());
-    if (m_skipHiddenCheck) settings.setSkipHiddenFiles(m_skipHiddenCheck->isChecked());
-    if (m_cachePathEdit) settings.setCachePath(m_cachePathEdit->text());
-    if (m_enableLoggingCheck) settings.setLoggingEnabled(m_enableLoggingCheck->isChecked());
-
     settings.save();
 
     m_hasUnsavedChanges = false;
@@ -591,7 +544,7 @@ void SettingsPanel::saveSettings()
 
 void SettingsPanel::setCurrentSection(Section section)
 {
-    m_navigationList->setCurrentRow(static_cast<int>(section));
+    m_navigationList->setCurrentRow(section == SECTION_ABOUT ? 1 : 0);
 }
 
 void SettingsPanel::onNavigationItemClicked(int index)
@@ -618,14 +571,8 @@ void SettingsPanel::onBrowseCachePath()
 
 void SettingsPanel::onClearCache()
 {
-    auto result = QMessageBox::question(this, "Clear Cache",
-        "Are you sure you want to clear the application cache?\n"
-        "This will remove all cached file data.",
-        QMessageBox::Yes | QMessageBox::No);
-    if (result == QMessageBox::Yes) {
-        QMessageBox::information(this, "Cache Cleared",
-            "Cache has been cleared successfully.");
-    }
+    QMessageBox::information(this, "Cache Management",
+        "The generic cache control is unavailable. Watermark segment cache management is available in Watermark Settings.");
 }
 
 void SettingsPanel::onSettingChanged()
@@ -654,14 +601,6 @@ void SettingsPanel::onResetClicked()
         settings.setShowTrayIcon(true);
         settings.setDarkMode(false);
         settings.setShowNotifications(true);
-        settings.setSyncInterval(0);
-        settings.setSyncOnStartup(false);
-        settings.setUploadBandwidthLimit(0);
-        settings.setDownloadBandwidthLimit(0);
-        settings.setParallelTransfers(4);
-        settings.setExcludePatterns("");
-        settings.setSkipHiddenFiles(false);
-        settings.setLoggingEnabled(false);
         settings.save();
 
         loadSettings();

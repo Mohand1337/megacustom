@@ -183,7 +183,7 @@ void SmartSyncPanel::setupUI()
     titleLabel->setObjectName("PanelTitle");
     mainLayout->addWidget(titleLabel);
 
-    QLabel* subtitleLabel = new QLabel("Bidirectional sync between local folders and MEGA cloud with conflict resolution", contentWidget);
+    QLabel* subtitleLabel = new QLabel("Sync profile management. Execution is unavailable in this build.", contentWidget);
     subtitleLabel->setObjectName("PanelSubtitle");
     subtitleLabel->setWordWrap(true);
     mainLayout->addWidget(subtitleLabel);
@@ -413,19 +413,7 @@ void SmartSyncPanel::setupDetailTabs(QVBoxLayout* mainLayout)
     m_previewTable->verticalHeader()->setVisible(false);
     m_detailTabs->addTab(m_previewTable, "Preview");
 
-    // Add demo data to show action badge styling
-    QStringList demoActions = {"Upload", "Download", "Download", "Skip", "Download"};
-    QStringList demoFiles = {"Documents Backup", "Documents Backup", "Documents Backup", "Documents Backup", "Documents Backup"};
-    QStringList demoStatus = {"Pending", "Ready", "Ready", "Ignored", "Ready"};
-
-    m_previewTable->setRowCount(demoActions.size());
-    for (int i = 0; i < demoActions.size(); ++i) {
-        m_previewTable->setCellWidget(i, 0, createActionBadge(demoActions[i]));
-        m_previewTable->setItem(i, 1, new QTableWidgetItem(demoFiles[i]));
-        m_previewTable->setItem(i, 2, new QTableWidgetItem("--"));
-        m_previewTable->setItem(i, 3, new QTableWidgetItem(demoStatus[i]));
-    }
-    m_previewTable->resizeColumnsToContents();
+    m_previewTable->setRowCount(0);
     CopyHelper::installTableCopyMenu(m_previewTable);
 
     // Conflicts tab
@@ -461,14 +449,15 @@ void SmartSyncPanel::setupDetailTabs(QVBoxLayout* mainLayout)
 void SmartSyncPanel::updateButtonStates()
 {
     bool hasSelection = m_profileTable && m_profileTable->currentRow() >= 0;
+    const bool operational = m_controller && m_controller->isOperational();
 
     if (m_editProfileBtn) m_editProfileBtn->setEnabled(hasSelection);
     if (m_deleteProfileBtn) m_deleteProfileBtn->setEnabled(hasSelection && !m_isSyncing);
-    if (m_analyzeBtn) m_analyzeBtn->setEnabled(hasSelection && !m_isSyncing);
-    if (m_startSyncBtn) m_startSyncBtn->setEnabled(hasSelection && !m_isSyncing);
+    if (m_analyzeBtn) m_analyzeBtn->setEnabled(operational && hasSelection && !m_isSyncing);
+    if (m_startSyncBtn) m_startSyncBtn->setEnabled(operational && hasSelection && !m_isSyncing);
     if (m_pauseSyncBtn) m_pauseSyncBtn->setEnabled(m_isSyncing);
     if (m_stopSyncBtn) m_stopSyncBtn->setEnabled(m_isSyncing);
-    if (m_scheduleBtn) m_scheduleBtn->setEnabled(hasSelection);
+    if (m_scheduleBtn) m_scheduleBtn->setEnabled(operational && hasSelection);
 }
 
 void SmartSyncPanel::updateEmptyState()

@@ -44,12 +44,14 @@ public slots:
 
     // Progress updates
     void onUploadStarted(const QString& mappingName);
+    void onPreviewStarted(const QString& mappingName);
     void onUploadProgress(const QString& mappingName, const QString& currentFile,
                           int filesCompleted, int totalFiles,
                           qint64 bytesUploaded, qint64 totalBytes,
                           double speedBytesPerSec);
     void onUploadComplete(const QString& mappingName, bool success,
-                          int filesUploaded, int filesSkipped, int filesFailed);
+                          int filesUploaded, int filesSkipped, int filesFailed,
+                          bool cancelled);
     void onPreviewReady(const QString& mappingName, int filesToUpload,
                         int filesToSkip, qint64 totalBytes);
     void onError(const QString& operation, const QString& message);

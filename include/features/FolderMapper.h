@@ -41,6 +41,8 @@ struct UploadOptions {
     bool showProgress = true;       // Display progress as it runs
     bool deleteRemoteOrphans = false;  // Delete remote files not in local
     int maxConcurrentUploads = 4;   // Parallel upload limit
+    int transferTimeoutSeconds = 0; // 0 lets the SDK own timeout/retry policy
+    std::function<bool()> shouldCancel; // Polled while scanning and uploading
 
     // Filters
     std::vector<std::string> excludePatterns;  // Patterns to exclude
@@ -87,6 +89,7 @@ struct MapUploadProgress {
 struct MapUploadResult {
     std::string mappingName;
     bool success = false;
+    bool cancelled = false;
     int filesUploaded = 0;
     int filesSkipped = 0;
     int filesFailed = 0;

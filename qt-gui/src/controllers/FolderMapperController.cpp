@@ -17,6 +17,12 @@ FolderMapperController::FolderMapperController(void* megaApi, QObject* parent)
 
 FolderMapperController::~FolderMapperController()
 {
+    if (m_isUploading) {
+        cancelUpload();
+    }
+    if (m_uploadFuture.isRunning()) {
+        m_uploadFuture.waitForFinished();
+    }
 }
 
 void FolderMapperController::loadMappings()
@@ -185,7 +191,7 @@ void FolderMapperController::uploadMapping(const QString& name, bool dryRun, boo
     m_cancelRequested = false;
 
     // Run upload in background thread
-    QtConcurrent::run([this, name, dryRun, incremental]() {
+    m_uploadFuture = QtConcurrent::run([this, name, dryRun, incremental]() {
         try {
             mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
             FolderMapper mapper(api);
@@ -217,6 +223,7 @@ void FolderMapperController::uploadMapping(const QString& name, bool dryRun, boo
             options.incremental = incremental;
             options.recursive = true;
             options.showProgress = true;
+            options.shouldCancel = [this]() { return m_cancelRequested.load(); };
 
             MapUploadResult result = mapper.uploadMapping(name.toStdString(), options);
 
@@ -228,7 +235,8 @@ void FolderMapperController::uploadMapping(const QString& name, bool dryRun, boo
                     result.success,
                     result.filesUploaded,
                     result.filesSkipped,
-                    result.filesFailed
+                    result.filesFailed,
+                    result.cancelled
                 );
             }, Qt::QueuedConnection);
 
@@ -254,7 +262,7 @@ void FolderMapperController::uploadAll(bool dryRun, bool incremental)
     m_cancelRequested = false;
 
     // Run upload in background thread
-    QtConcurrent::run([this, dryRun, incremental]() {
+    m_uploadFuture = QtConcurrent::run([this, dryRun, incremental]() {
         try {
             mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
             FolderMapper mapper(api);
@@ -265,6 +273,7 @@ void FolderMapperController::uploadAll(bool dryRun, bool incremental)
             options.incremental = incremental;
             options.recursive = true;
             options.showProgress = true;
+            options.shouldCancel = [this]() { return m_cancelRequested.load(); };
 
             auto results = mapper.uploadAll(options);
 
@@ -272,17 +281,20 @@ void FolderMapperController::uploadAll(bool dryRun, bool incremental)
             int totalSkipped = 0;
             int totalFailed = 0;
             bool allSuccess = true;
+            bool cancelled = false;
 
             for (const auto& result : results) {
                 totalUploaded += result.filesUploaded;
                 totalSkipped += result.filesSkipped;
                 totalFailed += result.filesFailed;
                 if (!result.success) allSuccess = false;
+                if (result.cancelled) cancelled = true;
             }
 
-            QMetaObject::invokeMethod(this, [this, allSuccess, totalUploaded, totalSkipped, totalFailed]() {
+            QMetaObject::invokeMethod(this, [this, allSuccess, totalUploaded, totalSkipped, totalFailed, cancelled]() {
                 m_isUploading = false;
-                emit uploadComplete("All Mappings", allSuccess, totalUploaded, totalSkipped, totalFailed);
+                emit uploadComplete("All Mappings", allSuccess, totalUploaded, totalSkipped,
+                                    totalFailed, cancelled);
             }, Qt::QueuedConnection);
 
         } catch (const std::exception& e) {
@@ -298,44 +310,66 @@ void FolderMapperController::previewUpload(const QString& name)
 {
     qDebug() << "FolderMapperController: Previewing upload for" << name;
 
-    try {
-        mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
-        FolderMapper mapper(api);
-        mapper.loadMappings();
-
-        UploadOptions options;
-        options.dryRun = true;
-        options.incremental = true;
-        options.recursive = true;
-
-        auto preview = mapper.previewUpload(name.toStdString(), options);
-
-        int toUpload = 0;
-        int toSkip = 0;
-        qint64 totalBytes = 0;
-
-        for (const auto& file : preview) {
-            if (file.needsUpload) {
-                toUpload++;
-                totalBytes += file.localSize;
-            } else {
-                toSkip++;
-            }
-        }
-
-        emit previewReady(name, toUpload, toSkip, totalBytes);
-
-    } catch (const std::exception& e) {
-        emit error("Preview", QString::fromStdString(e.what()));
+    if (m_isUploading) {
+        emit error("Preview", "Another Folder Mapper operation is already in progress");
+        return;
     }
+
+    m_isUploading = true;
+    m_cancelRequested = false;
+    emit previewStarted(name);
+
+    m_uploadFuture = QtConcurrent::run([this, name]() {
+        try {
+            mega::MegaApi* api = static_cast<mega::MegaApi*>(m_megaApi);
+            FolderMapper mapper(api);
+            mapper.loadMappings();
+
+            UploadOptions options;
+            options.dryRun = true;
+            options.incremental = true;
+            options.recursive = true;
+            options.shouldCancel = [this]() { return m_cancelRequested.load(); };
+
+            const auto preview = mapper.previewUpload(name.toStdString(), options);
+            int toUpload = 0;
+            int toSkip = 0;
+            qint64 totalBytes = 0;
+            for (const auto& file : preview) {
+                if (file.needsUpload) {
+                    toUpload++;
+                    totalBytes += file.localSize;
+                } else {
+                    toSkip++;
+                }
+            }
+
+            const bool cancelled = m_cancelRequested.load();
+            QMetaObject::invokeMethod(this,
+                [this, name, toUpload, toSkip, totalBytes, cancelled]() {
+                    m_isUploading = false;
+                    if (cancelled) {
+                        emit uploadComplete(name, false, 0, 0, 0, true);
+                    } else {
+                        emit previewReady(name, toUpload, toSkip, totalBytes);
+                    }
+                }, Qt::QueuedConnection);
+        } catch (const std::exception& e) {
+            const QString message = QString::fromStdString(e.what());
+            QMetaObject::invokeMethod(this, [this, message]() {
+                m_isUploading = false;
+                emit error("Preview", message);
+            }, Qt::QueuedConnection);
+        }
+    });
 }
 
 void FolderMapperController::cancelUpload()
 {
     qDebug() << "FolderMapperController: Cancelling upload";
-    m_cancelRequested = true;
-    // Note: The actual cancellation would need to be implemented in FolderMapper
-    // by checking a flag periodically during upload
+    if (m_isUploading) {
+        m_cancelRequested = true;
+    }
 }
 
 } // namespace MegaCustom

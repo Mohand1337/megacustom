@@ -1501,9 +1501,27 @@ QString LogViewerPanel::formatJobRecordDetails(const OperationJobRecord& record)
         stream << "Destinations: " << record.destinationRoots.join(" | ") << "\n";
     }
     if (!record.metadata.isEmpty()) {
+        QJsonObject displayMetadata = record.metadata;
+        QStringList omitted;
+        auto omitArray = [&displayMetadata, &omitted](const QString& key,
+                                                       const QString& label) {
+            const QJsonArray values = displayMetadata[key].toArray();
+            if (!values.isEmpty()) {
+                displayMetadata.remove(key);
+                displayMetadata[key + "Count"] = values.size();
+                omitted.append(QString("%1 %2 omitted").arg(values.size()).arg(label));
+            }
+        };
+        omitArray("watermarkRows", "watermark checkpoint rows");
+        omitArray("distributionRows", "distribution checkpoint rows");
+        omitArray("filePaths", "source paths");
+        omitArray("urls", "source URLs");
         stream << "Metadata: "
-               << QString::fromUtf8(QJsonDocument(record.metadata).toJson(QJsonDocument::Compact))
+               << QString::fromUtf8(QJsonDocument(displayMetadata).toJson(QJsonDocument::Compact))
                << "\n";
+        if (!omitted.isEmpty()) {
+            stream << "Metadata details: " << omitted.join("; ") << "\n";
+        }
     }
     stream << "Related Activity: selecting this job sets Activity search to this job ID.";
     return output.trimmed();

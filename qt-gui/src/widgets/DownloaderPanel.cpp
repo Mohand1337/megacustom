@@ -24,8 +24,30 @@
 #include <QCoreApplication>
 #include <QApplication>
 #include <QClipboard>
+#include <QElapsedTimer>
+#include <QUrl>
 
 namespace MegaCustom {
+
+static QString redactDownloaderSecrets(const QString& message) {
+    QString redacted = message;
+    const QRegularExpression urlPattern(R"(https?://[^\s\"']+)");
+    QList<QRegularExpressionMatch> matches;
+    QRegularExpressionMatchIterator it = urlPattern.globalMatch(message);
+    while (it.hasNext()) {
+        matches.prepend(it.next());
+    }
+    for (const QRegularExpressionMatch& match : matches) {
+        QUrl url(match.captured());
+        if (!url.isValid() || url.query().isEmpty()) {
+            continue;
+        }
+        url.setQuery("redacted");
+        redacted.replace(match.capturedStart(), match.capturedLength(),
+                         url.toString(QUrl::FullyEncoded));
+    }
+    return redacted;
+}
 
 // ==================== DownloadWorker ====================
 
@@ -61,12 +83,6 @@ void DownloadWorker::setConfig(int maxParallel, const QString& quality, bool ski
 
 void DownloadWorker::cancel() {
     m_cancelled = true;
-    if (m_process && m_process->state() == QProcess::Running) {
-        m_process->terminate();
-        if (!m_process->waitForFinished(3000)) {
-            m_process->kill();
-        }
-    }
 }
 
 QString DownloadWorker::findPythonScript() const {
@@ -113,6 +129,7 @@ void DownloadWorker::process() {
         m_currentIndex = i;
         m_lastCompletedPath.clear();
         m_itemCompletedEmitted = false;
+        m_itemSucceeded = false;
         QString url = m_urls[i];
 
         emit progress(i, total, url, 0, "", "");
@@ -182,12 +199,33 @@ void DownloadWorker::process() {
             continue;
         }
 
-        // Wait for completion (with timeout of 30 minutes per file)
-        if (!m_process->waitForFinished(1800000)) {
+        // Poll in the worker thread so cancellation never controls QProcess
+        // from the GUI thread. Keep the 30-minute per-item timeout.
+        QElapsedTimer processTimer;
+        processTimer.start();
+        bool timedOut = false;
+        while (m_process->state() != QProcess::NotRunning) {
+            if (m_cancelled) {
+                m_process->terminate();
+                if (!m_process->waitForFinished(3000)) {
+                    m_process->kill();
+                    m_process->waitForFinished(3000);
+                }
+                break;
+            }
+            if (processTimer.elapsed() >= 1800000) {
+                timedOut = true;
+                m_process->kill();
+                m_process->waitForFinished(3000);
+                break;
+            }
+            m_process->waitForFinished(100);
+        }
+
+        if (timedOut) {
             emit logMessage("Download timeout for: " + url);
             emit itemCompleted(i, false, "", "Download timeout");
             failCount++;
-            m_process->kill();
             delete m_process;
             m_process = nullptr;
             continue;
@@ -214,14 +252,16 @@ void DownloadWorker::process() {
 
         // Only emit completion if not already done via JSON parsing
         if (!m_itemCompletedEmitted) {
-            if (exitCode == 0) {
+            if (exitCode == 0 && !m_cancelled) {
                 // Use path from JSON if available, otherwise use output directory
                 QString outputPath = m_lastCompletedPath.isEmpty() ? m_outputDir : m_lastCompletedPath;
                 emit itemCompleted(i, true, outputPath, "");
                 successCount++;
             } else {
                 // Include any error output in the error message
-                QString errorMsg = QString("Exit code: %1").arg(exitCode);
+                QString errorMsg = m_cancelled
+                    ? QString("Download cancelled")
+                    : QString("Exit code: %1").arg(exitCode);
                 if (!errorOutput.isEmpty()) {
                     errorMsg += "\n" + errorOutput;
                 }
@@ -231,7 +271,7 @@ void DownloadWorker::process() {
             }
         } else {
             // Already emitted via JSON, just count
-            if (exitCode == 0) {
+            if (m_itemSucceeded) {
                 successCount++;
             } else {
                 failCount++;
@@ -259,10 +299,12 @@ void DownloadWorker::parseProgressLine(const QString& line) {
             emit progress(m_currentIndex, m_urls.size(), file, percent, speed, eta);
         }
         else if (type == "complete") {
+            if (m_itemCompletedEmitted) return;
             QString path = obj["path"].toString();
             QString file = obj["file"].toString();
             m_lastCompletedPath = path;
             m_itemCompletedEmitted = true;
+            m_itemSucceeded = true;
             // Also emit progress to update the filename display
             if (!file.isEmpty()) {
                 emit progress(m_currentIndex, m_urls.size(), file, 100, "", "");
@@ -270,7 +312,10 @@ void DownloadWorker::parseProgressLine(const QString& line) {
             emit itemCompleted(m_currentIndex, true, path, "");
         }
         else if (type == "error") {
+            if (m_itemCompletedEmitted) return;
             QString error = obj["error"].toString();
+            m_itemCompletedEmitted = true;
+            m_itemSucceeded = false;
             emit itemCompleted(m_currentIndex, false, "", error);
         }
     }
@@ -303,8 +348,8 @@ DownloaderPanel::~DownloaderPanel() {
         if (m_workerThread->isRunning()) {
             if (m_worker) m_worker->cancel();
             m_workerThread->quit();
-            if (!m_workerThread->wait(5000)) {
-                m_workerThread->terminate();
+            if (!m_workerThread->wait(30000)) {
+                qCritical() << "Downloader worker did not stop after cancellation; waiting for safe shutdown";
                 m_workerThread->wait();
             }
         }
@@ -473,11 +518,12 @@ void DownloaderPanel::setupUI() {
     m_qualityCombo->setToolTip("Video quality preference");
     optionsLayout->addWidget(m_qualityCombo);
 
-    optionsLayout->addWidget(new QLabel("Parallel:"));
+    optionsLayout->addWidget(new QLabel("Concurrent:"));
     m_parallelSpin = new QSpinBox();
-    m_parallelSpin->setRange(1, 5);
-    m_parallelSpin->setValue(3);
-    m_parallelSpin->setToolTip("Maximum parallel downloads");
+    m_parallelSpin->setRange(1, 1);
+    m_parallelSpin->setValue(1);
+    m_parallelSpin->setEnabled(false);
+    m_parallelSpin->setToolTip("Downloads currently run one at a time");
     optionsLayout->addWidget(m_parallelSpin);
 
     optionsLayout->addWidget(new QLabel("Docs Format:"));
@@ -1144,32 +1190,33 @@ void DownloaderPanel::onWorkerFinished(int successCount, int failCount) {
 }
 
 void DownloaderPanel::onWorkerLog(const QString& message) {
-    const QString lower = message.toLower();
+    const QString safeMessage = redactDownloaderSecrets(message);
+    const QString lower = safeMessage.toLower();
     if (lower.contains("error") || lower.contains("failed") || lower.contains("timeout")) {
         LogManager::instance().logWithContext(LogLevel::Error, LogCategory::Download,
             "download.progress_error",
-            message.toStdString(),
+            safeMessage.toStdString(),
             "",
             "",
             m_currentJobId.toStdString());
-        OperationJobStore::instance().setLastError(m_currentJobId, message);
+        OperationJobStore::instance().setLastError(m_currentJobId, safeMessage);
     } else if (lower.contains("warning") || lower.contains("warn")) {
         LogManager::instance().logWithContext(LogLevel::Warning, LogCategory::Download,
             "download.progress_warning",
-            message.toStdString(),
+            safeMessage.toStdString(),
             "",
             "",
             m_currentJobId.toStdString());
     } else {
         LogManager::instance().logWithContext(LogLevel::Debug, LogCategory::Download,
             "download.progress",
-            message.toStdString(),
+            safeMessage.toStdString(),
             "",
             "",
             m_currentJobId.toStdString());
     }
     // Also output to console for debugging
-    qDebug() << "Downloader:" << message;
+    qDebug() << "Downloader:" << safeMessage;
 }
 
 void DownloaderPanel::updateCurrentJobProgress(const QString& summary) {
@@ -1355,7 +1402,7 @@ void DownloaderPanel::updateButtonStates() {
 
     m_parseBtn->setEnabled(!m_isRunning);
     m_qualityCombo->setEnabled(!m_isRunning);
-    m_parallelSpin->setEnabled(!m_isRunning);
+    m_parallelSpin->setEnabled(false);
     m_docsFormatCombo->setEnabled(!m_isRunning);
     m_skipExistingCheck->setEnabled(!m_isRunning);
     m_downloadSubtitlesCheck->setEnabled(!m_isRunning);

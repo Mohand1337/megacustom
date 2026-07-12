@@ -11,8 +11,8 @@ namespace MegaCustom {
  *
  * Provides centralized access to all application settings including
  * authentication preferences, UI state, sync configuration, and
- * advanced transfer options. Settings are persisted to QSettings
- * (platform-specific storage) and can be imported from JSON files.
+ * advanced transfer options. Settings are persisted to an INI file in the
+ * application config directory and can be imported from external INI files.
  *
  * Supports portable mode: if a "portable.marker" file exists next to
  * the executable, settings are stored in the app directory instead of
@@ -60,8 +60,9 @@ public:
      * @brief Check if running in portable mode
      * @return true if portable.marker exists next to the executable
      *
-     * In portable mode, all settings and data are stored in the application
-     * directory, making the app self-contained and movable.
+     * In portable mode, local settings and app data are stored in the
+     * application directory. Secrets stored by the OS keychain remain managed
+     * by the operating system.
      */
     bool isPortable() const;
 

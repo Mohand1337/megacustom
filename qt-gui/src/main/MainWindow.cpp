@@ -51,6 +51,7 @@
 #include <QToolBar>
 #include <QStatusBar>
 #include <QSplitter>
+#include <QScrollArea>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -287,6 +288,8 @@ void MainWindow::setFolderMapperController(FolderMapperController* controller)
                 m_folderMapperPanel, &FolderMapperPanel::onMappingUpdated);
         connect(m_folderMapperController, &FolderMapperController::uploadStarted,
                 m_folderMapperPanel, &FolderMapperPanel::onUploadStarted);
+        connect(m_folderMapperController, &FolderMapperController::previewStarted,
+                m_folderMapperPanel, &FolderMapperPanel::onPreviewStarted);
         connect(m_folderMapperController, &FolderMapperController::uploadProgress,
                 m_folderMapperPanel, &FolderMapperPanel::onUploadProgress);
         connect(m_folderMapperController, &FolderMapperController::uploadComplete,
@@ -379,26 +382,17 @@ void MainWindow::setCloudCopierController(CloudCopierController* controller)
                 m_cloudCopierPanel, &CloudCopierPanel::onSourcesValidated);
     }
 
-    // Set up DistributionPanel with MegaApi directly (not CloudCopierController)
-    // This avoids duplicate completion popups from the controller
-    if (m_distributionPanel) {
-        MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
-        m_distributionPanel->setMegaApi(megaManager.getMegaApi());
-    }
-
-    // Smart Engine: pass MegaApi and MetricsStore to WatermarkPanel
+    // Smart Engine metrics and member data are account-independent. Account-
+    // bound SDK pointers are applied together below.
     if (m_watermarkPanel) {
-        MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
-        m_watermarkPanel->setMegaApi(megaManager.getMegaApi());
         m_watermarkPanel->setMetricsStore(&MegaCustom::MetricsStore::instance());
     }
 
-    // Content Manager
     if (m_contentManagerPanel) {
-        MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
-        m_contentManagerPanel->setMegaApi(megaManager.getMegaApi());
         m_contentManagerPanel->setMemberRegistry(MegaCustom::MemberRegistry::instance());
     }
+
+    rebindAccountControllers();
 }
 
 void MainWindow::setDistributionController(DistributionController* controller)
@@ -433,13 +427,12 @@ void MainWindow::setWatermarkerController(WatermarkerController* controller)
 
 void MainWindow::applySettings()
 {
-    // Apply theme
     Settings& settings = Settings::instance();
-    bool darkMode = settings.darkMode();
-
-    // Load the appropriate stylesheet (light or dark)
-    // This uses Application's static method to set the global app stylesheet
-    Application::loadStylesheetByTheme(darkMode);
+    if (auto* application = qobject_cast<Application*>(QCoreApplication::instance())) {
+        application->applyRuntimeSettings();
+    } else {
+        Application::loadStylesheetByTheme(settings.darkMode());
+    }
 
     // Apply other settings
     if (m_remoteExplorer) {
@@ -556,17 +549,6 @@ void MainWindow::showInfo(const QString& title, const QString& message)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    static int closeAttempts = 0;
-    closeAttempts++;
-
-    // Force close on second attempt — don't let the app get stuck
-    if (closeAttempts >= 2) {
-        qDebug() << "Force closing after" << closeAttempts << "attempts";
-        saveSettings();
-        event->accept();
-        return;
-    }
-
     if (checkUnsavedChanges()) {
         saveSettings();
         event->accept();
@@ -943,8 +925,18 @@ void MainWindow::setupUI()
     // ========================================
     // CENTRAL SPLITTER (Sidebar + Right side + QuickPeek)
     // ========================================
+    auto* sidebarScroll = new QScrollArea(this);
+    sidebarScroll->setObjectName("SidebarScrollArea");
+    sidebarScroll->setFrameShape(QFrame::NoFrame);
+    sidebarScroll->setWidgetResizable(true);
+    sidebarScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sidebarScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    sidebarScroll->setMinimumWidth(DpiScaler::scale(200));
+    sidebarScroll->setMaximumWidth(DpiScaler::scale(280));
+    sidebarScroll->setWidget(m_sidebar);
+
     m_centralSplitter = new QSplitter(Qt::Horizontal, this);
-    m_centralSplitter->addWidget(m_sidebar);
+    m_centralSplitter->addWidget(sidebarScroll);
     m_centralSplitter->addWidget(rightWidget);
     m_centralSplitter->addWidget(m_quickPeekPanel);
     m_centralSplitter->setStretchFactor(0, 0); // Sidebar doesn't stretch
@@ -1087,16 +1079,24 @@ void MainWindow::createActions()
     m_settingsAction->setShortcut(QKeySequence("Ctrl+,"));
     connect(m_settingsAction, &QAction::triggered, this, &MainWindow::onSettings);
 
+    const QList<QAction*> cloudActions = {
+        m_newFolderAction, m_uploadFileAction, m_downloadAction, m_deleteAction,
+        m_renameAction, m_cutAction, m_copyAction, m_pasteAction,
+        m_selectAllAction, m_refreshAction, m_showHiddenAction
+    };
+    for (QAction* action : cloudActions) {
+        action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        if (m_remoteExplorer) {
+            m_remoteExplorer->addAction(action);
+        }
+    }
+
     // Login/logout actions
     m_loginAction = new QAction(QIcon(":/icons/user.svg"), "&Login...", this);
     connect(m_loginAction, &QAction::triggered, this, &MainWindow::showLoginDialog);
 
     m_logoutAction = new QAction(QIcon(":/icons/log-out.svg"), "Log&out", this);
-    connect(m_logoutAction, &QAction::triggered, [this]() {
-        if (m_authController) {
-            m_authController->logout();
-        }
-    });
+    connect(m_logoutAction, &QAction::triggered, this, &MainWindow::requestLogout);
 }
 
 void MainWindow::createMenus()
@@ -1386,7 +1386,24 @@ void MainWindow::schedulePostRenameRefresh()
 
 void MainWindow::loadSettings()
 {
-    QSettings settings;
+    QSettings settings(Settings::instance().configDirectory() + "/window_state.ini",
+                       QSettings::IniFormat);
+    if (!settings.contains("MainWindow/geometry")) {
+        QSettings legacy;
+        legacy.beginGroup("MainWindow");
+        const QByteArray geometry = legacy.value("geometry").toByteArray();
+        const QByteArray state = legacy.value("state").toByteArray();
+        const QByteArray splitter = legacy.value("splitter").toByteArray();
+        legacy.endGroup();
+        if (!geometry.isEmpty() || !state.isEmpty() || !splitter.isEmpty()) {
+            settings.beginGroup("MainWindow");
+            settings.setValue("geometry", geometry);
+            settings.setValue("state", state);
+            settings.setValue("splitter", splitter);
+            settings.endGroup();
+            settings.sync();
+        }
+    }
     settings.beginGroup("MainWindow");
 
     // Restore geometry
@@ -1403,7 +1420,8 @@ void MainWindow::loadSettings()
 
 void MainWindow::saveSettings()
 {
-    QSettings settings;
+    QSettings settings(Settings::instance().configDirectory() + "/window_state.ini",
+                       QSettings::IniFormat);
     settings.beginGroup("MainWindow");
 
     // Save geometry
@@ -1420,19 +1438,99 @@ void MainWindow::saveSettings()
 
 bool MainWindow::checkUnsavedChanges()
 {
-    if (m_transferController && m_transferController->hasActiveTransfers()) {
-        int ret = QMessageBox::question(
+    const QStringList operations = activeOperationNames();
+    if (!operations.isEmpty()) {
+        QMessageBox::warning(
             this,
-            "Active Transfers",
-            "There are active transfers. Do you want to quit anyway?",
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No
-        );
-
-        return ret == QMessageBox::Yes;
+            "Operations Still Running",
+            QString("MegaCustom cannot exit while these operations are active:\n\n%1\n\n"
+                    "Stop or cancel them first so their checkpoints and output files remain consistent.")
+                .arg(operations.join("\n")));
+        return false;
     }
 
     return true;
+}
+
+QStringList MainWindow::activeOperationNames() const
+{
+    QStringList operations;
+    if (m_fileController && m_fileController->hasActiveTasks())
+        operations.append("Cloud listing or search");
+    if (m_transferController && m_transferController->hasActiveTransfers())
+        operations.append("MEGA file transfers");
+    if (m_folderMapperController && m_folderMapperController->hasActiveUpload())
+        operations.append("Folder Mapper upload");
+    if (m_multiUploaderController && m_multiUploaderController->hasActiveUpload())
+        operations.append("Multi Uploader job");
+    if (m_smartSyncController && m_smartSyncController->isSyncing())
+        operations.append("Smart Sync job");
+    if (m_cloudCopierController && m_cloudCopierController->hasActiveCopy())
+        operations.append("Cloud Copier job");
+    if ((m_distributionController && m_distributionController->isRunning())
+        || (m_distributionPanel && m_distributionPanel->isRunning()))
+        operations.append("Distribution job");
+    if ((m_watermarkerController && m_watermarkerController->isRunning())
+        || (m_watermarkPanel && m_watermarkPanel->isRunning()))
+        operations.append("Watermark job");
+    if (m_downloaderPanel && m_downloaderPanel->isRunning())
+        operations.append("Download job");
+    if (m_contentManagerPanel && m_contentManagerPanel->isBusy())
+        operations.append("Content Manager scan");
+    if (m_crossAccountTransferManager && m_crossAccountTransferManager->hasActiveTransfers())
+        operations.append("Cross-account transfer");
+    operations.removeDuplicates();
+    return operations;
+}
+
+bool MainWindow::canSwitchAccounts()
+{
+    const QStringList operations = activeOperationNames();
+    if (operations.isEmpty()) {
+        return true;
+    }
+
+    QMessageBox::warning(
+        this,
+        "Account Change Blocked",
+        QString("Finish or stop the following account-bound work before changing accounts:\n\n%1")
+            .arg(operations.join("\n")));
+    updateStatus("Account change blocked while operations are running");
+    return false;
+}
+
+void MainWindow::rebindAccountControllers()
+{
+    mega::MegaApi* activeApi = AccountManager::instance().activeApi();
+
+    if (m_transferController) m_transferController->setMegaApi(activeApi);
+    if (m_folderMapperController) m_folderMapperController->setMegaApi(activeApi);
+    if (m_multiUploaderController) m_multiUploaderController->setMegaApi(activeApi);
+    if (m_smartSyncController) m_smartSyncController->setMegaApi(activeApi);
+    if (m_cloudCopierController) m_cloudCopierController->setMegaApi(activeApi);
+    if (m_distributionController) m_distributionController->setMegaApi(activeApi);
+    if (m_distributionPanel && !m_distributionPanel->isRunning())
+        m_distributionPanel->setMegaApi(activeApi);
+    if (m_watermarkPanel && !m_watermarkPanel->isRunning())
+        m_watermarkPanel->setMegaApi(activeApi);
+    if (m_contentManagerPanel && !m_contentManagerPanel->isBusy())
+        m_contentManagerPanel->setMegaApi(activeApi);
+}
+
+void MainWindow::scheduleControllerRebind()
+{
+    if (m_accountRebindPending) {
+        return;
+    }
+    m_accountRebindPending = true;
+    QTimer::singleShot(1000, this, [this]() {
+        m_accountRebindPending = false;
+        if (activeOperationNames().isEmpty()) {
+            rebindAccountControllers();
+        } else {
+            scheduleControllerRebind();
+        }
+    });
 }
 
 // Slot implementations
@@ -1891,7 +1989,7 @@ void MainWindow::cycleToNextAccount()
     AccountManager& mgr = AccountManager::instance();
     QList<MegaAccount> accounts = mgr.allAccounts();
 
-    if (accounts.size() < 2) {
+    if (accounts.size() < 2 || !canSwitchAccounts()) {
         return; // No point in cycling with 0 or 1 accounts
     }
 
@@ -1914,7 +2012,7 @@ void MainWindow::cycleToPreviousAccount()
     AccountManager& mgr = AccountManager::instance();
     QList<MegaAccount> accounts = mgr.allAccounts();
 
-    if (accounts.size() < 2) {
+    if (accounts.size() < 2 || !canSwitchAccounts()) {
         return;
     }
 
@@ -1941,6 +2039,13 @@ void MainWindow::showAccountSwitcher()
 
 void MainWindow::onAccountSwitchRequested(const QString& accountId)
 {
+    if (accountId == AccountManager::instance().activeAccountId()) {
+        return;
+    }
+    if (!canSwitchAccounts()) {
+        return;
+    }
+
     // Show switching feedback
     MegaAccount account = AccountManager::instance().getAccount(accountId);
     QString accountName = account.displayName.isEmpty() ? account.email : account.displayName;
@@ -1964,11 +2069,8 @@ void MainWindow::onAccountSwitched(const QString& accountId)
     // Check if the account is logged in via AccountManager
     bool isLoggedIn = AccountManager::instance().isLoggedIn(accountId);
 
-    // Update the global logged-in state if this account is logged in
-    if (isLoggedIn && !m_isLoggedIn) {
-        m_isLoggedIn = true;
-        updateActions();
-    }
+    m_isLoggedIn = isLoggedIn;
+    updateActions();
 
     // Update sidebar display and login state
     if (m_sidebar) {
@@ -1997,18 +2099,19 @@ void MainWindow::onAccountSwitched(const QString& accountId)
         if (m_userLabel) {
             m_userLabel->setText(account->email);
         }
+    } else {
+        setWindowTitle("MegaCustom");
+        if (m_userLabel) {
+            m_userLabel->setText("Not logged in");
+        }
     }
 
-    // Update panels that hold a MegaApi pointer
-    mega::MegaApi* activeApi = AccountManager::instance().activeApi();
-    if (m_watermarkPanel && activeApi) {
-        m_watermarkPanel->setMegaApi(activeApi);
-    }
-    if (m_distributionPanel && activeApi) {
-        m_distributionPanel->setMegaApi(activeApi);
-    }
-    if (m_contentManagerPanel && activeApi) {
-        m_contentManagerPanel->setMegaApi(activeApi);
+    // Idle controllers move together to the new account. An operation that was
+    // started before an internal account change keeps its original SDK pointer
+    // until completion, then the deferred rebind updates every controller.
+    rebindAccountControllers();
+    if (!activeOperationNames().isEmpty()) {
+        scheduleControllerRebind();
     }
 
     // Clear stale search index from previous account
@@ -2017,19 +2120,28 @@ void MainWindow::onAccountSwitched(const QString& accountId)
     }
 
     // Refresh file explorer with new account's data
-    if (m_remoteExplorer && isLoggedIn) {
-        qDebug() << "MainWindow: Enabling and refreshing file explorer for account" << accountId;
-        m_remoteExplorer->setEnabled(true);  // Enable the explorer (was disabled by default)
-        m_remoteExplorer->refresh();
+    if (m_remoteExplorer) {
+        m_remoteExplorer->clear();
+        m_remoteExplorer->setEnabled(isLoggedIn);
+        if (isLoggedIn) {
+            qDebug() << "MainWindow: Enabling and refreshing file explorer for account" << accountId;
+            m_remoteExplorer->refresh();
+        }
     }
 
     // Update sidebar storage info from account data
-    if (account && m_sidebar) {
-        m_sidebar->setStorageInfo(account->storageUsed, account->storageTotal);
+    if (m_sidebar) {
+        m_sidebar->setStorageInfo(account ? account->storageUsed : 0,
+                                  account ? account->storageTotal : 0);
     }
 
-    QString accountName = account ? (account->displayName.isEmpty() ? account->email : account->displayName) : accountId;
-    updateStatus(QString("Switched to %1").arg(accountName));
+    if (account) {
+        const QString accountName = account->displayName.isEmpty()
+            ? account->email : account->displayName;
+        updateStatus(QString("Switched to %1").arg(accountName));
+    } else {
+        updateStatus("Logged out");
+    }
 }
 
 void MainWindow::onLoginRequired(const QString& accountId)
@@ -2084,12 +2196,18 @@ void MainWindow::onLoginRequired(const QString& accountId)
 
 void MainWindow::onAddAccountRequested()
 {
+    if (!canSwitchAccounts()) {
+        return;
+    }
     // Show login dialog for adding a new account
     showLoginDialog();
 }
 
 void MainWindow::onManageAccountsRequested()
 {
+    if (!canSwitchAccounts()) {
+        return;
+    }
     AccountManagerDialog dialog(this);
     dialog.exec();
 

@@ -479,6 +479,8 @@ void FolderMapperPanel::onPreviewClicked()
 
 void FolderMapperPanel::onCancelClicked()
 {
+    m_currentFileLabel->setText("Cancelling current upload...");
+    m_cancelButton->setEnabled(false);
     emit cancelUploadRequested();
 }
 
@@ -625,6 +627,7 @@ void FolderMapperPanel::onUploadStarted(const QString& mappingName)
     m_currentMappingName = mappingName;
     m_progressGroup->setVisible(true);
     m_currentFileLabel->setText(QString("Starting upload for '%1'...").arg(mappingName));
+    m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
     m_statsLabel->setText("Files: 0/0 | Uploaded: 0 B");
 
@@ -635,6 +638,17 @@ void FolderMapperPanel::onUploadStarted(const QString& mappingName)
         m_mappingTable->item(row, COL_STATUS)->setForeground(Qt::blue);
     }
 
+    updateButtonStates();
+}
+
+void FolderMapperPanel::onPreviewStarted(const QString& mappingName)
+{
+    m_isUploading = true;
+    m_currentMappingName = mappingName;
+    m_progressGroup->setVisible(true);
+    m_currentFileLabel->setText(QString("Preparing preview for '%1'...").arg(mappingName));
+    m_progressBar->setRange(0, 0);
+    m_statsLabel->setText("Scanning local and cloud folders...");
     updateButtonStates();
 }
 
@@ -664,15 +678,21 @@ void FolderMapperPanel::onUploadProgress(const QString& mappingName, const QStri
 }
 
 void FolderMapperPanel::onUploadComplete(const QString& mappingName, bool success,
-                                          int filesUploaded, int filesSkipped, int filesFailed)
+                                          int filesUploaded, int filesSkipped, int filesFailed,
+                                          bool cancelled)
 {
     m_isUploading = false;
     m_currentMappingName.clear();
+    m_progressBar->setRange(0, 100);
 
     QString statusText;
     QColor statusColor;
 
-    if (success) {
+    if (cancelled) {
+        statusText = "Cancelled";
+        statusColor = Qt::darkYellow;
+        m_currentFileLabel->setText(QString("Upload cancelled for '%1'").arg(mappingName));
+    } else if (success) {
         statusText = QString("Done (%1 uploaded, %2 skipped)")
             .arg(filesUploaded).arg(filesSkipped);
         statusColor = Qt::darkGreen;
@@ -705,6 +725,13 @@ void FolderMapperPanel::onUploadComplete(const QString& mappingName, bool succes
 void FolderMapperPanel::onPreviewReady(const QString& mappingName, int filesToUpload,
                                         int filesToSkip, qint64 totalBytes)
 {
+    m_isUploading = false;
+    m_currentMappingName.clear();
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setValue(100);
+    m_currentFileLabel->setText(QString("Preview ready for '%1'").arg(mappingName));
+    updateButtonStates();
+
     QString message = QString("Preview for '%1':\n\n"
                               "Files to upload: %2\n"
                               "Files to skip: %3\n"
@@ -723,6 +750,7 @@ void FolderMapperPanel::onError(const QString& operation, const QString& message
 
     if (m_isUploading) {
         m_isUploading = false;
+        m_progressBar->setRange(0, 100);
         m_currentFileLabel->setText(QString("Error: %1").arg(message));
         m_progressGroup->setVisible(true);
         updateButtonStates();

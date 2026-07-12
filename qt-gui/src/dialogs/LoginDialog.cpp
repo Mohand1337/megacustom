@@ -404,7 +404,7 @@ void TwoFactorDialog::setupUI()
 
     // Icon and title
     QLabel* iconLabel = new QLabel(this);
-    iconLabel->setPixmap(QIcon(":/icons/2fa.png").pixmap(DpiScaler::scale(48), DpiScaler::scale(48)));
+    iconLabel->setPixmap(QIcon(":/icons/alert-circle.svg").pixmap(DpiScaler::scale(48), DpiScaler::scale(48)));
     iconLabel->setAlignment(Qt::AlignCenter);
     mainLayout->addWidget(iconLabel);
 

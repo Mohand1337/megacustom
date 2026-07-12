@@ -78,8 +78,8 @@ struct MemberResult {
  * Handles persistence and CRUD operations for members
  *
  * IMPORTANT: This class shares storage with the Qt MemberRegistry class.
- * Both read/write to ~/.config/MegaCustom/members.json to ensure a single
- * source of truth for member data across C++ core and Qt GUI layers.
+ * Both read/write to the configured MegaCustom data directory to ensure a
+ * single source of truth for member data across C++ core and Qt GUI layers.
  *
  * The JSON format is compatible between both implementations:
  * - Uses "displayName" (Qt format) and "name" (C++ format) interchangeably
@@ -89,7 +89,8 @@ class MemberDatabase {
 public:
     /**
      * Constructor
-     * @param storagePath Path to storage file (default: ~/.config/MegaCustom/members.json)
+     * @param storagePath Path to storage file (default: members.json under the
+     * configured MegaCustom data directory)
      */
     explicit MemberDatabase(const std::string& storagePath = "");
 

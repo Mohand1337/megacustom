@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QFuture>
+#include <QVector>
 
 namespace MegaCustom {
 
@@ -16,6 +18,7 @@ class FileController : public QObject {
 
 public:
     FileController(void* api);
+    ~FileController() override;
 
     QString currentLocalPath() const;
     QString currentRemotePath() const;
@@ -28,6 +31,7 @@ public:
     void renameRemote(const QString& oldPath, const QString& newName);
     void searchRemote(const QString& query);
     void getStorageInfo();
+    bool hasActiveTasks() const;
 
     /**
      * Build the cloud search index for instant Everything-like search
@@ -80,9 +84,12 @@ signals:
     void searchIndexBuildCompleted(int totalNodes);
 
 private:
+    void trackTask(QFuture<void> future);
+
     void* m_megaApi;  // The MegaApi instance to use (nullptr = use active account)
     QString m_currentLocalPath;
     QString m_currentRemotePath;
+    QVector<QFuture<void>> m_backgroundTasks;
 };
 
 } // namespace MegaCustom

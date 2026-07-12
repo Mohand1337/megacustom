@@ -1,5 +1,8 @@
 #include "MemberRegistry.h"
+#include "Settings.h"
 #include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QDir>
 #include <QJsonDocument>
 #include <QStandardPaths>
@@ -288,9 +291,15 @@ void MemberRegistry::initDefaults() {
 }
 
 QString MemberRegistry::configPath() const {
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    const QString configDir = Settings::instance().configDirectory();
     QDir().mkpath(configDir);
-    return configDir + "/members.json";
+    const QString target = configDir + "/members.json";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + "/members.json";
+    if (!QFileInfo::exists(target) && legacy != target && QFileInfo::exists(legacy)) {
+        QFile::copy(legacy, target);
+    }
+    return target;
 }
 
 bool MemberRegistry::load() {
@@ -362,14 +371,16 @@ bool MemberRegistry::save() {
 
     QJsonDocument doc(root);
 
-    QFile file(configPath());
+    QSaveFile file(configPath());
     if (!file.open(QIODevice::WriteOnly)) {
         qWarning() << "Failed to save member registry:" << file.errorString();
         return false;
     }
 
-    file.write(doc.toJson(QJsonDocument::Indented));
-    file.close();
+    if (file.write(doc.toJson(QJsonDocument::Indented)) < 0 || !file.commit()) {
+        qWarning() << "Failed to commit member registry:" << file.errorString();
+        return false;
+    }
 
     qDebug() << "Saved" << m_members.size() << "members to registry";
     return true;

@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
+#include <QFuture>
 #include <memory>
 #include <atomic>
 
@@ -23,6 +24,11 @@ public:
     // State queries
     bool hasActiveUpload() const { return m_isUploading; }
     int getMappingCount() const { return m_mappingCount; }
+    bool setMegaApi(void* megaApi) {
+        if (m_isUploading) return false;
+        m_megaApi = megaApi;
+        return true;
+    }
 
 signals:
     // Signals to GUI (FolderMapperPanel)
@@ -34,12 +40,14 @@ signals:
     void mappingUpdated(const QString& name);
 
     void uploadStarted(const QString& mappingName);
+    void previewStarted(const QString& mappingName);
     void uploadProgress(const QString& mappingName, const QString& currentFile,
                         int filesCompleted, int totalFiles,
                         qint64 bytesUploaded, qint64 totalBytes,
                         double speedBytesPerSec);
     void uploadComplete(const QString& mappingName, bool success,
-                        int filesUploaded, int filesSkipped, int filesFailed);
+                        int filesUploaded, int filesSkipped, int filesFailed,
+                        bool cancelled);
     void previewReady(const QString& mappingName, int filesToUpload,
                       int filesToSkip, qint64 totalBytes);
     void error(const QString& operation, const QString& message);
@@ -64,6 +72,7 @@ private:
     std::atomic<bool> m_isUploading{false};
     std::atomic<bool> m_cancelRequested{false};
     std::atomic<int> m_mappingCount{0};
+    QFuture<void> m_uploadFuture;
 };
 
 } // namespace MegaCustom

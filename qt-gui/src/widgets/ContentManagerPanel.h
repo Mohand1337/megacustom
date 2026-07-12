@@ -2,6 +2,7 @@
 #define MEGACUSTOM_CONTENTMANAGERPANEL_H
 
 #include <QWidget>
+#include <QFuture>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QProgressBar>
@@ -99,6 +100,7 @@ public:
     void setMegaApi(mega::MegaApi* api);
     void setMemberRegistry(MemberRegistry* registry);
     void setCloudCopier(CloudCopier* copier);
+    bool isBusy() const { return m_isScanning; }
 
 signals:
     void scanStarted();
@@ -173,6 +175,7 @@ private:
 
     // State
     bool m_isScanning = false;
+    QFuture<void> m_scanFuture;
     QString m_referenceMemberId;
 
     // Worker

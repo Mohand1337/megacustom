@@ -926,6 +926,9 @@ std::filesystem::path segmentCacheRoot(const std::string& configuredDirectory = 
     if (!configuredDirectory.empty()) {
         return toFsPath(configuredDirectory);
     }
+    if (const char* configuredRoot = std::getenv("MEGACUSTOM_CONFIG_DIR")) {
+        return fs::u8path(configuredRoot) / "cache" / "segment-cache";
+    }
 
 #ifdef _WIN32
     if (const wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA")) {

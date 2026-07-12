@@ -46,6 +46,7 @@ public:
     // Search widget geometry for positioning dropdown panel
     QRect searchWidgetGeometry() const;
     QPoint searchWidgetGlobalPos() const;
+    void focusSearch() { if (m_searchEdit) m_searchEdit->setFocus(Qt::ShortcutFocusReason); }
 
 signals:
     // Breadcrumb navigation

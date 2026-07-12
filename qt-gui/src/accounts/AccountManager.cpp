@@ -2,11 +2,13 @@
 #include "CredentialStore.h"
 #include "SessionPool.h"
 #include "../utils/Constants.h"
+#include "../utils/Settings.h"
 #include "styles/ThemeManager.h"
 #include <megaapi.h>
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -669,6 +671,20 @@ void AccountManager::switchToAccount(const QString& accountId)
     }
 }
 
+void AccountManager::logoutActiveAccount(bool forgetSession)
+{
+    if (m_activeAccountId.isEmpty()) {
+        return;
+    }
+
+    const QString accountId = m_activeAccountId;
+    m_sessionPool->releaseSession(accountId, !forgetSession);
+    m_activeAccountId.clear();
+    m_dirty = true;
+    saveAccounts();
+    emit accountSwitched(QString());
+}
+
 QString AccountManager::activeAccountId() const
 {
     return m_activeAccountId;
@@ -859,8 +875,15 @@ void AccountManager::setSettings(const AccountSettings& settings)
 
 QString AccountManager::configFilePath() const
 {
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
-    return configPath + "/MegaCustom/accounts.json";
+    const QString configPath = Settings::instance().configDirectory();
+    QDir().mkpath(configPath);
+    const QString target = configPath + "/accounts.json";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
+        + "/MegaCustom/accounts.json";
+    if (legacy != target && !QFile::exists(target) && QFile::exists(legacy)) {
+        QFile::copy(legacy, target);
+    }
+    return target;
 }
 
 void AccountManager::saveAccounts()
@@ -897,14 +920,16 @@ void AccountManager::saveAccounts()
     root["settings"] = m_settings.toJson();
 
     QJsonDocument doc(root);
-    QFile file(filePath);
+    QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
         qWarning() << "AccountManager: Cannot save accounts:" << file.errorString();
         return;
     }
 
-    file.write(doc.toJson(QJsonDocument::Indented));
-    file.close();
+    if (file.write(doc.toJson(QJsonDocument::Indented)) < 0 || !file.commit()) {
+        qWarning() << "AccountManager: Cannot commit accounts:" << file.errorString();
+        return;
+    }
 
     m_dirty = false;
     qDebug() << "AccountManager: Saved" << m_accounts.size() << "accounts to" << filePath;

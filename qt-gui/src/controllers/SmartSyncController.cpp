@@ -1,18 +1,34 @@
 #include "SmartSyncController.h"
+#include "utils/Settings.h"
 #include "megaapi.h"
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
-#include <QDirIterator>
+#include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QUuid>
-#include <QtConcurrent>
+#include <QThread>
 #include <QDebug>
 
 namespace MegaCustom {
+
+namespace {
+QString profilesPath() {
+    const QString configDir = Settings::instance().configDirectory();
+    QDir().mkpath(configDir);
+    const QString target = configDir + "/sync_profiles.json";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
+        + "/MegaCustom/sync_profiles.json";
+    if (legacy != target && !QFile::exists(target) && QFile::exists(legacy)) {
+        QFile::copy(legacy, target);
+    }
+    return target;
+}
+}
 
 SmartSyncController::SmartSyncController(void* megaApi, QObject* parent)
     : QObject(parent)
@@ -29,10 +45,7 @@ SmartSyncController::~SmartSyncController() {
 }
 
 void SmartSyncController::loadProfiles() {
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
-                         + "/MegaCustom/sync_profiles.json";
-
-    QFile file(configPath);
+    QFile file(profilesPath());
     if (!file.open(QIODevice::ReadOnly)) {
         qDebug() << "No sync profiles found";
         emit profilesLoaded(0);
@@ -78,13 +91,6 @@ void SmartSyncController::loadProfiles() {
 }
 
 void SmartSyncController::saveProfiles() {
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
-                         + "/MegaCustom";
-    if (!QDir().mkpath(configPath)) {
-        qWarning() << "SmartSyncController: Failed to create config directory:" << configPath;
-        return;
-    }
-
     QJsonArray arr;
     for (const auto& profile : m_profiles) {
         QJsonObject obj;
@@ -107,11 +113,18 @@ void SmartSyncController::saveProfiles() {
         arr.append(obj);
     }
 
-    QFile file(configPath + "/sync_profiles.json");
+    QSaveFile file(profilesPath());
     if (file.open(QIODevice::WriteOnly)) {
-        file.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
-        file.close();
-        qDebug() << "Saved" << m_profiles.size() << "sync profiles";
+        const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Indented);
+        if (file.write(data) == data.size() && file.commit()) {
+            qDebug() << "Saved" << m_profiles.size() << "sync profiles";
+        } else {
+            qWarning() << "SmartSyncController: Failed to commit sync profiles:"
+                       << file.errorString();
+        }
+    } else {
+        qWarning() << "SmartSyncController: Failed to open sync profiles:"
+                   << file.errorString();
     }
 }
 
@@ -194,6 +207,11 @@ void SmartSyncController::setFilters(const QString& profileId, const QString& in
 }
 
 void SmartSyncController::setAutoSync(const QString& profileId, bool enabled, int intervalMinutes) {
+    if (enabled && !isOperational()) {
+        emit error("Smart Sync Unavailable",
+                   "Automatic sync is disabled until remote comparison and transfer verification are complete.");
+        enabled = false;
+    }
     if (SyncProfile* profile = getProfile(profileId)) {
         profile->autoSyncEnabled = enabled;
         profile->autoSyncIntervalMinutes = intervalMinutes;
@@ -203,133 +221,15 @@ void SmartSyncController::setAutoSync(const QString& profileId, bool enabled, in
 }
 
 void SmartSyncController::analyzeProfile(const QString& profileId) {
-    SyncProfile* profile = getProfile(profileId);
-    if (!profile) {
-        emit error("Analyze", "Profile not found: " + profileId);
-        return;
-    }
-
-    emit analysisStarted(profileId);
-
-    // Run analysis in background
-    QString localPath = profile->localPath;
-    QString remotePath = profile->remotePath;
-    SyncDirection direction = profile->direction;
-
-    QtConcurrent::run([this, profileId, localPath, remotePath, direction]() {
-        {
-            QMutexLocker locker(&m_dataMutex);
-            m_pendingActions.clear();
-            m_conflicts.clear();
-        }
-
-        int totalFiles = 0;
-        int uploads = 0;
-        int downloads = 0;
-        int deletions = 0;
-        int conflicts = 0;
-
-        // Scan local directory
-        QDir localDir(localPath);
-        if (!localDir.exists()) {
-            QMetaObject::invokeMethod(this, [this, profileId]() {
-                emit error("Analyze", "Local directory does not exist");
-                emit analysisComplete(profileId, 0, 0, 0, 0);
-            }, Qt::QueuedConnection);
-            return;
-        }
-
-        QDirIterator it(localPath, QDir::Files | QDir::NoDotAndDotDot,
-                       QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            it.next();
-            totalFiles++;
-
-            SyncAction action;
-            action.id = totalFiles;
-            action.localPath = it.filePath();
-            action.filePath = localDir.relativeFilePath(it.filePath());
-            action.remotePath = remotePath + "/" + action.filePath;
-
-            QFileInfo fi = it.fileInfo();
-            action.localSize = fi.size();
-            action.localModTime = fi.lastModified();
-
-            // For now, assume file needs upload (real implementation would check remote)
-            if (direction != SyncDirection::REMOTE_TO_LOCAL) {
-                action.actionType = SyncAction::ActionType::UPLOAD;
-                uploads++;
-            } else {
-                action.actionType = SyncAction::ActionType::SKIP;
-            }
-
-            {
-                QMutexLocker locker(&m_dataMutex);
-                m_pendingActions.append(action);
-            }
-
-            // Emit progress every 100 files
-            if (totalFiles % 100 == 0) {
-                QMetaObject::invokeMethod(this, [this, profileId, totalFiles]() {
-                    emit analysisProgress(profileId, totalFiles, totalFiles);
-                }, Qt::QueuedConnection);
-            }
-        }
-
-        QMetaObject::invokeMethod(this, [this, profileId, uploads, downloads, deletions, conflicts]() {
-            emit actionsReady(profileId, m_pendingActions);
-            emit analysisComplete(profileId, uploads, downloads, deletions, conflicts);
-        }, Qt::QueuedConnection);
-    });
+    Q_UNUSED(profileId);
+    emit error("Smart Sync Unavailable",
+               "Analysis is disabled because this build cannot safely compare the remote tree yet.");
 }
 
 void SmartSyncController::startSync(const QString& profileId) {
-    SyncProfile profileCopy;
-    {
-        QMutexLocker locker(&m_dataMutex);
-        SyncProfile* profile = nullptr;
-        for (int i = 0; i < m_profiles.size(); ++i) {
-            if (m_profiles[i].id == profileId) {
-                profile = &m_profiles[i];
-                break;
-            }
-        }
-        if (!profile) {
-            emit error("Start Sync", "Profile not found: " + profileId);
-            return;
-        }
-
-        if (m_isSyncing) {
-            emit error("Start Sync", "Another sync is already in progress");
-            return;
-        }
-
-        m_isSyncing = true;
-        m_isPaused = false;
-        m_cancelRequested = false;
-        m_currentSyncProfileId = profileId;
-        profile->isActive = true;
-
-        // Copy profile data to avoid race conditions
-        profileCopy = *profile;
-    }
-
-    emit syncStarted(profileId);
-
-    // Run sync in background with copied profile data
-    QtConcurrent::run([this, profileId, profileCopy]() mutable {
-        performSync(profileCopy);
-
-        // Update the original profile under lock after sync completes
-        QMutexLocker locker(&m_dataMutex);
-        for (int i = 0; i < m_profiles.size(); ++i) {
-            if (m_profiles[i].id == profileId) {
-                m_profiles[i].lastSyncTime = profileCopy.lastSyncTime;
-                m_profiles[i].isActive = profileCopy.isActive;
-                break;
-            }
-        }
-    });
+    Q_UNUSED(profileId);
+    emit error("Smart Sync Unavailable",
+               "Sync execution is disabled until bidirectional comparison, filters, deletion rules, and transfer completion tracking are implemented.");
 }
 
 void SmartSyncController::performSync(SyncProfile& profile) {

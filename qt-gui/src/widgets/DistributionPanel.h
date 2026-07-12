@@ -14,7 +14,12 @@
 #include <QThread>
 #include <QVariantMap>
 #include <QJsonArray>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <QFuture>
+#include <QVector>
 #include <memory>
+#include <atomic>
 
 #include "utils/ContentRouter.h"
 
@@ -67,6 +72,7 @@ public:
     void setFileController(FileController* controller);
     void setMegaApi(mega::MegaApi* api);
     void setDistributionController(DistributionController* controller);
+    bool isRunning() const { return m_isRunning || m_activeBulkRenameTasks > 0; }
 
 signals:
     void distributionStarted();
@@ -137,13 +143,15 @@ private:
     void populateBroadcastTable(const QString& sourcePath);
     QString getDestinationPath(const QString& memberId, const QString& month = QString());
     void executeBulkRename(const QString& folderPath);
+    void trackBackgroundTask(QFuture<void> future);
     void showDistributionSettingsDialog();
     QString autoDetectDistributionIntent();
     ContentType routeCourseTypeFromTemplate() const;
     QString buildDistributionAudit(bool includeDetails = true, int* blockerCount = nullptr, int* warningCount = nullptr);
     bool confirmDistributionAudit();
     void updateCurrentJobProgress(const QString& summary = {});
-    void saveDistributionCheckpoint(const QString& reason, const QString& jobId = {});
+    void saveDistributionCheckpoint(const QString& reason, const QString& jobId = {},
+                                    bool forcePersist = false);
     QJsonArray serializeDistributionRows() const;
     void recordDistributionCreatedFolder(int taskIndex, const QString& path);
     void recordDistributionUploadedFile(int taskIndex,
@@ -240,6 +248,18 @@ private:
     int m_currentJobPlannedCount = 0;
     int m_successCount = 0;
     int m_failCount = 0;
+    QElapsedTimer m_checkpointTimer;
+    int m_checkpointDirtyEvents = 0;
+    QTimer m_checkpointFlushTimer;
+    QString m_pendingCheckpointReason;
+    QString m_pendingCheckpointJobId;
+    QVector<QFuture<void>> m_backgroundTasks;
+    std::atomic<int> m_activeBulkRenameTasks{0};
+    bool m_bulkRenameBatchActive = false;
+    int m_bulkRenameFoldersRemaining = 0;
+    int m_bulkRenameFolderTotal = 0;
+    int m_bulkRenameFilesRenamed = 0;
+    int m_bulkRenameFailures = 0;
 
     // Pending member file map (stored from prepareForUpload, started on user click)
     QMap<QString, QStringList> m_pendingMemberFileMap;

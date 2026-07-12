@@ -28,6 +28,14 @@ std::string quoteShellArgument(const std::string& value) {
 #endif
 }
 
+std::string pathUtf8(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return path.u8string();
+#else
+    return path.string();
+#endif
+}
+
 bool filesEqual(const std::filesystem::path& first, const std::filesystem::path& second) {
     std::error_code ec;
     const auto firstSize = std::filesystem::file_size(first, ec);
@@ -71,9 +79,11 @@ int main() {
     const auto token = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     const fs::path root = fs::temp_directory_path() /
         ("megacustom-watermarker-test-" + std::to_string(token));
-    const fs::path sourceDirectory = root / "source";
-    const fs::path outputDirectory = root / "output";
-    const fs::path cache = root / "cache";
+    const fs::path generatedDirectory = root / "generated";
+    const fs::path generatedInput = generatedDirectory / "input.mp4";
+    const fs::path sourceDirectory = root / fs::u8path(u8"source-unicode-é");
+    const fs::path outputDirectory = root / fs::u8path(u8"output-unicode-測試");
+    const fs::path cache = root / fs::u8path(u8"cache-unicode-ü");
     const fs::path input = sourceDirectory / "input.mp4";
     const fs::path firstOutput = outputDirectory / "member-one.mp4";
     const fs::path secondOutput = outputDirectory / "member-two.mp4";
@@ -85,6 +95,7 @@ int main() {
     const fs::path passthroughInput = sourceDirectory / "captions.vtt";
     const fs::path passthroughOutput = outputDirectory / "captions.vtt";
     const fs::path unrelatedCacheFile = cache / "keep-me.txt";
+    fs::create_directories(generatedDirectory);
     fs::create_directories(sourceDirectory);
     fs::create_directories(outputDirectory);
 
@@ -93,10 +104,11 @@ int main() {
         " -y -v error -f lavfi -i testsrc2=size=640x360:rate=30" +
         " -f lavfi -i sine=frequency=880:sample_rate=48000" +
         " -t 30 -c:v libx264 -pix_fmt yuv420p -g 60 -c:a aac " +
-        quoteShellArgument(input.string());
-    if (std::system(generateCommand.c_str()) != 0 || !fs::exists(input)) {
+        quoteShellArgument(pathUtf8(generatedInput));
+    if (std::system(generateCommand.c_str()) != 0 || !fs::exists(generatedInput)) {
         return fail("could not generate the source fixture", root);
     }
+    fs::copy_file(generatedInput, input, fs::copy_options::overwrite_existing);
 
     MegaCustom::WatermarkConfig config;
     config.primaryText = "CACHE 100% REUSE TEST";
@@ -106,13 +118,13 @@ int main() {
     config.preset = "ultrafast";
     config.crf = 28;
     config.fastSegmentedEncode = true;
-    config.segmentCacheDirectory = cache.string();
+    config.segmentCacheDirectory = pathUtf8(cache);
     config.segmentCacheMaxBytes = 2LL * 1024LL * 1024LL * 1024LL;
     config.segmentCacheMaxAgeDays = 7;
 
     MegaCustom::Watermarker firstWatermarker;
     firstWatermarker.setConfig(config);
-    const auto first = firstWatermarker.watermarkVideo(input.string(), firstOutput.string());
+    const auto first = firstWatermarker.watermarkVideo(pathUtf8(input), pathUtf8(firstOutput));
     if (!first.success || first.processingMode != "fast_segment_cache_build"
         || first.segmentCacheHit) {
         return fail("first watermark did not build the shared cache: " + first.error, root);
@@ -120,7 +132,7 @@ int main() {
 
     MegaCustom::Watermarker secondWatermarker;
     secondWatermarker.setConfig(config);
-    const auto second = secondWatermarker.watermarkVideo(input.string(), secondOutput.string());
+    const auto second = secondWatermarker.watermarkVideo(pathUtf8(input), pathUtf8(secondOutput));
     if (!second.success || second.processingMode != "fast_segment_cache_hit"
         || !second.segmentCacheHit
         || second.diagnostic.find("validated source plan") == std::string::npos) {
@@ -130,7 +142,7 @@ int main() {
         return fail("identical member settings produced different segmented outputs", root);
     }
 
-    const auto stats = MegaCustom::Watermarker::getSegmentCacheStats(cache.string());
+    const auto stats = MegaCustom::Watermarker::getSegmentCacheStats(pathUtf8(cache));
     if (!stats.error.empty() || stats.entryCount != 1 || stats.incompleteEntryCount != 0
         || stats.sizeBytes <= 0) {
         return fail("cache statistics are inconsistent after reuse", root);
@@ -167,17 +179,17 @@ int main() {
     const fs::path activeLease = cache / (cacheKey + ".use.integration-test");
     fs::create_directory(activeLease);
     std::string clearError;
-    if (MegaCustom::Watermarker::clearSegmentCache(cache.string(), clearError)
+    if (MegaCustom::Watermarker::clearSegmentCache(pathUtf8(cache), clearError)
         || clearError.find("currently in use") == std::string::npos) {
         return fail("cache clear did not reject an active cache user", root);
     }
     fs::remove_all(activeLease);
 
     clearError.clear();
-    if (!MegaCustom::Watermarker::clearSegmentCache(cache.string(), clearError)) {
+    if (!MegaCustom::Watermarker::clearSegmentCache(pathUtf8(cache), clearError)) {
         return fail("cache clear failed: " + clearError, root);
     }
-    const auto cleared = MegaCustom::Watermarker::getSegmentCacheStats(cache.string());
+    const auto cleared = MegaCustom::Watermarker::getSegmentCacheStats(pathUtf8(cache));
     if (cleared.entryCount != 0 || cleared.sizeBytes != 0
         || !fs::exists(unrelatedCacheFile)
         || !fs::exists(unrelatedHexDirectory / "user-data.txt")) {
@@ -187,7 +199,7 @@ int main() {
     auto runConcurrent = [&](const fs::path& output) {
         MegaCustom::Watermarker watermarker;
         watermarker.setConfig(config);
-        return watermarker.watermarkVideo(input.string(), output.string());
+        return watermarker.watermarkVideo(pathUtf8(input), pathUtf8(output));
     };
     auto concurrentOneFuture = std::async(std::launch::async, runConcurrent, concurrentOneOutput);
     auto concurrentTwoFuture = std::async(std::launch::async, runConcurrent, concurrentTwoOutput);
@@ -208,7 +220,7 @@ int main() {
     }
 
     clearError.clear();
-    if (!MegaCustom::Watermarker::clearSegmentCache(cache.string(), clearError)) {
+    if (!MegaCustom::Watermarker::clearSegmentCache(pathUtf8(cache), clearError)) {
         return fail("final cache clear failed: " + clearError, root);
     }
 
@@ -219,7 +231,7 @@ int main() {
     MegaCustom::Watermarker passthroughWatermarker;
     passthroughWatermarker.setConfig(config);
     const auto passthrough = passthroughWatermarker.watermarkFile(
-        passthroughInput.string(), passthroughOutput.string());
+        pathUtf8(passthroughInput), pathUtf8(passthroughOutput));
     if (!passthrough.success || passthrough.processingMode != "passthrough_copy"
         || passthrough.inputSizeBytes <= 0
         || passthrough.outputSizeBytes != passthrough.inputSizeBytes
@@ -230,18 +242,18 @@ int main() {
     noOverwriteConfig.overwrite = false;
     passthroughWatermarker.setConfig(noOverwriteConfig);
     const auto noOverwrite = passthroughWatermarker.watermarkFile(
-        passthroughInput.string(), passthroughOutput.string());
+        pathUtf8(passthroughInput), pathUtf8(passthroughOutput));
     if (noOverwrite.success || !filesEqual(passthroughInput, passthroughOutput)) {
         return fail("passthrough overwrite protection did not preserve the existing output", root);
     }
 
     MegaCustom::WatermarkConfig overlapConfig = config;
-    overlapConfig.segmentCacheDirectory = (outputDirectory / "cache").string();
-    overlapConfig.segmentCacheOutputRoot = outputDirectory.string();
+    overlapConfig.segmentCacheDirectory = pathUtf8(outputDirectory / "cache");
+    overlapConfig.segmentCacheOutputRoot = pathUtf8(outputDirectory);
     MegaCustom::Watermarker overlapWatermarker;
     overlapWatermarker.setConfig(overlapConfig);
     const auto overlapResult = overlapWatermarker.watermarkVideo(
-        input.string(), overlapFallbackOutput.string());
+        pathUtf8(input), pathUtf8(overlapFallbackOutput));
     if (!overlapResult.success || overlapResult.processingMode != "full_encode_fallback"
         || fs::exists(outputDirectory / "cache")) {
         return fail("cache/output-tree overlap was not blocked before full fallback", root);
@@ -249,12 +261,12 @@ int main() {
 
     MegaCustom::WatermarkConfig fallbackConfig = config;
     fallbackConfig.fastSegmentedEncode = true;
-    fallbackConfig.segmentCacheDirectory = input.string();
+    fallbackConfig.segmentCacheDirectory = pathUtf8(input);
     fallbackConfig.preset = "ultrafast";
     MegaCustom::Watermarker fallbackWatermarker;
     fallbackWatermarker.setConfig(fallbackConfig);
     const auto fallbackResult = fallbackWatermarker.watermarkVideo(
-        input.string(), fallbackOutput.string());
+        pathUtf8(input), pathUtf8(fallbackOutput));
     if (!fallbackResult.success || fallbackResult.processingMode != "full_encode_fallback"
         || !fs::exists(fallbackOutput)) {
         return fail("cache filesystem exception did not fall back to a full encode", root);
@@ -262,13 +274,13 @@ int main() {
 
     MegaCustom::WatermarkConfig cancelConfig = config;
     cancelConfig.fastSegmentedEncode = true;
-    cancelConfig.segmentCacheDirectory = input.string();
+    cancelConfig.segmentCacheDirectory = pathUtf8(input);
     cancelConfig.preset = "veryslow";
     cancelConfig.crf = 18;
     MegaCustom::Watermarker cancellable;
     cancellable.setConfig(cancelConfig);
     auto cancelFuture = std::async(std::launch::async, [&]() {
-        return cancellable.watermarkVideo(input.string(), cancelledOutput.string());
+        return cancellable.watermarkVideo(pathUtf8(input), pathUtf8(cancelledOutput));
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     cancellable.cancel();

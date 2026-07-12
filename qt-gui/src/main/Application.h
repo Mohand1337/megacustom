@@ -86,11 +86,6 @@ public:
     MainWindow* getMainWindow() const { return m_mainWindow.get(); }
 
     /**
-     * Attempt automatic login using saved credentials
-     */
-    void attemptAutoLogin();
-
-    /**
      * Check if user is currently logged in
      * @return true if logged in
      */
@@ -107,6 +102,8 @@ public:
      * @return Pointer to SyncScheduler
      */
     SyncScheduler* getSyncScheduler() const { return m_syncScheduler.get(); }
+
+    void applyRuntimeSettings();
 
 signals:
     /**

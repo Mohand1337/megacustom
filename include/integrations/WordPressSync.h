@@ -128,13 +128,13 @@ public:
 
     /**
      * Set path to member database
-     * Default: ~/.megacustom/members.json
+     * Default: members.json under the configured MegaCustom data directory
      */
     void setMemberDatabasePath(const std::string& path) { m_memberDbPath = path; }
 
     /**
      * Load configuration from file
-     * Default: ~/.megacustom/wordpress.json
+     * Default: wordpress.json under the configured MegaCustom data directory
      */
     bool loadConfig(const std::string& configPath = "");
 

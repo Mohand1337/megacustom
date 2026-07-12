@@ -122,6 +122,20 @@ jobs:
         cmake --build build-win64 --config ${{ env.BUILD_TYPE }} --parallel
       shell: pwsh
 
+    - name: Verify manifest and watermark integration
+      run: |
+        $exe = "${{ github.workspace }}/qt-gui/build-win64/${{ env.BUILD_TYPE }}/MegaCustomGUI.exe"
+        $manifest = "${{ runner.temp }}/MegaCustomGUI.manifest"
+        & mt.exe -nologo "-inputresource:$exe;#1" "-out:$manifest"
+        if (!(Select-String -Path $manifest -Pattern "longPathAware" -Quiet)) {
+          throw "MegaCustomGUI.exe does not contain the longPathAware manifest"
+        }
+
+        $ffmpegTools = "${{ github.workspace }}/vcpkg/installed/x64-windows/tools/ffmpeg"
+        $env:PATH = "$ffmpegTools;$env:PATH"
+        ctest --test-dir qt-gui/build-win64 -C ${{ env.BUILD_TYPE }} --output-on-failure
+      shell: pwsh
+
     - name: Create Portable Distribution
       run: |
         cd qt-gui
@@ -217,7 +231,7 @@ jobs:
         Set-Content -Path "$deployDir/portable.marker" -Value $markerContent -Encoding UTF8
 
         # Create README
-        $readmeContent = "MegaCustomGUI Portable`n======================`n`nThis is a portable version of MegaCustomGUI.`n`nTo run: Double-click MegaCustomGUI.exe`n`nPortable mode is enabled - all settings are stored in this folder.`nTo use standard Windows settings (AppData), delete the portable.marker file.`n`nSystem Requirements:`n- Windows 10 or later (64-bit)`n- No installation required"
+        $readmeContent = "MegaCustomGUI Portable`n======================`n`nThis is a portable version of MegaCustomGUI.`n`nTo run: Double-click MegaCustomGUI.exe`n`nPortable mode stores settings, jobs, logs, member and account records, local encrypted credentials, and SDK caches in this folder. Secrets saved to Windows Credential Manager remain managed by Windows.`nTo use standard Windows settings (AppData), delete the portable.marker file.`n`nSystem Requirements:`n- Windows 10 or later (64-bit)`n- No installation required"
         Set-Content -Path "$deployDir/README.txt" -Value $readmeContent -Encoding UTF8
 
         Write-Host "Portable distribution created in $deployDir"

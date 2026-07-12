@@ -743,13 +743,13 @@ void FileExplorer::createContextMenu()
     // Use ModernMenu for rounded corners and drop shadow styling
     m_contextMenu = new ModernMenu(this);
 
-    m_copyAction = m_contextMenu->addAction(QIcon(":/icons/copy.png"), "Copy");
+    m_copyAction = m_contextMenu->addAction(QIcon(":/icons/copy.svg"), "Copy");
     connect(m_copyAction, &QAction::triggered, this, &FileExplorer::copySelected);
 
-    m_cutAction = m_contextMenu->addAction(QIcon(":/icons/cut.png"), "Cut");
+    m_cutAction = m_contextMenu->addAction(QIcon(":/icons/scissors.svg"), "Cut");
     connect(m_cutAction, &QAction::triggered, this, &FileExplorer::cutSelected);
 
-    m_pasteAction = m_contextMenu->addAction(QIcon(":/icons/paste.png"), "Paste");
+    m_pasteAction = m_contextMenu->addAction(QIcon(":/icons/clipboard.svg"), "Paste");
     connect(m_pasteAction, &QAction::triggered, this, &FileExplorer::paste);
 
     m_contextMenu->addSeparator();
@@ -758,28 +758,28 @@ void FileExplorer::createContextMenu()
     if (m_type == Remote) {
         // Create submenus as ModernMenu for consistent styling
         m_copyToAccountMenu = new ModernMenu("Copy to Account...", this);
-        m_copyToAccountMenu->setIcon(QIcon(":/icons/copy.png"));
+        m_copyToAccountMenu->setIcon(QIcon(":/icons/copy.svg"));
         m_contextMenu->addMenu(m_copyToAccountMenu);
 
         m_moveToAccountMenu = new ModernMenu("Move to Account...", this);
-        m_moveToAccountMenu->setIcon(QIcon(":/icons/move.png"));
+        m_moveToAccountMenu->setIcon(QIcon(":/icons/share.svg"));
         m_contextMenu->addMenu(m_moveToAccountMenu);
 
         m_contextMenu->addSeparator();
     }
 
-    m_deleteAction = m_contextMenu->addAction(QIcon(":/icons/delete.png"), "Delete");
+    m_deleteAction = m_contextMenu->addAction(QIcon(":/icons/trash-2.svg"), "Delete");
     connect(m_deleteAction, &QAction::triggered, this, &FileExplorer::deleteSelected);
 
-    m_renameAction = m_contextMenu->addAction(QIcon(":/icons/rename.png"), "Rename");
+    m_renameAction = m_contextMenu->addAction(QIcon(":/icons/edit.svg"), "Rename");
     connect(m_renameAction, &QAction::triggered, this, &FileExplorer::renameSelected);
 
-    m_bulkRenameAction = m_contextMenu->addAction(QIcon(":/icons/rename.png"), "Bulk Rename...");
+    m_bulkRenameAction = m_contextMenu->addAction(QIcon(":/icons/edit.svg"), "Bulk Rename...");
     connect(m_bulkRenameAction, &QAction::triggered, this, &FileExplorer::bulkRenameSelected);
 
     m_contextMenu->addSeparator();
 
-    m_newFolderAction = m_contextMenu->addAction(QIcon(":/icons/folder_new.png"), "New Folder");
+    m_newFolderAction = m_contextMenu->addAction(QIcon(":/icons/folder-plus.svg"), "New Folder");
     connect(m_newFolderAction, &QAction::triggered, this, &FileExplorer::createNewFolder);
 }
 

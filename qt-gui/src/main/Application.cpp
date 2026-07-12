@@ -108,6 +108,9 @@ bool Application::parseCommandLine()
 bool Application::initializeBackend()
 {
     try {
+        qputenv("MEGACUSTOM_CONFIG_DIR",
+                QDir::toNativeSeparators(Settings::instance().configDirectory()).toUtf8());
+
         // Get the MegaManager singleton
         MegaCustom::MegaManager& megaManager = MegaCustom::MegaManager::getInstance();
 
@@ -131,8 +134,7 @@ bool Application::initializeBackend()
         }
 
         // Get cache path for SDK - use standard app data location
-        QString projectCachePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                                   + "/mega_cache";
+        QString projectCachePath = Settings::instance().configDirectory() + "/mega_cache";
         QDir().mkpath(projectCachePath);
         qDebug() << "Using SDK cache path:" << projectCachePath;
 
@@ -179,6 +181,39 @@ bool Application::initializeBackend()
 
         // Initialize AccountManager for multi-account support
         AccountManager::initialize(this);
+        AccountManager& accounts = AccountManager::instance();
+        connect(&accounts, &AccountManager::sessionReady, this,
+                [this](const QString& accountId) {
+            AccountManager& manager = AccountManager::instance();
+            if (accountId != manager.activeAccountId()) {
+                return;
+            }
+            const MegaAccount account = manager.getAccount(accountId);
+            m_isLoggedIn = true;
+            m_currentUser = account.email;
+            emit loginStatusChanged(true);
+            createTrayMenu();
+        });
+        connect(&accounts, &AccountManager::loginRequired, this,
+                [this](const QString& accountId) {
+            if (accountId != AccountManager::instance().activeAccountId()) {
+                return;
+            }
+            m_isLoggedIn = false;
+            m_currentUser.clear();
+            emit loginStatusChanged(false);
+            createTrayMenu();
+        });
+        connect(&accounts, &AccountManager::accountSwitched, this,
+                [this](const QString& accountId) {
+            if (!accountId.isEmpty()) {
+                return;
+            }
+            m_isLoggedIn = false;
+            m_currentUser.clear();
+            emit loginStatusChanged(false);
+            createTrayMenu();
+        });
 
         m_backendInitialized = true;
         return true;
@@ -211,14 +246,14 @@ bool Application::createMainWindow()
         m_mainWindow->setWatermarkerController(m_watermarkerController.get());
 
         // Initialize system tray
-        if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        if (Settings::instance().showTrayIcon() && QSystemTrayIcon::isSystemTrayAvailable()) {
             initializeTrayIcon();
         }
 
         // Show window unless starting minimized
-        if (!m_startMinimized) {
+        if (!m_startMinimized || !m_trayIcon) {
             m_mainWindow->show();
-        } else if (m_trayIcon) {
+        } else if (m_trayIcon && Settings::instance().showNotifications()) {
             m_trayIcon->showMessage("MegaCustom",
                                    "Application started in system tray",
                                    QSystemTrayIcon::Information,
@@ -231,17 +266,6 @@ bool Application::createMainWindow()
         showError("UI Error",
                  QString("Failed to create user interface: %1").arg(e.what()));
         return false;
-    }
-}
-
-void Application::attemptAutoLogin()
-{
-    if (!m_authController) return;
-
-    // Try to restore session
-    QString sessionFile = Settings::instance().sessionFile();
-    if (QFile::exists(sessionFile)) {
-        m_authController->restoreSession(sessionFile);
     }
 }
 
@@ -269,10 +293,12 @@ void Application::hideToTray()
 {
     if (m_mainWindow && m_trayIcon) {
         m_mainWindow->hide();
-        m_trayIcon->showMessage("MegaCustom",
-                               "Application minimized to system tray",
-                               QSystemTrayIcon::Information,
-                               2000);
+        if (Settings::instance().showNotifications()) {
+            m_trayIcon->showMessage("MegaCustom",
+                                   "Application minimized to system tray",
+                                   QSystemTrayIcon::Information,
+                                   2000);
+        }
     }
 }
 
@@ -291,13 +317,6 @@ void Application::onLoginSuccess(const QString& userEmail)
 {
     m_isLoggedIn = true;
     m_currentUser = userEmail;
-
-    // Save session for auto-login if "remember me" was checked
-    if (Settings::instance().rememberLogin()) {
-        qDebug() << "Saving session for:" << userEmail;
-        // Save session securely using CredentialStore
-        m_authController->saveSession(userEmail);
-    }
 
     // Register this account with AccountManager if not already present
     AccountManager& accountMgr = AccountManager::instance();
@@ -318,18 +337,13 @@ void Application::onLoginSuccess(const QString& userEmail)
         m_mainWindow->onLoginStatusChanged(true);
     }
 
-    // Start scheduler if sync on startup is enabled
-    if (m_syncScheduler && Settings::instance().syncOnStartup()) {
-        m_syncScheduler->start();
-        qDebug() << "SyncScheduler started after login";
-    }
-
     // Update tray menu
     createTrayMenu();
 }
 
 void Application::onLogout()
 {
+    AccountManager::instance().logoutActiveAccount(true);
     m_isLoggedIn = false;
     m_sessionKey.clear();
 
@@ -337,12 +351,6 @@ void Application::onLogout()
     if (m_syncScheduler) {
         m_syncScheduler->stop();
         qDebug() << "SyncScheduler stopped on logout";
-    }
-
-    // Clear saved session
-    QString sessionFile = Settings::instance().sessionFile();
-    if (QFile::exists(sessionFile)) {
-        QFile::remove(sessionFile);
     }
 
     emit loginStatusChanged(false);
@@ -375,16 +383,9 @@ void Application::showSettingsDialog()
 
 void Application::handleQuitRequest()
 {
-    // Confirm if transfers are active
-    if (m_transferController && m_transferController->hasActiveTransfers()) {
-        QMessageBox::StandardButton reply = QMessageBox::question(
-            m_mainWindow.get(),
-            "Confirm Exit",
-            "There are active transfers. Are you sure you want to quit?",
-            QMessageBox::Yes | QMessageBox::No
-        );
-
-        if (reply != QMessageBox::Yes) {
+    if (m_mainWindow) {
+        m_mainWindow->show();
+        if (!m_mainWindow->close()) {
             return;
         }
     }
@@ -432,11 +433,6 @@ void Application::cleanup()
         m_transferController->cancelAllTransfers();
     }
 
-    // Logout if needed
-    if (m_isLoggedIn && m_authController) {
-        m_authController->logout();
-    }
-
     // Clean up main window
     if (m_mainWindow) {
         m_mainWindow->close();
@@ -472,8 +468,9 @@ void Application::cleanup()
 
 void Application::initializeTrayIcon()
 {
+    if (m_trayIcon) return;
     m_trayIcon = std::make_unique<QSystemTrayIcon>(this);
-    m_trayIcon->setIcon(QIcon(":/icons/tray_icon.png"));
+    m_trayIcon->setIcon(QIcon(":/icons/megacustom.ico"));
     m_trayIcon->setToolTip("MegaCustom");
 
     // Create tray menu
@@ -506,7 +503,7 @@ void Application::createTrayMenu()
         m_trayMenu->addAction("Upload Files...", m_mainWindow.get(), &MainWindow::showUploadDialog);
         m_trayMenu->addAction("View Transfers", m_mainWindow.get(), &MainWindow::showTransfers);
         m_trayMenu->addSeparator();
-        m_trayMenu->addAction("Logout", m_authController.get(), &AuthController::logout);
+        m_trayMenu->addAction("Logout", m_mainWindow.get(), &MainWindow::requestLogout);
     } else {
         m_trayMenu->addAction("Open MegaCustom", this, &Application::showMainWindow);
         m_trayMenu->addAction("Login...", m_mainWindow.get(), &MainWindow::showLoginDialog);
@@ -584,15 +581,31 @@ void Application::showError(const QString& title, const QString& message)
     }
 
     // Also show in system tray if available
-    if (m_trayIcon) {
+    if (m_trayIcon && Settings::instance().showNotifications()) {
         m_trayIcon->showMessage(title, message, QSystemTrayIcon::Critical);
     }
 }
 
 void Application::loadStylesheet()
 {
-    // Load the light theme by default (can be overridden by Settings)
-    loadStylesheetByTheme(false);
+    loadStylesheetByTheme(Settings::instance().darkMode());
+}
+
+void Application::applyRuntimeSettings()
+{
+    Settings& settings = Settings::instance();
+    loadStylesheetByTheme(settings.darkMode());
+
+    const bool shouldShowTray = settings.showTrayIcon()
+        && QSystemTrayIcon::isSystemTrayAvailable();
+    if (shouldShowTray && !m_trayIcon) {
+        initializeTrayIcon();
+    } else if (!shouldShowTray && m_trayIcon) {
+        m_trayIcon->hide();
+        m_trayIcon.reset();
+        delete m_trayMenu;
+        m_trayMenu = nullptr;
+    }
 }
 
 bool Application::loadStylesheetByTheme(bool darkMode)

@@ -1,8 +1,11 @@
 #include "MetricsStore.h"
+#include "Settings.h"
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QDateTime>
 #include <QDebug>
 #include <cmath>
@@ -30,9 +33,14 @@ MetricsStore::~MetricsStore()
 
 void MetricsStore::initDatabase()
 {
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    const QString configDir = Settings::instance().configDirectory();
     QDir().mkpath(configDir);
-    QString dbPath = configDir + "/metrics.db";
+    const QString dbPath = configDir + "/metrics.db";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + "/metrics.db";
+    if (!QFileInfo::exists(dbPath) && legacy != dbPath && QFileInfo::exists(legacy)) {
+        QFile::copy(legacy, dbPath);
+    }
 
     // Use a unique connection name to avoid conflicts
     m_db = QSqlDatabase::addDatabase("QSQLITE", "metrics_store");

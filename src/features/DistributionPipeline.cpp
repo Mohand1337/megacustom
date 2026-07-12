@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <random>
 #include <cctype>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -146,14 +147,12 @@ DistributionPipeline::DistributionPipeline() {
     // Set default temp directory
     m_config.tempDirectory = getDefaultTempDirectory();
 
-    // Default member database path
-    std::string homeDir = getHomeDirectory();
-    if (!homeDir.empty()) {
-#ifdef _WIN32
-        m_memberDbPath = homeDir + "\\.megacustom\\members.json";
-#else
-        m_memberDbPath = homeDir + "/.megacustom/members.json";
-#endif
+    if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR");
+        configured && *configured != '\0') {
+        m_memberDbPath = (std::filesystem::u8path(configured) / "members.json").u8string();
+    } else {
+        m_memberDbPath = (std::filesystem::u8path(getHomeDirectory())
+            / ".megacustom" / "members.json").u8string();
     }
 }
 

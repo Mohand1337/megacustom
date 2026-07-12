@@ -259,9 +259,6 @@ void OperationJobStore::updateProgress(const QString& jobId, int completed, int 
         return;
     }
 
-    const bool countsChanged = record->completedCount != completed
-        || record->failedCount != failed
-        || record->skippedCount != skipped;
     record->completedCount = qMax(0, completed);
     record->failedCount = qMax(0, failed);
     record->skippedCount = qMax(0, skipped);
@@ -269,7 +266,26 @@ void OperationJobStore::updateProgress(const QString& jobId, int completed, int 
         record->summary = summary.trimmed();
     }
     record->updatedAt = QDateTime::currentDateTimeUtc();
-    persistSoonLocked(*record, countsChanged);
+    persistSoonLocked(*record, false);
+}
+
+void OperationJobStore::updateMetadata(const QString& jobId,
+                                       const QJsonObject& metadata,
+                                       bool forcePersist) {
+    if (jobId.trimmed().isEmpty()) {
+        return;
+    }
+
+    QMutexLocker locker(&m_mutex);
+    loadLocked();
+    OperationJobRecord* record = findJobLocked(jobId);
+    if (!record) {
+        return;
+    }
+
+    record->metadata = metadata;
+    record->updatedAt = QDateTime::currentDateTimeUtc();
+    persistSoonLocked(*record, forcePersist);
 }
 
 void OperationJobStore::setLastError(const QString& jobId, const QString& error) {
@@ -286,7 +302,7 @@ void OperationJobStore::setLastError(const QString& jobId, const QString& error)
 
     record->lastError = error.trimmed();
     record->updatedAt = QDateTime::currentDateTimeUtc();
-    persistSoonLocked(*record, true);
+    persistSoonLocked(*record, false);
 
     QJsonObject details;
     details["error"] = record->lastError;
@@ -467,6 +483,40 @@ void OperationJobStore::loadLocked() {
         }
     }
     trimLocked();
+
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    bool reconciled = false;
+    for (OperationJobRecord& record : m_jobs) {
+        if (record.status != OperationJobStatus::Queued
+            && record.status != OperationJobStatus::Running) {
+            continue;
+        }
+
+        const bool resumableWatermark = record.type == OperationJobType::Watermark
+            && record.metadata["watermarkRows"].isArray()
+            && !record.metadata["watermarkRows"].toArray().isEmpty();
+        if (resumableWatermark) {
+            record.status = OperationJobStatus::Paused;
+            record.summary = "Interrupted when MegaCustom exited; checkpoint is ready to resume";
+            record.metadata["watermarkCheckpointReason"] = "interrupted_on_startup";
+            record.metadata["watermarkCheckpointUpdatedAt"] = formatDate(now);
+        } else {
+            record.status = OperationJobStatus::Failed;
+            record.summary = "Interrupted when MegaCustom exited before completion";
+            record.lastError = record.summary;
+            record.finishedAt = now;
+        }
+        record.updatedAt = now;
+        reconciled = true;
+
+        logJobEventLocked(record,
+                          resumableWatermark ? "job.recovered" : "job.interrupted",
+                          record.summary);
+    }
+
+    if (reconciled) {
+        persistLocked();
+    }
 }
 
 void OperationJobStore::trimLocked() {

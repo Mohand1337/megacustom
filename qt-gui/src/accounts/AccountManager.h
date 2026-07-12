@@ -179,6 +179,9 @@ public:
      */
     void switchToAccount(const QString& accountId);
 
+    /** Log out the active account while keeping its account entry. */
+    void logoutActiveAccount(bool forgetSession = true);
+
     /**
      * @brief Get the active account ID
      * @return The currently active account ID, or empty string

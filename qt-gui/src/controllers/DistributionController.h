@@ -155,7 +155,9 @@ public:
 
     void setConfig(const QtDistributionConfig& config);
     QtDistributionConfig config() const { return m_config; }
-    void setMegaApi(void* api) { m_megaApi = api; }
+    void setMegaApi(void* api) {
+        if (!m_isRunning) m_megaApi = api;
+    }
 
     // ==================== Operations ====================
 

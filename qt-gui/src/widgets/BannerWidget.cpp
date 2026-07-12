@@ -284,11 +284,11 @@ QString BannerWidget::getIconPath() const
         case Type::Info:
             return ":/icons/info.svg";
         case Type::Warning:
-            return ":/icons/warning.svg";
+            return ":/icons/alert-circle.svg";
         case Type::Error:
-            return ":/icons/error.svg";
+            return ":/icons/alert-circle.svg";
         case Type::Success:
-            return ":/icons/success.svg";
+            return ":/icons/check.svg";
         default:
             return "";
     }

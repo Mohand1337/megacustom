@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <iostream>
 #include <iomanip>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,6 +24,8 @@
 #endif
 
 namespace {
+namespace fs = std::filesystem;
+
 // Cross-platform function to get user home directory
 std::string getHomeDirectory() {
 #ifdef _WIN32
@@ -38,6 +41,107 @@ std::string getHomeDirectory() {
 #else
     const char* home = std::getenv("HOME");
     return home ? std::string(home) : "/tmp";
+#endif
+}
+
+std::string pathToUtf8(const fs::path& path) {
+    return path.u8string();
+}
+
+void migrateLegacyMembers(const fs::path& target) {
+    std::error_code ec;
+    if (fs::exists(target, ec)) {
+        return;
+    }
+
+    const fs::path home = fs::u8path(getHomeDirectory());
+    const fs::path candidates[] = {
+        home / ".config" / "MegaCustom" / "members.json",
+        home / ".megacustom" / "members.json"
+    };
+
+    for (const fs::path& candidate : candidates) {
+        if (candidate == target || !fs::exists(candidate, ec)) {
+            continue;
+        }
+        const fs::path parent = target.parent_path();
+        if (!parent.empty()) {
+            fs::create_directories(parent, ec);
+            if (ec) {
+                return;
+            }
+        }
+        fs::copy_file(candidate, target, fs::copy_options::none, ec);
+        return;
+    }
+}
+
+std::string jsonString(const nlohmann::json& object, const std::string& key,
+                       const std::string& fallback = {}) {
+    return object.contains(key) && object[key].is_string()
+        ? object[key].get<std::string>() : fallback;
+}
+
+int64_t jsonInt64(const nlohmann::json& object, const std::string& key,
+                  int64_t fallback = 0) {
+    return object.contains(key) && object[key].is_number()
+        ? object[key].get<int64_t>() : fallback;
+}
+
+bool jsonBool(const nlohmann::json& object, const std::string& key, bool fallback) {
+    return object.contains(key) && object[key].is_boolean()
+        ? object[key].get<bool>() : fallback;
+}
+
+nlohmann::json memberJsonObject(const MegaCustom::Member& member,
+                                nlohmann::json object = nlohmann::json::object()) {
+    if (!object.is_object()) {
+        object = nlohmann::json::object();
+    }
+
+    object["id"] = member.id;
+    object["displayName"] = member.name;
+    object["name"] = member.name;
+    object["email"] = member.email;
+    object["ipAddress"] = member.ipAddress;
+    object["macAddress"] = member.macAddress;
+    object["socialHandle"] = member.socialHandle;
+    object["distributionFolder"] = member.megaFolderPath;
+    object["distributionFolderHandle"] = member.megaFolderHandle;
+    object["wpUserId"] = member.wpUserId;
+    object["lastWpSync"] = member.lastSynced;
+    object["active"] = member.active;
+    object["useGlobalWatermark"] = member.useGlobalWatermark;
+    object["createdAt"] = member.createdAt;
+    object["updatedAt"] = member.updatedAt;
+
+    nlohmann::json watermarkFields = nlohmann::json::array();
+    for (const std::string& field : member.watermarkFields) {
+        watermarkFields.push_back(field);
+    }
+    object["watermarkFields"] = watermarkFields;
+
+    nlohmann::json customFields = nlohmann::json::object();
+    for (const auto& [key, value] : member.customFields) {
+        customFields[key] = value;
+    }
+    object["customFields"] = customFields;
+    return object;
+}
+
+bool replaceFileAtomically(const fs::path& temporary, const fs::path& target,
+                           std::error_code& ec) {
+#ifdef _WIN32
+    if (MoveFileExW(temporary.c_str(), target.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        ec.clear();
+        return true;
+    }
+    ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    return false;
+#else
+    fs::rename(temporary, target, ec);
+    return !ec;
 #endif
 }
 } // anonymous namespace
@@ -61,31 +165,22 @@ std::string Member::getDisplayString() const {
 
 MemberDatabase::MemberDatabase(const std::string& storagePath) {
     if (storagePath.empty()) {
-        // Default to ~/.config/MegaCustom/members.json (same as Qt MemberRegistry)
-        // This ensures both C++ and Qt layers share the same member database
-        std::string homeDir = getHomeDirectory();
-        if (!homeDir.empty()) {
-#ifdef _WIN32
-            m_storagePath = homeDir + "\\.config\\MegaCustom\\members.json";
-#else
-            m_storagePath = homeDir + "/.config/MegaCustom/members.json";
-#endif
+        if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR");
+            configured && *configured != '\0') {
+            m_storagePath = pathToUtf8(fs::u8path(configured) / "members.json");
         } else {
-            m_storagePath = "./members.json";
+            m_storagePath = pathToUtf8(fs::u8path(getHomeDirectory())
+                / ".config" / "MegaCustom" / "members.json");
         }
     } else {
         m_storagePath = storagePath;
     }
 
-    // Ensure directory exists
-#ifdef _WIN32
-    size_t lastSep = m_storagePath.find_last_of("\\/");
-#else
-    size_t lastSep = m_storagePath.find_last_of('/');
-#endif
-    std::string dir = (lastSep != std::string::npos) ? m_storagePath.substr(0, lastSep) : "";
-    if (!dir.empty()) {
-        mkdir(dir.c_str(), 0755);
+    const fs::path target = fs::u8path(m_storagePath);
+    migrateLegacyMembers(target);
+    std::error_code ec;
+    if (!target.parent_path().empty()) {
+        fs::create_directories(target.parent_path(), ec);
     }
 
     // Load existing data
@@ -125,14 +220,19 @@ MemberResult MemberDatabase::addMember(const Member& member) {
         newMember.watermarkFields = {"name", "email", "ip"};
     }
 
+    const bool wasDirty = m_dirty;
     m_members[newMember.id] = newMember;
     m_dirty = true;
 
+    if (!save()) {
+        m_members.erase(newMember.id);
+        m_dirty = wasDirty;
+        result.error = "Failed to persist new member '" + newMember.id + "'";
+        return result;
+    }
+
     result.success = true;
     result.member = newMember;
-
-    // Auto-save and notify
-    save();
     if (m_onMemberAdded) {
         m_onMemberAdded(newMember);
     }
@@ -150,6 +250,9 @@ MemberResult MemberDatabase::updateMember(const Member& member) {
         return result;
     }
 
+    const Member previousMember = it->second;
+    const bool wasDirty = m_dirty;
+
     // Update with new timestamp
     Member updatedMember = member;
     updatedMember.createdAt = it->second.createdAt;  // Preserve creation time
@@ -159,11 +262,15 @@ MemberResult MemberDatabase::updateMember(const Member& member) {
     m_members[member.id] = updatedMember;
     m_dirty = true;
 
+    if (!save()) {
+        m_members[member.id] = previousMember;
+        m_dirty = wasDirty;
+        result.error = "Failed to persist member update for '" + member.id + "'";
+        return result;
+    }
+
     result.success = true;
     result.member = updatedMember;
-
-    // Auto-save and notify
-    save();
     if (m_onMemberUpdated) {
         m_onMemberUpdated(updatedMember);
     }
@@ -182,14 +289,19 @@ MemberResult MemberDatabase::removeMember(const std::string& memberId) {
     }
 
     Member removedMember = it->second;
+    const bool wasDirty = m_dirty;
     m_members.erase(it);
     m_dirty = true;
 
+    if (!save()) {
+        m_members[memberId] = removedMember;
+        m_dirty = wasDirty;
+        result.error = "Failed to persist member removal for '" + memberId + "'";
+        return result;
+    }
+
     result.success = true;
     result.member = removedMember;
-
-    // Auto-save and notify
-    save();
     if (m_onMemberRemoved) {
         m_onMemberRemoved(removedMember);
     }
@@ -268,7 +380,7 @@ bool MemberDatabase::memberExists(const std::string& memberId) const {
 MemberResult MemberDatabase::importFromCsv(const std::string& csvPath, bool skipHeader) {
     MemberResult result;
 
-    std::ifstream file(csvPath);
+    std::ifstream file(fs::u8path(csvPath));
     if (!file.is_open()) {
         result.error = "Failed to open CSV file: " + csvPath;
         notifyError(result.error);
@@ -320,7 +432,7 @@ MemberResult MemberDatabase::importFromCsv(const std::string& csvPath, bool skip
 MemberResult MemberDatabase::exportToCsv(const std::string& csvPath, const MemberFilter& filter) const {
     MemberResult result;
 
-    std::ofstream file(csvPath);
+    std::ofstream file(fs::u8path(csvPath));
     if (!file.is_open()) {
         result.error = "Failed to create CSV file: " + csvPath;
         return result;
@@ -341,7 +453,7 @@ MemberResult MemberDatabase::exportToCsv(const std::string& csvPath, const Membe
 MemberResult MemberDatabase::importFromJson(const std::string& jsonPath) {
     MemberResult result;
 
-    std::ifstream file(jsonPath);
+    std::ifstream file(fs::u8path(jsonPath));
     if (!file.is_open()) {
         result.error = "Failed to open JSON file: " + jsonPath;
         notifyError(result.error);
@@ -364,7 +476,7 @@ MemberResult MemberDatabase::importFromJson(const std::string& jsonPath) {
 MemberResult MemberDatabase::exportToJson(const std::string& jsonPath, const MemberFilter& filter) const {
     MemberResult result;
 
-    std::ofstream file(jsonPath);
+    std::ofstream file(fs::u8path(jsonPath));
     if (!file.is_open()) {
         result.error = "Failed to create JSON file: " + jsonPath;
         return result;
@@ -389,17 +501,10 @@ MemberResult MemberDatabase::bindFolder(const std::string& memberId,
         return result;
     }
 
-    it->second.megaFolderPath = folderPath;
-    it->second.megaFolderHandle = folderHandle;
-    it->second.updatedAt = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    m_dirty = true;
-
-    result.success = true;
-    result.member = it->second;
-
-    save();
-    return result;
+    Member updated = it->second;
+    updated.megaFolderPath = folderPath;
+    updated.megaFolderHandle = folderHandle;
+    return updateMember(updated);
 }
 
 MemberResult MemberDatabase::unbindFolder(const std::string& memberId) {
@@ -425,16 +530,9 @@ MemberResult MemberDatabase::setWatermarkFields(const std::string& memberId,
         return result;
     }
 
-    it->second.watermarkFields = fields;
-    it->second.updatedAt = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    m_dirty = true;
-
-    result.success = true;
-    result.member = it->second;
-
-    save();
-    return result;
+    Member updated = it->second;
+    updated.watermarkFields = fields;
+    return updateMember(updated);
 }
 
 std::vector<std::string> MemberDatabase::getAvailableWatermarkFields() {
@@ -454,16 +552,9 @@ MemberResult MemberDatabase::setWordPressUserId(const std::string& memberId,
         return result;
     }
 
-    it->second.wpUserId = wpUserId;
-    it->second.updatedAt = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    m_dirty = true;
-
-    result.success = true;
-    result.member = it->second;
-
-    save();
-    return result;
+    Member updated = it->second;
+    updated.wpUserId = wpUserId;
+    return updateMember(updated);
 }
 
 MemberResult MemberDatabase::markAsSynced(const std::string& memberId) {
@@ -476,16 +567,10 @@ MemberResult MemberDatabase::markAsSynced(const std::string& memberId) {
         return result;
     }
 
-    it->second.lastSynced = std::chrono::duration_cast<std::chrono::seconds>(
+    Member updated = it->second;
+    updated.lastSynced = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-    it->second.updatedAt = it->second.lastSynced;
-    m_dirty = true;
-
-    result.success = true;
-    result.member = it->second;
-
-    save();
-    return result;
+    return updateMember(updated);
 }
 
 MemberResult MemberDatabase::getUnsyncedMembers() const {
@@ -505,7 +590,7 @@ bool MemberDatabase::reload() {
 }
 
 bool MemberDatabase::loadFromFile() {
-    std::ifstream file(m_storagePath);
+    std::ifstream file(fs::u8path(m_storagePath));
     if (!file.is_open()) {
         // File doesn't exist yet - that's OK
         return true;
@@ -518,19 +603,93 @@ bool MemberDatabase::loadFromFile() {
 }
 
 bool MemberDatabase::saveToFile() {
-    // Ensure directory exists
-    std::string dir = m_storagePath.substr(0, m_storagePath.find_last_of('/'));
-    if (!dir.empty()) {
-        mkdir(dir.c_str(), 0755);
+    const fs::path storagePath = fs::u8path(m_storagePath);
+    std::error_code ec;
+    if (!storagePath.parent_path().empty()) {
+        fs::create_directories(storagePath.parent_path(), ec);
+    }
+    if (ec) {
+        notifyError("Failed to create member database directory: " + ec.message());
+        return false;
     }
 
-    std::ofstream file(m_storagePath);
+    nlohmann::json root = nlohmann::json::object();
+    std::map<std::string, nlohmann::json> existingMembers;
+    if (fs::exists(storagePath, ec)) {
+        std::ifstream existingFile(storagePath);
+        const std::string existingContent((std::istreambuf_iterator<char>(existingFile)),
+                                          std::istreambuf_iterator<char>());
+        if (!existingContent.empty()) {
+            try {
+                root = nlohmann::json::parse(existingContent);
+            } catch (const std::exception& e) {
+                notifyError("Refusing to overwrite invalid member registry: " + std::string(e.what()));
+                return false;
+            }
+            if (!root.is_object()) {
+                notifyError("Refusing to overwrite invalid member registry root");
+                return false;
+            }
+
+            const nlohmann::json& existingArray = root["members"];
+            if (existingArray.is_array()) {
+                for (size_t i = 0; i < existingArray.size(); ++i) {
+                    const nlohmann::json& object = existingArray[i];
+                    const std::string id = jsonString(object, "id");
+                    if (!id.empty()) {
+                        existingMembers[id] = object;
+                    }
+                }
+            }
+        }
+    }
+
+    nlohmann::json members = nlohmann::json::array();
+    for (const auto& [id, member] : m_members) {
+        auto existing = existingMembers.find(id);
+        members.push_back(memberJsonObject(
+            member,
+            existing == existingMembers.end() ? nlohmann::json::object() : existing->second));
+    }
+    root["members"] = members;
+
+    fs::path temporaryPath = storagePath;
+    temporaryPath += ".tmp";
+    std::ofstream file(temporaryPath, std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
         notifyError("Failed to save to: " + m_storagePath);
         return false;
     }
 
-    file << allMembersToJson();
+    file << root.dump(2) << '\n';
+    file.flush();
+    if (!file.good()) {
+        file.close();
+        fs::remove(temporaryPath, ec);
+        notifyError("Failed while writing member registry: " + m_storagePath);
+        return false;
+    }
+    file.close();
+
+#ifndef _WIN32
+    fs::permissions(temporaryPath,
+                    fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ec);
+    if (ec) {
+        fs::remove(temporaryPath, ec);
+        notifyError("Failed to secure member registry permissions");
+        return false;
+    }
+#endif
+
+    if (!replaceFileAtomically(temporaryPath, storagePath, ec)) {
+        const std::error_code replaceError = ec;
+        std::error_code cleanupError;
+        fs::remove(temporaryPath, cleanupError);
+        notifyError("Failed to replace member registry: " + replaceError.message());
+        return false;
+    }
+
     m_dirty = false;
     return true;
 }
@@ -544,191 +703,96 @@ void MemberDatabase::notifyError(const std::string& error) {
 // ==================== JSON Helpers ====================
 
 std::string MemberDatabase::memberToJson(const Member& member) const {
-    std::ostringstream ss;
-    ss << "{\n";
-    ss << "  \"id\": \"" << member.id << "\",\n";
-    // Use displayName for Qt compatibility, but also write name for backward compat
-    ss << "  \"displayName\": \"" << member.name << "\",\n";
-    ss << "  \"email\": \"" << member.email << "\",\n";
-    ss << "  \"ipAddress\": \"" << member.ipAddress << "\",\n";
-    ss << "  \"macAddress\": \"" << member.macAddress << "\",\n";
-    ss << "  \"socialHandle\": \"" << member.socialHandle << "\",\n";
-    // Use distributionFolder for Qt compatibility
-    ss << "  \"distributionFolder\": \"" << member.megaFolderPath << "\",\n";
-    ss << "  \"distributionFolderHandle\": \"" << member.megaFolderHandle << "\",\n";
-    ss << "  \"wpUserId\": \"" << member.wpUserId << "\",\n";
-    ss << "  \"lastWpSync\": " << member.lastSynced << ",\n";
-    ss << "  \"active\": " << (member.active ? "true" : "false") << ",\n";
-    ss << "  \"useGlobalWatermark\": " << (member.useGlobalWatermark ? "true" : "false") << ",\n";
-    ss << "  \"createdAt\": " << member.createdAt << ",\n";
-    ss << "  \"updatedAt\": " << member.updatedAt << ",\n";
-
-    // Watermark fields array
-    ss << "  \"watermarkFields\": [";
-    for (size_t i = 0; i < member.watermarkFields.size(); ++i) {
-        if (i > 0) ss << ", ";
-        ss << "\"" << member.watermarkFields[i] << "\"";
-    }
-    ss << "],\n";
-
-    // Custom fields object
-    ss << "  \"customFields\": {";
-    bool first = true;
-    for (const auto& [key, value] : member.customFields) {
-        if (!first) ss << ", ";
-        ss << "\"" << key << "\": \"" << value << "\"";
-        first = false;
-    }
-    ss << "}\n";
-
-    ss << "}";
-    return ss.str();
+    return memberJsonObject(member).dump(2);
 }
 
 std::string MemberDatabase::allMembersToJson() const {
-    std::ostringstream ss;
-    ss << "{\n";
-    ss << "  \"version\": 1,\n";
-    ss << "  \"members\": [\n";
-
-    bool first = true;
+    nlohmann::json root = nlohmann::json::object();
+    nlohmann::json members = nlohmann::json::array();
     for (const auto& [id, member] : m_members) {
-        if (!first) ss << ",\n";
-        // Indent each member object
-        std::string memberJson = memberToJson(member);
-        std::istringstream iss(memberJson);
-        std::string line;
-        while (std::getline(iss, line)) {
-            ss << "    " << line << "\n";
-        }
-        first = false;
+        members.push_back(memberJsonObject(member));
     }
-
-    ss << "  ]\n";
-    ss << "}\n";
-    return ss.str();
+    root["version"] = 1;
+    root["members"] = members;
+    return root.dump(2) + "\n";
 }
 
 bool MemberDatabase::loadMembersFromJson(const std::string& json) {
-    // Simple JSON parsing - look for member objects
-    // This is a basic implementation - for production, use nlohmann::json
-
-    m_members.clear();
-
-    // Find members array
-    size_t membersStart = json.find("\"members\"");
-    if (membersStart == std::string::npos) {
-        return true;  // Empty file is OK
-    }
-
-    // Parse each member object (simplified parsing)
-    size_t pos = membersStart;
-    while ((pos = json.find("\"id\"", pos)) != std::string::npos) {
-        Member member;
-
-        // Extract ID
-        size_t idStart = json.find("\"", pos + 4) + 1;
-        size_t idEnd = json.find("\"", idStart);
-        if (idStart != std::string::npos && idEnd != std::string::npos) {
-            member.id = json.substr(idStart, idEnd - idStart);
+    try {
+        const nlohmann::json root = nlohmann::json::parse(json);
+        if (!root.is_object()) {
+            return false;
+        }
+        if (!root.contains("members")) {
+            m_members.clear();
+            m_dirty = false;
+            return true;
         }
 
-        // Helper lambda to extract string field
-        auto extractField = [&json, pos](const std::string& fieldName) -> std::string {
-            size_t fieldPos = json.find("\"" + fieldName + "\"", pos);
-            if (fieldPos == std::string::npos || fieldPos > pos + 2000) return "";
-            size_t valStart = json.find("\"", fieldPos + fieldName.length() + 2) + 1;
-            size_t valEnd = json.find("\"", valStart);
-            if (valStart != std::string::npos && valEnd != std::string::npos) {
-                return json.substr(valStart, valEnd - valStart);
+        const nlohmann::json& members = root["members"];
+        if (!members.is_array()) {
+            return false;
+        }
+
+        std::map<std::string, Member> loaded;
+        for (size_t i = 0; i < members.size(); ++i) {
+            const nlohmann::json& object = members[i];
+            if (!object.is_object()) {
+                continue;
             }
-            return "";
-        };
 
-        // Helper lambda to extract int64 field
-        auto extractInt64 = [&json, pos](const std::string& fieldName) -> int64_t {
-            size_t fieldPos = json.find("\"" + fieldName + "\"", pos);
-            if (fieldPos == std::string::npos || fieldPos > pos + 2000) return 0;
-            size_t valStart = json.find(":", fieldPos) + 1;
-            while (valStart < json.size() && (json[valStart] == ' ' || json[valStart] == '\t')) valStart++;
-            size_t valEnd = valStart;
-            while (valEnd < json.size() && (isdigit(json[valEnd]) || json[valEnd] == '-')) valEnd++;
-            if (valEnd > valStart) {
-                return std::stoll(json.substr(valStart, valEnd - valStart));
-            }
-            return 0;
-        };
+            Member member;
+            member.id = jsonString(object, "id");
+            member.name = jsonString(object, "displayName", jsonString(object, "name"));
+            member.email = jsonString(object, "email");
+            member.ipAddress = jsonString(object, "ipAddress");
+            member.macAddress = jsonString(object, "macAddress");
+            member.socialHandle = jsonString(object, "socialHandle");
+            member.megaFolderPath = jsonString(
+                object, "distributionFolder", jsonString(object, "megaFolderPath"));
+            member.megaFolderHandle = jsonString(
+                object, "distributionFolderHandle", jsonString(object, "megaFolderHandle"));
+            member.wpUserId = jsonString(object, "wpUserId");
+            member.lastSynced = jsonInt64(
+                object, "lastWpSync", jsonInt64(object, "lastSynced"));
+            member.active = jsonBool(object, "active", true);
+            member.useGlobalWatermark = jsonBool(object, "useGlobalWatermark", false);
+            member.createdAt = jsonInt64(object, "createdAt");
+            member.updatedAt = jsonInt64(object, "updatedAt");
 
-        // Helper lambda to extract bool field
-        auto extractBool = [&json, pos](const std::string& fieldName) -> bool {
-            size_t fieldPos = json.find("\"" + fieldName + "\"", pos);
-            if (fieldPos == std::string::npos || fieldPos > pos + 2000) return false;
-            size_t valStart = json.find(":", fieldPos) + 1;
-            return json.find("true", valStart) < valStart + 20;
-        };
-
-        // Try displayName first (Qt format), fall back to name (old format)
-        member.name = extractField("displayName");
-        if (member.name.empty()) {
-            member.name = extractField("name");
-        }
-        member.email = extractField("email");
-        member.ipAddress = extractField("ipAddress");
-        member.macAddress = extractField("macAddress");
-        member.socialHandle = extractField("socialHandle");
-        // Try distributionFolder first (Qt format), fall back to megaFolderPath
-        member.megaFolderPath = extractField("distributionFolder");
-        if (member.megaFolderPath.empty()) {
-            member.megaFolderPath = extractField("megaFolderPath");
-        }
-        member.megaFolderHandle = extractField("distributionFolderHandle");
-        if (member.megaFolderHandle.empty()) {
-            member.megaFolderHandle = extractField("megaFolderHandle");
-        }
-        member.wpUserId = extractField("wpUserId");
-        // Try lastWpSync first (Qt format), fall back to lastSynced
-        member.lastSynced = extractInt64("lastWpSync");
-        if (member.lastSynced == 0) {
-            member.lastSynced = extractInt64("lastSynced");
-        }
-        member.active = extractBool("active");
-        member.useGlobalWatermark = extractBool("useGlobalWatermark");
-        member.createdAt = extractInt64("createdAt");
-        member.updatedAt = extractInt64("updatedAt");
-
-        // Parse watermark fields array (simplified)
-        size_t wfStart = json.find("\"watermarkFields\"", pos);
-        if (wfStart != std::string::npos && wfStart < pos + 2000) {
-            size_t arrStart = json.find("[", wfStart);
-            size_t arrEnd = json.find("]", arrStart);
-            if (arrStart != std::string::npos && arrEnd != std::string::npos) {
-                std::string arrContent = json.substr(arrStart + 1, arrEnd - arrStart - 1);
-                size_t fieldStart = 0;
-                while ((fieldStart = arrContent.find("\"", fieldStart)) != std::string::npos) {
-                    size_t fieldEnd = arrContent.find("\"", fieldStart + 1);
-                    if (fieldEnd != std::string::npos) {
-                        member.watermarkFields.push_back(
-                            arrContent.substr(fieldStart + 1, fieldEnd - fieldStart - 1));
-                        fieldStart = fieldEnd + 1;
-                    } else break;
+            const nlohmann::json& fields = object["watermarkFields"];
+            if (fields.is_array()) {
+                for (size_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
+                    if (fields[fieldIndex].is_string()) {
+                        member.watermarkFields.push_back(fields[fieldIndex].get<std::string>());
+                    }
                 }
             }
+            if (member.watermarkFields.empty()) {
+                member.watermarkFields = {"name", "email", "ip"};
+            }
+
+            const nlohmann::json& customFields = object["customFields"];
+            if (customFields.is_object()) {
+                for (const auto& [key, value] : customFields.items()) {
+                    if (value.is_string()) {
+                        member.customFields[key] = value.get<std::string>();
+                    }
+                }
+            }
+
+            if (!member.id.empty()) {
+                loaded[member.id] = std::move(member);
+            }
         }
 
-        // Default watermark fields if empty
-        if (member.watermarkFields.empty()) {
-            member.watermarkFields = {"name", "email", "ip"};
-        }
-
-        if (!member.id.empty()) {
-            m_members[member.id] = member;
-        }
-
-        pos = idEnd + 1;
+        m_members = std::move(loaded);
+        m_dirty = false;
+        return true;
+    } catch (const std::exception& e) {
+        notifyError("Failed to parse member registry: " + std::string(e.what()));
+        return false;
     }
-
-    m_dirty = false;
-    return true;
 }
 
 // ==================== CSV Helpers ====================

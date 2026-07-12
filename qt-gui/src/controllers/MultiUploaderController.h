@@ -72,6 +72,11 @@ public:
     int getRuleCount() const { return m_rules.size(); }
     int getPendingTaskCount() const;
     int getCompletedTaskCount() const;
+    bool setMegaApi(void* megaApi) {
+        if (m_isUploading) return false;
+        m_megaApi = megaApi;
+        return true;
+    }
 
 signals:
     // Signals to GUI (MultiUploaderPanel)

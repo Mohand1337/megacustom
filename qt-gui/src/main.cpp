@@ -175,7 +175,7 @@ void setApplicationStyle(QApplication& app) {
  * Show splash screen during initialization
  */
 QSplashScreen* showSplashScreen() {
-    QPixmap pixmap(":/icons/splash.png");
+    QPixmap pixmap(":/icons/megacustom.svg");
     if (pixmap.isNull()) {
         // Create a simple splash if image not found
         pixmap = QPixmap(600, 400);
@@ -211,6 +211,11 @@ int main(int argc, char *argv[])
     // Create application instance
     MegaCustom::Application app(argc, argv);
 
+    // Core singletons can be initialized by crash/log setup before the backend.
+    // Publish the portable-aware root first so none of them open legacy paths.
+    qputenv("MEGACUSTOM_CONFIG_DIR",
+            QDir::toNativeSeparators(MegaCustom::Settings::instance().configDirectory()).toUtf8());
+
     // Install crash handler & Qt message router — must be done early
     installCrashHandler();
     qInstallMessageHandler(qtMessageHandler);
@@ -220,7 +225,11 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationDomain(APP_DOMAIN);
     QApplication::setApplicationName(APP_NAME);
     QApplication::setApplicationVersion(APP_VERSION);
-    QApplication::setWindowIcon(QIcon(":/icons/app_icon.ico"));
+    QApplication::setWindowIcon(QIcon(":/icons/megacustom.ico"));
+
+    // Load the normal settings first; an explicit --config file then overrides
+    // those values instead of being overwritten later during startup.
+    MegaCustom::Settings::instance().load();
 
     // Parse command line arguments
     if (app.parseCommandLine()) {
@@ -245,9 +254,6 @@ int main(int argc, char *argv[])
                                Qt::black);
             QApplication::processEvents();
         }
-
-        // Load settings
-        MegaCustom::Settings::instance().load();
 
         // Configure LogManager with the correct (portable-aware) log path
         {
@@ -304,13 +310,6 @@ int main(int argc, char *argv[])
         if (splash) {
             splash->finish(app.getMainWindow());
             delete splash;
-        }
-
-        // Check for auto-login - attempt if session file exists
-        QString sessionFile = MegaCustom::Settings::instance().sessionFile();
-        if (QFile::exists(sessionFile)) {
-            qDebug() << "Session file found, attempting auto-login...";
-            app.attemptAutoLogin();
         }
 
         // Start the event loop

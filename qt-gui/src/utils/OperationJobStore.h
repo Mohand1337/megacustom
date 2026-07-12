@@ -74,6 +74,8 @@ public:
 
     void updateProgress(const QString& jobId, int completed, int failed,
                         int skipped = 0, const QString& summary = {});
+    void updateMetadata(const QString& jobId, const QJsonObject& metadata,
+                        bool forcePersist = false);
     void setLastError(const QString& jobId, const QString& error);
 
     OperationJobRecord job(const QString& jobId) const;

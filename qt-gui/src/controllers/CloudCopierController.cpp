@@ -168,6 +168,17 @@ CloudCopierController::~CloudCopierController() {
     }
 }
 
+bool CloudCopierController::setMegaApi(void* megaApi) {
+    if (m_isCopying) {
+        return false;
+    }
+    m_megaApi = megaApi;
+    if (m_cloudCopier) {
+        m_cloudCopier->setMegaApi(static_cast<mega::MegaApi*>(megaApi));
+    }
+    return true;
+}
+
 // State queries
 int CloudCopierController::getPendingTaskCount() const {
     int count = 0;

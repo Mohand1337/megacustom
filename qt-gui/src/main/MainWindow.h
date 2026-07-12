@@ -2,6 +2,7 @@
 #define MEGACUSTOM_MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QStringList>
 #include <memory>
 #include "../accounts/AccountModels.h"
 
@@ -164,6 +165,8 @@ public slots:
      * Show transfers panel
      */
     void showTransfers();
+
+    void requestLogout();
 
     /**
      * Show/hide transfers panel
@@ -366,6 +369,11 @@ private:
      */
     bool checkUnsavedChanges();
 
+    QStringList activeOperationNames() const;
+    bool canSwitchAccounts();
+    void rebindAccountControllers();
+    void scheduleControllerRebind();
+
     /**
      * Refresh remote UI and rebuild the cloud search index after rename batches.
      */
@@ -481,6 +489,7 @@ private:
     // State
     bool m_isLoggedIn;
     bool m_loginDialogShowing;
+    bool m_accountRebindPending = false;
     QString m_currentUser;
     QString m_pendingLoginAccountId;
 };

@@ -9,11 +9,11 @@
 #include "megaapi.h"
 #include <QDebug>
 #include <QTimer>
+#include <QDir>
 #include <QFileInfo>
 #include <QUuid>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QtConcurrent>
 
 namespace MegaCustom {
 
@@ -154,17 +154,19 @@ bool TransferController::hasActiveTransfers() const {
     return m_d && m_d->activeTransferCount > 0;
 }
 
+bool TransferController::setMegaApi(void* api) {
+    if (!m_d || hasActiveTransfers()) {
+        return false;
+    }
+    m_d->megaApi = static_cast<mega::MegaApi*>(api);
+    return true;
+}
+
 void TransferController::cancelAllTransfers() {
     qDebug() << "Canceling all transfers...";
     if (m_d && m_d->megaApi) {
         m_d->megaApi->cancelTransfers(mega::MegaTransfer::TYPE_UPLOAD);
         m_d->megaApi->cancelTransfers(mega::MegaTransfer::TYPE_DOWNLOAD);
-        m_d->activeTransferCount = 0;
-
-        // Clear transfer tracking
-        QMutexLocker locker(&m_d->transfersMutex);
-        m_d->transfers.clear();
-        m_d->pendingCount = 0;
     }
 }
 
@@ -279,87 +281,64 @@ void TransferController::uploadFolder(const QString& localPath, const QString& r
         return;
     }
 
-    QDir dir(localPath);
-    if (!dir.exists()) {
+    const QFileInfo folderInfo(localPath);
+    if (!folderInfo.exists() || !folderInfo.isDir()) {
         emit transferFailed(localPath, "Folder does not exist");
         return;
     }
 
-    // Track the folder upload
+    std::unique_ptr<mega::MegaNode> parentNode(
+        m_d->megaApi->getNodeByPath(remotePath.toUtf8().constData()));
+    if (!parentNode) {
+        emit transferFailed(localPath, "Destination folder not found");
+        return;
+    }
+
     auto* transfer = m_d->addTransfer("upload", localPath, remotePath, 0);
     QString transferId = transfer->transferId;
 
     emit transferStarted(localPath);
+    emit addTransfer("upload", localPath, remotePath, 0);
     m_d->activeTransferCount++;
+    emit queueStatusChanged(m_d->activeTransferCount.load(), m_d->pendingCount.load(),
+                           m_d->completedCount.load(), m_d->failedCount.load());
 
-    // Get all files in directory
-    QStringList files;
-    QDirIterator it(localPath, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        files.append(it.next());
-    }
+    auto* listener = new TransferProgressListener(this);
+    listener->setUserData(transferId);
 
-    if (files.isEmpty()) {
-        m_d->completeTransfer(transferId, true, QString());
-        emit transferCompleted(localPath);
-        return;
-    }
-
-    // Upload files sequentially in background
-    QtConcurrent::run([this, files, remotePath, localPath, transferId]() {
-        int completed = 0;
-        int failed = 0;
-        QString lastError;
-
-        for (const QString& filePath : files) {
-            // Get relative path
-            QString relativePath = filePath.mid(localPath.length());
-            if (relativePath.startsWith('/')) relativePath = relativePath.mid(1);
-            QString destPath = remotePath + "/" + QFileInfo(relativePath).path();
-
-            // Find/create parent folder
-            std::unique_ptr<mega::MegaNode> parentNode(
-                m_d->megaApi->getNodeByPath(destPath.toUtf8().constData()));
-
-            if (!parentNode) {
-                // Try to create the folder structure
-                m_d->megaApi->createFolder(destPath.toUtf8().constData(),
-                                          m_d->megaApi->getRootNode());
-                QThread::msleep(500);  // Wait for folder creation
-                parentNode.reset(m_d->megaApi->getNodeByPath(destPath.toUtf8().constData()));
-            }
-
-            if (parentNode) {
-                const QString nativeLocal = QDir::toNativeSeparators(filePath);
-                m_d->megaApi->startUpload(nativeLocal.toUtf8().constData(),
-                                         parentNode.get(),
-                                         nullptr, 0, nullptr, false, false, nullptr, nullptr);
-                completed++;
-            } else {
-                failed++;
-                lastError = "Could not create destination folder";
-            }
-
-            // Small delay between files
-            QThread::msleep(100);
-        }
-
-        // Signal completion
-        QMetaObject::invokeMethod(this, [this, localPath, transferId, completed, failed, lastError]() {
-            bool success = (failed == 0);
-            m_d->completeTransfer(transferId, success, lastError);
-
-            if (success) {
-                emit transferCompleted(localPath);
-            } else {
-                emit transferFailed(localPath, lastError.isEmpty() ?
-                    QString("%1 files failed").arg(failed) : lastError);
-            }
-
-            emit queueStatusChanged(m_d->activeTransferCount.load(), m_d->pendingCount.load(),
-                                   m_d->completedCount.load(), m_d->failedCount.load());
-        }, Qt::QueuedConnection);
+    connect(listener, &TransferProgressListener::progressUpdated,
+            this, [this, transferId](int, qint64 transferred, qint64 total, double speed) {
+        m_d->updateTransferProgress(transferId, transferred, total, static_cast<qint64>(speed));
+        m_d->updateGlobalSpeeds();
+        const int timeRemaining = speed > 0
+            ? static_cast<int>((total - transferred) / speed) : 0;
+        emit transferProgress(transferId, transferred, total,
+                              static_cast<qint64>(speed), timeRemaining);
+        emit globalSpeedUpdate(m_d->totalUploadSpeed.load(), m_d->totalDownloadSpeed.load());
     });
+
+    connect(listener, &TransferProgressListener::transferFinished,
+            this, [this, transferId, localPath](int, bool success, const QString& error) {
+        m_d->completeTransfer(transferId, success, error);
+        m_d->updateGlobalSpeeds();
+        if (success) {
+            emit transferComplete(transferId);
+            emit transferCompleted(localPath);
+        } else {
+            emit transferFailed(localPath, error);
+        }
+        emit queueStatusChanged(m_d->activeTransferCount.load(), m_d->pendingCount.load(),
+                                m_d->completedCount.load(), m_d->failedCount.load());
+        emit globalSpeedUpdate(m_d->totalUploadSpeed.load(), m_d->totalDownloadSpeed.load());
+        QTimer::singleShot(5000, this, [this, transferId]() {
+            m_d->removeTransfer(transferId);
+        });
+    });
+
+    const QString nativeLocal = QDir::toNativeSeparators(localPath);
+    m_d->megaApi->startUpload(nativeLocal.toUtf8().constData(),
+                              parentNode.get(),
+                              nullptr, 0, nullptr, false, false, nullptr, listener);
 }
 
 void TransferController::downloadFile(const QString& remotePath, const QString& localPath) {

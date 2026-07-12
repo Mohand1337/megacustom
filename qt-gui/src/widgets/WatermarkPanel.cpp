@@ -7,6 +7,7 @@
 #include "utils/MetricsStore.h"
 #include "utils/MegaUploadUtils.h"
 #include "utils/OperationJobStore.h"
+#include "utils/Settings.h"
 #include "core/LogManager.h"
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
@@ -48,9 +49,30 @@
 
 namespace MegaCustom {
 
+static QString watermarkSettingsFile() {
+    const QString path = Settings::instance().configDirectory() + "/watermark.ini";
+    static bool migrated = false;
+    if (!migrated) {
+        migrated = true;
+        QSettings portable(path, QSettings::IniFormat);
+        if (!portable.value("Migration/legacyQSettingsImported", false).toBool()) {
+            QSettings legacy;
+            for (const QString& key : legacy.allKeys()) {
+                if ((key.startsWith("Watermark/") || key.startsWith("WatermarkPresets/"))
+                    && !portable.contains(key)) {
+                    portable.setValue(key, legacy.value(key));
+                }
+            }
+            portable.setValue("Migration/legacyQSettingsImported", true);
+            portable.sync();
+        }
+    }
+    return path;
+}
+
 static WatermarkConfig loadPersistedWatermarkConfig() {
     WatermarkConfig config;
-    QSettings settings;
+    QSettings settings(watermarkSettingsFile(), QSettings::IniFormat);
     settings.beginGroup("Watermark");
     config.intervalSeconds = settings.value("intervalSeconds", config.intervalSeconds).toInt();
     config.durationSeconds = settings.value("durationSeconds", config.durationSeconds).toInt();
@@ -75,6 +97,20 @@ static WatermarkConfig loadPersistedWatermarkConfig() {
     config.overwrite = settings.value("overwrite", config.overwrite).toBool();
     settings.endGroup();
     return config;
+}
+
+static QString watermarkFileType(const QString& path) {
+    const QString ext = QFileInfo(path).suffix().toLower();
+    static const QSet<QString> videoExts = {
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
+    };
+    static const QSet<QString> audioExts = {
+        "mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"
+    };
+    if (ext == "pdf") return "pdf";
+    if (audioExts.contains(ext)) return "audio";
+    if (videoExts.contains(ext)) return "video";
+    return "passthrough";
 }
 
 // ==================== WatermarkWorker ====================
@@ -132,6 +168,23 @@ void WatermarkWorker::setCustomUploadPath(const QString& path) {
 
 void WatermarkWorker::setRootDir(const QString& rootDir) {
     m_rootDir = rootDir;
+}
+
+void WatermarkWorker::setSourceRoots(const QMap<QString, QString>& sourceRoots) {
+    m_sourceRoots = sourceRoots;
+}
+
+QString WatermarkWorker::sourceRootForInput(const QString& inputPath) const {
+    if (m_sourceRoots.contains(inputPath)) {
+        const QString root = m_sourceRoots.value(inputPath).trimmed();
+        return root.isEmpty() ? QFileInfo(inputPath).absolutePath() : root;
+    }
+    const QString cleanPath = QDir::cleanPath(inputPath);
+    if (m_sourceRoots.contains(cleanPath)) {
+        const QString root = m_sourceRoots.value(cleanPath).trimmed();
+        return root.isEmpty() ? QFileInfo(inputPath).absolutePath() : root;
+    }
+    return m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir;
 }
 
 void WatermarkWorker::setMetricsStore(MetricsStore* store) {
@@ -261,13 +314,14 @@ WatermarkResult WatermarkWorker::watermarkInput(Watermarker& watermarker,
                                                 const QString& memberId,
                                                 const std::string& outputDir) {
     const std::string inputStd = inputPath.toStdString();
+    const QString sourceRoot = sourceRootForInput(inputPath);
     WatermarkResult result;
     result.inputFile = inputStd;
 
     try {
         if (!memberId.isEmpty()) {
             const QString outputBaseDir = m_outputDir.isEmpty()
-                ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                ? sourceRoot
                 : m_outputDir;
             WatermarkConfig operationConfig = baseConfig;
             operationConfig.segmentCacheOutputRoot = outputBaseDir.toStdString();
@@ -281,7 +335,7 @@ WatermarkResult WatermarkWorker::watermarkInput(Watermarker& watermarker,
             }
 
             const std::string outPath = watermarker.buildMemberOutputPath(
-                inputStd, outputDir, memberId.toStdString(), m_rootDir.toStdString());
+                inputStd, outputDir, memberId.toStdString(), sourceRoot.toStdString());
             if (Watermarker::isVideoFile(inputStd)) {
                 result = watermarker.watermarkVideo(inputStd, outPath);
             } else if (Watermarker::isPdfFile(inputStd)) {
@@ -306,7 +360,7 @@ WatermarkResult WatermarkWorker::watermarkInput(Watermarker& watermarker,
 
             std::string outputPath;
             if (!outputDir.empty()) {
-                outputPath = watermarker.generateOutputPath(inputStd, outputDir, m_rootDir.toStdString());
+                outputPath = watermarker.generateOutputPath(inputStd, outputDir, sourceRoot.toStdString());
             }
             result = watermarker.watermarkFile(inputStd, outputPath);
         }
@@ -580,7 +634,7 @@ void WatermarkWorker::process() {
                     }
                     if (!m_cancelled) {
                         const QString outputBaseDir = m_outputDir.isEmpty()
-                            ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                            ? sourceRootForInput(inputPath)
                             : m_outputDir;
                         pauseForDiskSpace(inputPath, outputBaseDir);
                     }
@@ -725,7 +779,7 @@ void WatermarkWorker::process() {
             }
             const QString outputBaseDir = !m_memberId.isEmpty()
                 ? (m_outputDir.isEmpty()
-                    ? (m_rootDir.isEmpty() ? QFileInfo(inputPath).absolutePath() : m_rootDir)
+                    ? sourceRootForInput(inputPath)
                     : m_outputDir)
                 : (outputDir.empty() ? QFileInfo(inputPath).absolutePath() : QString::fromStdString(outputDir));
             if (!m_cancelled) {
@@ -769,6 +823,15 @@ WatermarkPanel::WatermarkPanel(QWidget* parent)
     loadMembers();
     updateButtonStates();
 
+    m_checkpointFlushTimer.setSingleShot(true);
+    connect(&m_checkpointFlushTimer, &QTimer::timeout, this, [this]() {
+        const QString reason = m_pendingCheckpointReason;
+        const QString jobId = m_pendingCheckpointJobId;
+        m_pendingCheckpointReason.clear();
+        m_pendingCheckpointJobId.clear();
+        saveWatermarkCheckpoint(reason.isEmpty() ? "periodic" : reason, jobId, true);
+    });
+
     // Connect registry signals
     connect(m_registry, &MemberRegistry::membersReloaded, this, &WatermarkPanel::loadMembers);
     connect(m_registry, &MemberRegistry::memberAdded, this, &WatermarkPanel::loadMembers);
@@ -783,8 +846,8 @@ WatermarkPanel::~WatermarkPanel() {
         if (m_workerThread->isRunning()) {
             if (m_worker) m_worker->cancel();
             m_workerThread->quit();
-            if (!m_workerThread->wait(5000)) {
-                m_workerThread->terminate();
+            if (!m_workerThread->wait(30000)) {
+                qCritical() << "Watermark worker did not stop after cancellation; waiting for safe shutdown";
                 m_workerThread->wait();
             }
         }
@@ -1129,30 +1192,31 @@ void WatermarkPanel::setupUI() {
     QHBoxLayout* videoSettingsLayout = new QHBoxLayout();
     videoSettingsLayout->setSpacing(16);
 
-    videoSettingsLayout->addWidget(new QLabel("Preset:"));
+    videoSettingsLayout->addWidget(new QLabel("Encoding speed:"));
     m_presetCombo = new QComboBox();
-    m_presetCombo->addItems({"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"});
+    m_presetCombo->addItems({"ultrafast", "superfast", "veryfast", "faster", "fast",
+                             "medium", "slow", "slower", "veryslow"});
     m_presetCombo->setCurrentText("ultrafast");
     m_presetCombo->setToolTip("FFmpeg encoding preset (faster = lower quality, slower = better quality)");
     videoSettingsLayout->addWidget(m_presetCombo);
 
     videoSettingsLayout->addWidget(new QLabel("Quality (CRF):"));
     m_crfSpin = new QSpinBox();
-    m_crfSpin->setRange(18, 28);
+    m_crfSpin->setRange(0, 51);
     m_crfSpin->setValue(23);
-    m_crfSpin->setToolTip("Constant Rate Factor (18=best quality, 28=smallest file)");
+    m_crfSpin->setToolTip("Constant Rate Factor (0=lossless, 51=lowest quality; 18-28 is typical)");
     videoSettingsLayout->addWidget(m_crfSpin);
 
     videoSettingsLayout->addWidget(new QLabel("Interval (s):"));
     m_intervalSpin = new QSpinBox();
-    m_intervalSpin->setRange(60, 3600);
+    m_intervalSpin->setRange(10, 3600);
     m_intervalSpin->setValue(600);
     m_intervalSpin->setToolTip("Seconds between watermark appearances");
     videoSettingsLayout->addWidget(m_intervalSpin);
 
     videoSettingsLayout->addWidget(new QLabel("Duration (s):"));
     m_durationSpin = new QSpinBox();
-    m_durationSpin->setRange(1, 30);
+    m_durationSpin->setRange(1, 60);
     m_durationSpin->setValue(3);
     m_durationSpin->setToolTip("How long watermark stays visible");
     videoSettingsLayout->addWidget(m_durationSpin);
@@ -1173,7 +1237,7 @@ void WatermarkPanel::setupUI() {
 
     // Preset management row
     QHBoxLayout* presetLayout = new QHBoxLayout();
-    presetLayout->addWidget(new QLabel("Preset:"));
+    presetLayout->addWidget(new QLabel("Saved setup:"));
 
     m_presetNameCombo = new QComboBox();
     m_presetNameCombo->setMinimumWidth(150);
@@ -1397,16 +1461,12 @@ void WatermarkPanel::addFilesFromDownloader(const QStringList& filePaths) {
 
         WatermarkFileInfo info;
         info.filePath = file;
+        info.sourceRootDir.clear();
         info.fileName = fi.fileName();
         info.fileSize = fi.size();
         info.status = "pending";
 
-        QString ext = fi.suffix().toLower();
-        if (ext == "pdf") {
-            info.fileType = "pdf";
-        } else {
-            info.fileType = "video";
-        }
+        info.fileType = watermarkFileType(file);
 
         m_files.append(info);
     }
@@ -1557,17 +1617,16 @@ void WatermarkPanel::retryJob(const QString& jobId) {
     m_memberListWidget->blockSignals(false);
     onMemberSelectionChanged();
 
-    auto fileTypeForPath = [](const QString& path) {
-        const QString ext = QFileInfo(path).suffix().toLower();
-        static const QSet<QString> videoExts = {
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
-        };
-        static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
-        if (ext == "pdf") return QString("pdf");
-        if (audioExts.contains(ext)) return QString("audio");
-        if (videoExts.contains(ext)) return QString("video");
-        return QString("passthrough");
-    };
+    QMap<QString, QString> savedSourceRoots;
+    for (const QJsonValue& value : metadata["watermarkRows"].toArray()) {
+        const QJsonObject row = value.toObject();
+        if (!row["isHeader"].toBool(false)) {
+            savedSourceRoots[row["sourcePath"].toString()] =
+                row.contains("sourceRootDir")
+                    ? row["sourceRootDir"].toString()
+                    : m_sourceRootDir;
+        }
+    }
 
     QStringList missingFiles;
     m_files.clear();
@@ -1582,9 +1641,10 @@ void WatermarkPanel::retryJob(const QString& jobId) {
 
         WatermarkFileInfo info;
         info.filePath = path;
+        info.sourceRootDir = savedSourceRoots.value(path, m_sourceRootDir);
         info.fileName = fi.fileName();
         info.fileSize = fi.size();
-        info.fileType = fileTypeForPath(path);
+        info.fileType = watermarkFileType(path);
         info.status = "pending";
         m_files.append(info);
     }
@@ -1687,6 +1747,7 @@ QJsonArray WatermarkPanel::serializeWatermarkRows() const {
         object["row"] = row;
         object["isHeader"] = info.isHeader;
         object["sourcePath"] = info.filePath;
+        object["sourceRootDir"] = info.sourceRootDir;
         object["fileName"] = info.fileName;
         object["fileSizeBytes"] = QString::number(info.fileSize);
         object["fileType"] = info.fileType;
@@ -1705,7 +1766,19 @@ QJsonArray WatermarkPanel::serializeWatermarkRows() const {
     return rows;
 }
 
-void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QString& jobId) {
+QMap<QString, QString> WatermarkPanel::sourceRootMap() const {
+    QMap<QString, QString> roots;
+    for (const WatermarkFileInfo& info : m_files) {
+        if (!info.isHeader && !info.filePath.isEmpty()) {
+            roots[info.filePath] = info.sourceRootDir;
+            roots[QDir::cleanPath(info.filePath)] = info.sourceRootDir;
+        }
+    }
+    return roots;
+}
+
+void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QString& jobId,
+                                             bool forcePersist) {
     QString targetJobId = jobId.trimmed().isEmpty()
         ? (!m_currentJobId.trimmed().isEmpty() ? m_currentJobId : m_pausedJobId)
         : jobId.trimmed();
@@ -1721,10 +1794,33 @@ void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QStrin
         return;
     }
 
+
     OperationJobRecord record = OperationJobStore::instance().job(targetJobId);
     if (record.id.isEmpty() || record.type != OperationJobType::Watermark) {
         return;
     }
+
+    if (forcePersist) {
+        m_checkpointFlushTimer.stop();
+        m_pendingCheckpointReason.clear();
+        m_pendingCheckpointJobId.clear();
+    }
+
+    ++m_checkpointDirtyEvents;
+    if (!forcePersist && m_checkpointTimer.isValid()
+        && m_checkpointTimer.elapsed() < 2000
+        && m_checkpointDirtyEvents < 20) {
+        m_pendingCheckpointReason = reason;
+        m_pendingCheckpointJobId = targetJobId;
+        if (!m_checkpointFlushTimer.isActive()) {
+            m_checkpointFlushTimer.start(qMax(1, 2000 - static_cast<int>(m_checkpointTimer.elapsed())));
+        }
+        return;
+    }
+
+    m_checkpointFlushTimer.stop();
+    m_pendingCheckpointReason.clear();
+    m_pendingCheckpointJobId.clear();
 
     int rowCount = 0;
     int pendingCount = 0;
@@ -1773,12 +1869,9 @@ void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QStrin
     metadata["watermarkFullEncodeRows"] = fullEncodeCount;
     metadata["watermarkFastFallbackRows"] = fastFallbackCount;
 
-    OperationJobStore::instance().createJob(
-        OperationJobType::Watermark,
-        record.title,
-        qMax(record.plannedCount, rowCount),
-        metadata,
-        targetJobId);
+    OperationJobStore::instance().updateMetadata(targetJobId, metadata, forcePersist);
+    m_checkpointDirtyEvents = 0;
+    m_checkpointTimer.restart();
 }
 
 void WatermarkPanel::applyAdvancedWatermarkJobMetadata(const QJsonObject& metadata) {
@@ -1912,6 +2005,9 @@ bool WatermarkPanel::restoreWatermarkRowsFromJob(const OperationJobRecord& recor
         WatermarkFileInfo info;
         info.isHeader = object["isHeader"].toBool(false);
         info.filePath = object["sourcePath"].toString();
+        info.sourceRootDir = object.contains("sourceRootDir")
+            ? object["sourceRootDir"].toString()
+            : record.metadata["sourceRootDir"].toString();
         info.fileName = object["fileName"].toString();
         if (info.fileName.isEmpty() && !info.filePath.isEmpty()) {
             info.fileName = QFileInfo(info.filePath).fileName();
@@ -2324,7 +2420,7 @@ void WatermarkPanel::cleanupJob(const QString& jobId) {
         latestRecord.plannedCount,
         metadata,
         jobId);
-    saveWatermarkCheckpoint("cleanup_applied", jobId);
+    saveWatermarkCheckpoint("cleanup_applied", jobId, true);
 
     const int cleanupFailures = failedFiles + failedDirPaths.size();
     const QString summary = QString("Cleanup removed %1 partial file(s) and %2 empty folder(s)%3")
@@ -2441,25 +2537,12 @@ void WatermarkPanel::onAddFiles() {
         QFileInfo fi(file);
         WatermarkFileInfo info;
         info.filePath = file;
+        info.sourceRootDir.clear();
         info.fileName = fi.fileName();
         info.fileSize = fi.size();
         info.status = "pending";
 
-        QString ext = fi.suffix().toLower();
-        static const QSet<QString> videoExts = {
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
-        };
-        static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
-
-        if (ext == "pdf") {
-            info.fileType = "pdf";
-        } else if (audioExts.contains(ext)) {
-            info.fileType = "audio";
-        } else if (videoExts.contains(ext)) {
-            info.fileType = "video";
-        } else {
-            info.fileType = "passthrough"; // .vtt, .docx, .txt, etc. — copy as-is
-        }
+        info.fileType = watermarkFileType(file);
 
         m_files.append(info);
     }
@@ -2499,25 +2582,12 @@ void WatermarkPanel::onAddFolder() {
         QFileInfo fi(file);
         WatermarkFileInfo info;
         info.filePath = file;
+        info.sourceRootDir = dir;
         info.fileName = fi.fileName();
         info.fileSize = fi.size();
         info.status = "pending";
 
-        QString ext = fi.suffix().toLower();
-        static const QSet<QString> videoExts = {
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg"
-        };
-        static const QSet<QString> audioExts = {"mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus"};
-
-        if (ext == "pdf") {
-            info.fileType = "pdf";
-        } else if (audioExts.contains(ext)) {
-            info.fileType = "audio";
-        } else if (videoExts.contains(ext)) {
-            info.fileType = "video";
-        } else {
-            info.fileType = "passthrough"; // .vtt, .docx, .txt, etc. — copy as-is
-        }
+        info.fileType = watermarkFileType(file);
 
         m_files.append(info);
     }
@@ -2549,6 +2619,7 @@ void WatermarkPanel::onRemoveSelected() {
 
 void WatermarkPanel::onClearAll() {
     m_files.clear();
+    m_sourceRootDir.clear();
     m_pausedForDiskSpace = false;
     m_diskSpacePauseMessage.clear();
     m_pausedJobId.clear();
@@ -2637,6 +2708,9 @@ void WatermarkPanel::onStartWatermark() {
     QSet<QString> seenPaths;
     QList<WatermarkFileInfo> baseFiles;
     for (const WatermarkFileInfo& info : m_files) {
+        if (info.isHeader || info.filePath.trimmed().isEmpty()) {
+            continue;
+        }
         if (!seenPaths.contains(info.filePath)) {
             seenPaths.insert(info.filePath);
             filePaths.append(info.filePath);
@@ -2896,7 +2970,7 @@ void WatermarkPanel::onStartWatermark() {
     for (WatermarkFileInfo& info : m_files) {
         info.jobId = m_currentJobId;
     }
-    saveWatermarkCheckpoint("created");
+    saveWatermarkCheckpoint("created", {}, true);
     m_retrySourceJobId.clear();
     m_pausedJobId.clear();
     m_currentJobCancelled = false;
@@ -2915,6 +2989,7 @@ void WatermarkPanel::onStartWatermark() {
     m_worker->setMemberIds(allMemberIds);
     m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
     m_worker->setRootDir(m_sourceRootDir);
+    m_worker->setSourceRoots(sourceRootMap());
 
     // Smart Engine: pass auto-upload and metrics to worker
     const bool autoUploadActive = m_autoUploadCheck->isChecked() && m_megaApi;
@@ -3405,7 +3480,7 @@ void WatermarkPanel::onResumePausedWatermark() {
         m_pausedForDiskSpace = false;
         m_diskSpacePauseMessage.clear();
         if (!m_pausedJobId.isEmpty()) {
-            saveWatermarkCheckpoint("resume_no_pending_work", m_pausedJobId);
+            saveWatermarkCheckpoint("resume_no_pending_work", m_pausedJobId, true);
             OperationJobStore::instance().markCompleted(
                 m_pausedJobId,
                 skippedCompleteCount,
@@ -3510,7 +3585,7 @@ void WatermarkPanel::onResumePausedWatermark() {
     for (WatermarkFileInfo& info : m_files) {
         info.jobId = m_currentJobId;
     }
-    saveWatermarkCheckpoint("resume_prepared");
+    saveWatermarkCheckpoint("resume_prepared", {}, true);
 
     m_workerThread = new QThread();
     m_worker = new WatermarkWorker();
@@ -3520,6 +3595,7 @@ void WatermarkPanel::onResumePausedWatermark() {
     m_worker->setConfig(config);
     m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
     m_worker->setRootDir(m_sourceRootDir);
+    m_worker->setSourceRoots(sourceRootMap());
     m_worker->setResumeTasks(tasks);
 
     const bool resumeAutoUploadActive = m_autoUploadCheck && m_autoUploadCheck->isChecked() && m_megaApi;
@@ -4812,7 +4888,7 @@ void WatermarkPanel::onRetryFailedWatermarkRows() {
             info.jobId = m_currentJobId;
         }
     }
-    saveWatermarkCheckpoint("failed_rows_retry_prepared", m_currentJobId);
+    saveWatermarkCheckpoint("failed_rows_retry_prepared", m_currentJobId, true);
 
     QJsonObject details;
     details["retryRows"] = workerIdx;
@@ -4837,6 +4913,7 @@ void WatermarkPanel::onRetryFailedWatermarkRows() {
     m_worker->setConfig(config);
     m_worker->setRawTemplates(m_primaryTextEdit->text(), m_secondaryTextEdit->text());
     m_worker->setRootDir(m_sourceRootDir);
+    m_worker->setSourceRoots(sourceRootMap());
     m_worker->setResumeTasks(tasks);
     if (m_metricsStore) {
         m_worker->setMetricsStore(m_metricsStore);
@@ -4924,7 +5001,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         m_statusLabel->setText(message);
         OperationJobStore::instance().markPaused(m_currentJobId, message);
         m_pausedJobId = m_currentJobId;
-        saveWatermarkCheckpoint("paused_disk_full", m_pausedJobId);
+        saveWatermarkCheckpoint("paused_disk_full", m_pausedJobId, true);
         const int resumableRows = resumableWatermarkRowCount();
         QMessageBox::warning(this, "Watermarking Paused",
             QString("%1\n\n%2 row(s) remain resumable. No more files or member folders will be created. "
@@ -4958,7 +5035,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         emit watermarkCompleted(completed, 0);
         m_statusLabel->setText(QString("Cancelled safely: %1 completed, %2 pending")
             .arg(completed).arg(pending));
-        saveWatermarkCheckpoint("cancelled");
+        saveWatermarkCheckpoint("cancelled", {}, true);
         if (!m_currentJobId.isEmpty()) {
             OperationJobStore::instance().markCancelled(
                 m_currentJobId,
@@ -5007,7 +5084,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
                 m_currentJobId);
         }
 
-        saveWatermarkCheckpoint(finalFailCount > 0 ? "finished_with_errors" : "completed");
+        saveWatermarkCheckpoint(finalFailCount > 0 ? "finished_with_errors" : "completed", {}, true);
         if (finalFailCount > 0) {
             OperationJobStore::instance().markFailed(
                 m_currentJobId,
@@ -5299,7 +5376,7 @@ void WatermarkPanel::markMemberRowsUploaded(const QString& memberId, const QStri
     updateMemberHeader(headerRow);
     updateStats();
     updateButtonStates();
-    saveWatermarkCheckpoint("member_marked_uploaded");
+    saveWatermarkCheckpoint("member_marked_uploaded", {}, true);
 }
 
 int WatermarkPanel::findMemberHeaderRow(const QString& memberId) const {
@@ -5670,7 +5747,7 @@ void WatermarkPanel::onWatermarkHelpClicked() {
 }
 
 void WatermarkPanel::loadPresets() {
-    QSettings settings;
+    QSettings settings(watermarkSettingsFile(), QSettings::IniFormat);
     settings.beginGroup("WatermarkPresets");
     QStringList presets = settings.childGroups();
     settings.endGroup();
@@ -5694,7 +5771,7 @@ void WatermarkPanel::loadPresets() {
 void WatermarkPanel::applyPreset(const QString& presetName) {
     if (presetName.isEmpty()) return;
 
-    QSettings settings;
+    QSettings settings(watermarkSettingsFile(), QSettings::IniFormat);
     settings.beginGroup("WatermarkPresets/" + presetName);
 
     m_primaryTextEdit->setText(settings.value("primaryText").toString());
@@ -5705,6 +5782,27 @@ void WatermarkPanel::applyPreset(const QString& presetName) {
     m_durationSpin->setValue(settings.value("duration", 3).toInt());
     if (m_fastSegmentedCheck) {
         m_fastSegmentedCheck->setChecked(settings.value("fastSegmentedEncode", false).toBool());
+    }
+
+    if (m_advancedConfig) {
+        m_advancedConfig->randomGate = settings.value("randomGate", m_advancedConfig->randomGate).toDouble();
+        m_advancedConfig->fontPath = settings.value("fontPath", QString::fromStdString(m_advancedConfig->fontPath)).toString().toStdString();
+        m_advancedConfig->primaryFontSize = settings.value("primaryFontSize", m_advancedConfig->primaryFontSize).toInt();
+        m_advancedConfig->secondaryFontSize = settings.value("secondaryFontSize", m_advancedConfig->secondaryFontSize).toInt();
+        m_advancedConfig->primaryColor = settings.value("primaryColor", QString::fromStdString(m_advancedConfig->primaryColor)).toString().toStdString();
+        m_advancedConfig->secondaryColor = settings.value("secondaryColor", QString::fromStdString(m_advancedConfig->secondaryColor)).toString().toStdString();
+        m_advancedConfig->copyAudio = settings.value("copyAudio", m_advancedConfig->copyAudio).toBool();
+        m_advancedConfig->segmentCacheDirectory = settings.value("segmentCacheDirectory", QString::fromStdString(m_advancedConfig->segmentCacheDirectory)).toString().toStdString();
+        m_advancedConfig->segmentCacheMaxBytes = settings.value(
+            "segmentCacheMaxBytes",
+            QVariant::fromValue<qlonglong>(static_cast<qlonglong>(m_advancedConfig->segmentCacheMaxBytes)))
+            .toLongLong();
+        m_advancedConfig->segmentCacheMaxAgeDays = settings.value("segmentCacheMaxAgeDays", m_advancedConfig->segmentCacheMaxAgeDays).toInt();
+        m_advancedConfig->pdfOpacity = settings.value("pdfOpacity", m_advancedConfig->pdfOpacity).toDouble();
+        m_advancedConfig->pdfAngle = settings.value("pdfAngle", m_advancedConfig->pdfAngle).toInt();
+        m_advancedConfig->pdfCoverage = settings.value("pdfCoverage", m_advancedConfig->pdfCoverage).toDouble();
+        m_advancedConfig->outputSuffix = settings.value("outputSuffix", QString::fromStdString(m_advancedConfig->outputSuffix)).toString().toStdString();
+        m_advancedConfig->overwrite = settings.value("overwrite", m_advancedConfig->overwrite).toBool();
     }
 
     // Metadata settings
@@ -5726,7 +5824,7 @@ void WatermarkPanel::onSavePreset() {
 
     presetName = presetName.trimmed();
 
-    QSettings settings;
+    QSettings settings(watermarkSettingsFile(), QSettings::IniFormat);
     settings.beginGroup("WatermarkPresets/" + presetName);
     settings.setValue("primaryText", m_primaryTextEdit->text());
     settings.setValue("secondaryText", m_secondaryTextEdit->text());
@@ -5735,6 +5833,24 @@ void WatermarkPanel::onSavePreset() {
     settings.setValue("interval", m_intervalSpin->value());
     settings.setValue("duration", m_durationSpin->value());
     settings.setValue("fastSegmentedEncode", m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked());
+
+    const WatermarkConfig config = buildConfig();
+    settings.setValue("randomGate", config.randomGate);
+    settings.setValue("fontPath", QString::fromStdString(config.fontPath));
+    settings.setValue("primaryFontSize", config.primaryFontSize);
+    settings.setValue("secondaryFontSize", config.secondaryFontSize);
+    settings.setValue("primaryColor", QString::fromStdString(config.primaryColor));
+    settings.setValue("secondaryColor", QString::fromStdString(config.secondaryColor));
+    settings.setValue("copyAudio", config.copyAudio);
+    settings.setValue("segmentCacheDirectory", QString::fromStdString(config.segmentCacheDirectory));
+    settings.setValue("segmentCacheMaxBytes",
+                      static_cast<qlonglong>(config.segmentCacheMaxBytes));
+    settings.setValue("segmentCacheMaxAgeDays", config.segmentCacheMaxAgeDays);
+    settings.setValue("pdfOpacity", config.pdfOpacity);
+    settings.setValue("pdfAngle", config.pdfAngle);
+    settings.setValue("pdfCoverage", config.pdfCoverage);
+    settings.setValue("outputSuffix", QString::fromStdString(config.outputSuffix));
+    settings.setValue("overwrite", config.overwrite);
 
     // Metadata settings
     settings.setValue("embedMetadata", m_embedMetadataCheck->isChecked());
@@ -5765,7 +5881,7 @@ void WatermarkPanel::onDeletePreset() {
 
     if (result != QMessageBox::Yes) return;
 
-    QSettings settings;
+    QSettings settings(watermarkSettingsFile(), QSettings::IniFormat);
     settings.remove("WatermarkPresets/" + presetName);
 
     loadPresets();
@@ -5881,6 +5997,9 @@ void WatermarkPanel::onPreviewWatermarkClicked() {
 // ==================== Smart Engine ====================
 
 void WatermarkPanel::setMegaApi(mega::MegaApi* api) {
+    if (m_isRunning) {
+        return;
+    }
     m_megaApi = api;
 }
 

@@ -283,14 +283,19 @@ LogManager& LogManager::instance() {
 
 LogManager::LogManager() {
     // Default log directory
-    const char* home = getenv("HOME");
-#ifdef _WIN32
-    if (!home) home = getenv("USERPROFILE");
-#endif
-    if (home) {
-        m_logDir = std::string(home) + "/.megacustom/logs";
+    const char* configured = getenv("MEGACUSTOM_CONFIG_DIR");
+    if (configured && *configured != '\0') {
+        m_logDir = (std::filesystem::u8path(configured) / "logs").u8string();
     } else {
-        m_logDir = "./logs";
+        const char* home = getenv("HOME");
+#ifdef _WIN32
+        if (!home) home = getenv("USERPROFILE");
+#endif
+        if (home) {
+            m_logDir = (std::filesystem::u8path(home) / ".megacustom" / "logs").u8string();
+        } else {
+            m_logDir = "./logs";
+        }
     }
 
     // Initialize flush timer

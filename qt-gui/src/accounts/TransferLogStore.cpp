@@ -1,8 +1,11 @@
 #include "TransferLogStore.h"
+#include "utils/Settings.h"
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QDebug>
 
 namespace MegaCustom {
@@ -12,9 +15,14 @@ TransferLogStore::TransferLogStore(QObject* parent)
     , m_initialized(false)
 {
     // Database path in config directory
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    const QString configPath = Settings::instance().configDirectory();
     QDir().mkpath(configPath);
     m_dbPath = configPath + "/transfer_history.db";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + "/transfer_history.db";
+    if (!QFileInfo::exists(m_dbPath) && legacy != m_dbPath && QFileInfo::exists(legacy)) {
+        QFile::copy(legacy, m_dbPath);
+    }
 }
 
 TransferLogStore::~TransferLogStore()

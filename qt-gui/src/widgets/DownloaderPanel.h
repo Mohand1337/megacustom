@@ -98,6 +98,7 @@ private:
     QProcess* m_process = nullptr;
     QString m_lastCompletedPath;  // Path from JSON complete message
     bool m_itemCompletedEmitted = false;  // Track if we already emitted completion
+    bool m_itemSucceeded = false;
 };
 
 /**
@@ -111,6 +112,7 @@ class DownloaderPanel : public QWidget {
 public:
     explicit DownloaderPanel(QWidget* parent = nullptr);
     ~DownloaderPanel();
+    bool isRunning() const { return m_isRunning; }
 
 signals:
     // Pipeline integration - send files to WatermarkPanel

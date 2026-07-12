@@ -62,44 +62,44 @@ private:
 
 private:
     // Layout
-    QWidget* m_navigationWidget;
-    QListWidget* m_navigationList;
-    QStackedWidget* m_contentStack;
-    QPushButton* m_saveButton;
-    QPushButton* m_resetButton;
+    QWidget* m_navigationWidget = nullptr;
+    QListWidget* m_navigationList = nullptr;
+    QStackedWidget* m_contentStack = nullptr;
+    QPushButton* m_saveButton = nullptr;
+    QPushButton* m_resetButton = nullptr;
 
     // General settings
-    QCheckBox* m_startAtLoginCheck;
-    QCheckBox* m_showTrayIconCheck;
-    QCheckBox* m_darkModeCheck;
-    QCheckBox* m_showNotificationsCheck;
-    QComboBox* m_languageCombo;
+    QCheckBox* m_startAtLoginCheck = nullptr;
+    QCheckBox* m_showTrayIconCheck = nullptr;
+    QCheckBox* m_darkModeCheck = nullptr;
+    QCheckBox* m_showNotificationsCheck = nullptr;
+    QComboBox* m_languageCombo = nullptr;
 
     // Sync settings
-    QCheckBox* m_schedulerEnabledCheck;
-    QSpinBox* m_schedulerIntervalSpin;
-    QCheckBox* m_syncOnStartupCheck;
-    QCheckBox* m_syncOnFileChangeCheck;
-    QCheckBox* m_autoResolveConflictsCheck;
-    QComboBox* m_conflictResolutionCombo;
+    QCheckBox* m_schedulerEnabledCheck = nullptr;
+    QSpinBox* m_schedulerIntervalSpin = nullptr;
+    QCheckBox* m_syncOnStartupCheck = nullptr;
+    QCheckBox* m_syncOnFileChangeCheck = nullptr;
+    QCheckBox* m_autoResolveConflictsCheck = nullptr;
+    QComboBox* m_conflictResolutionCombo = nullptr;
 
     // Advanced settings
-    QSpinBox* m_uploadLimitSpin;
-    QSpinBox* m_downloadLimitSpin;
-    QSlider* m_parallelTransfersSlider;
-    QSpinBox* m_parallelTransfersSpin;
-    QLineEdit* m_excludePatternsEdit;
-    QSpinBox* m_maxFileSizeSpin;
-    QCheckBox* m_skipHiddenCheck;
-    QCheckBox* m_skipTempCheck;
-    QLineEdit* m_cachePathEdit;
-    QSpinBox* m_cacheSizeSpin;
-    QCheckBox* m_enableLoggingCheck;
-    QComboBox* m_logLevelCombo;
+    QSpinBox* m_uploadLimitSpin = nullptr;
+    QSpinBox* m_downloadLimitSpin = nullptr;
+    QSlider* m_parallelTransfersSlider = nullptr;
+    QSpinBox* m_parallelTransfersSpin = nullptr;
+    QLineEdit* m_excludePatternsEdit = nullptr;
+    QSpinBox* m_maxFileSizeSpin = nullptr;
+    QCheckBox* m_skipHiddenCheck = nullptr;
+    QCheckBox* m_skipTempCheck = nullptr;
+    QLineEdit* m_cachePathEdit = nullptr;
+    QSpinBox* m_cacheSizeSpin = nullptr;
+    QCheckBox* m_enableLoggingCheck = nullptr;
+    QComboBox* m_logLevelCombo = nullptr;
 
     // About page
-    QLabel* m_versionLabel;
-    QLabel* m_buildDateLabel;
+    QLabel* m_versionLabel = nullptr;
+    QLabel* m_buildDateLabel = nullptr;
 
     // State
     bool m_hasUnsavedChanges;

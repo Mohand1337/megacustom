@@ -44,6 +44,34 @@ std::string getHomeDirectory() {
     return home ? std::string(home) : "/tmp";
 #endif
 }
+
+std::string pathToUtf8(const fs::path& path) {
+    return path.u8string();
+}
+
+fs::path configuredDataFile(const char* fileName) {
+    if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR")) {
+        if (*configured != '\0') {
+            return fs::u8path(configured) / fileName;
+        }
+    }
+
+    return fs::u8path(getHomeDirectory()) / ".config" / "MegaCustom" / fileName;
+}
+
+void migrateLegacyFile(const fs::path& target, const fs::path& legacy) {
+    std::error_code ec;
+    if (target == legacy || fs::exists(target, ec) || !fs::exists(legacy, ec)) {
+        return;
+    }
+
+    fs::create_directories(target.parent_path(), ec);
+    if (ec) {
+        return;
+    }
+
+    fs::copy_file(legacy, target, fs::copy_options::none, ec);
+}
 } // anonymous namespace
 
 namespace MegaCustom {
@@ -172,17 +200,11 @@ CloudCopier::CloudCopier(mega::MegaApi* megaApi)
       m_listener(std::make_unique<CopyListener>()),
       m_defaultResolution(ConflictResolution::ASK) {
 
-    // Set default templates path
-    std::string homeDir = getHomeDirectory();
-    if (!homeDir.empty()) {
-#ifdef _WIN32
-        m_templatesPath = homeDir + "\\.config\\MegaCustom\\copy_templates.json";
-#else
-        m_templatesPath = homeDir + "/.config/MegaCustom/copy_templates.json";
-#endif
-    } else {
-        m_templatesPath = "./copy_templates.json";
-    }
+    const fs::path templatesPath = configuredDataFile("copy_templates.json");
+    const fs::path legacyPath = fs::u8path(getHomeDirectory())
+        / ".config" / "MegaCustom" / "copy_templates.json";
+    migrateLegacyFile(templatesPath, legacyPath);
+    m_templatesPath = pathToUtf8(templatesPath);
 
     loadTemplates();
 }
@@ -1395,7 +1417,7 @@ void CloudCopier::executeCopyTask(CopyTaskImpl* task) {
 }
 
 void CloudCopier::loadTemplates() {
-    std::ifstream file(m_templatesPath);
+    std::ifstream file(fs::u8path(m_templatesPath));
     if (!file.is_open()) {
         return;
     }
@@ -1461,13 +1483,13 @@ void CloudCopier::loadTemplates() {
 }
 
 void CloudCopier::saveTemplates() {
-    // Create directory if needed (safe, no shell injection)
-    size_t lastSlash = m_templatesPath.rfind('/');
-    if (lastSlash != std::string::npos) {
-        std::string dir = m_templatesPath.substr(0, lastSlash);
-        if (PathValidator::isValidPath(dir)) {
+    const fs::path templatesPath = fs::u8path(m_templatesPath);
+    const fs::path parent = templatesPath.parent_path();
+    if (!parent.empty()) {
+        const std::string parentUtf8 = pathToUtf8(parent);
+        if (PathValidator::isValidPath(parentUtf8)) {
             try {
-                fs::create_directories(dir);
+                fs::create_directories(parent);
             } catch (const fs::filesystem_error& e) {
                 std::cerr << "Failed to create templates directory: " << e.what() << std::endl;
                 return;
@@ -1478,7 +1500,7 @@ void CloudCopier::saveTemplates() {
         }
     }
 
-    std::ofstream file(m_templatesPath);
+    std::ofstream file(templatesPath);
     if (!file.is_open()) {
         return;
     }

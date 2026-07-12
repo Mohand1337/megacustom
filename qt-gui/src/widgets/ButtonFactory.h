@@ -27,7 +27,7 @@ class IconButton;
  * Usage:
  *   QPushButton* saveBtn = ButtonFactory::createPrimary("Save", this);
  *   QPushButton* cancelBtn = ButtonFactory::createSecondary("Cancel", this);
- *   IconButton* closeBtn = ButtonFactory::createIconButton(":/icons/close.svg", this);
+ *   IconButton* closeBtn = ButtonFactory::createIconButton(":/icons/x.svg", this);
  */
 class ButtonFactory
 {

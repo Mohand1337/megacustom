@@ -28,6 +28,9 @@ ContentManagerPanel::ContentManagerPanel(QWidget* parent)
 }
 
 ContentManagerPanel::~ContentManagerPanel() {
+    if (m_scanFuture.isRunning()) {
+        m_scanFuture.waitForFinished();
+    }
     if (m_workerThread) {
         m_workerThread->quit();
         m_workerThread->wait(3000);
@@ -35,6 +38,9 @@ ContentManagerPanel::~ContentManagerPanel() {
 }
 
 void ContentManagerPanel::setMegaApi(mega::MegaApi* api) {
+    if (m_isScanning) {
+        return;
+    }
     m_megaApi = api;
 }
 
@@ -318,7 +324,7 @@ void ContentManagerPanel::onScanClicked() {
     QString refId = m_referenceMemberId;
     QString groupFilter = m_groupFilterCombo->currentData().toString();
 
-    (void)QtConcurrent::run([this, api, basePath, refId, groupFilter]() {
+    m_scanFuture = QtConcurrent::run([this, api, basePath, refId, groupFilter]() {
         // Get base folder
         std::unique_ptr<mega::MegaNode> baseNode(api->getNodeByPath(basePath.toUtf8().constData()));
         if (!baseNode) {
@@ -333,7 +339,15 @@ void ContentManagerPanel::onScanClicked() {
 
         // List member folders
         std::unique_ptr<mega::MegaNodeList> members(api->getChildren(baseNode.get()));
-        if (!members) return;
+        if (!members) {
+            QMetaObject::invokeMethod(this, [this]() {
+                m_isScanning = false;
+                m_scanBtn->setEnabled(true);
+                m_auditProgressBar->setVisible(false);
+                m_auditSummaryLabel->setText("Error: Could not list member folders.");
+            }, Qt::QueuedConnection);
+            return;
+        }
 
         QList<QPair<QString, QString>> memberFolders; // (id, fullPath)
         for (int i = 0; i < members->size(); ++i) {

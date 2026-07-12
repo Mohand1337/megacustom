@@ -8,6 +8,7 @@
 #include "utils/MegaUploadUtils.h"
 #include "utils/DpiScaler.h"
 #include "utils/OperationJobStore.h"
+#include "utils/Settings.h"
 #include "widgets/ButtonFactory.h"
 #include "widgets/SwitchButton.h"
 #include "dialogs/SmartRouteReviewDialog.h"
@@ -19,6 +20,7 @@
 #include "controllers/FileController.h"
 #include "controllers/DistributionController.h"
 #include "features/CloudCopier.h"
+#include "operations/FolderManager.h"
 #include <megaapi.h>
 #include <QtConcurrent>
 #include <QApplication>
@@ -54,6 +56,7 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QInputDialog>
+#include <algorithm>
 
 namespace MegaCustom {
 
@@ -665,6 +668,15 @@ DistributionPanel::DistributionPanel(QWidget* parent)
     setupUI();
     loadGroups();
 
+    m_checkpointFlushTimer.setSingleShot(true);
+    connect(&m_checkpointFlushTimer, &QTimer::timeout, this, [this]() {
+        const QString reason = m_pendingCheckpointReason;
+        const QString jobId = m_pendingCheckpointJobId;
+        m_pendingCheckpointReason.clear();
+        m_pendingCheckpointJobId.clear();
+        saveDistributionCheckpoint(reason.isEmpty() ? "periodic" : reason, jobId, true);
+    });
+
     connect(m_registry, &MemberRegistry::groupAdded, this, [this]() { loadGroups(); });
     connect(m_registry, &MemberRegistry::groupUpdated, this, [this]() { loadGroups(); });
     connect(m_registry, &MemberRegistry::groupRemoved, this, [this]() { loadGroups(); });
@@ -672,6 +684,17 @@ DistributionPanel::DistributionPanel(QWidget* parent)
 
 DistributionPanel::~DistributionPanel() {
     cleanupWorkerThread();
+    for (QFuture<void>& task : m_backgroundTasks) {
+        task.waitForFinished();
+    }
+}
+
+void DistributionPanel::trackBackgroundTask(QFuture<void> future) {
+    m_backgroundTasks.erase(
+        std::remove_if(m_backgroundTasks.begin(), m_backgroundTasks.end(),
+                       [](const QFuture<void>& task) { return task.isFinished(); }),
+        m_backgroundTasks.end());
+    m_backgroundTasks.append(std::move(future));
 }
 
 void DistributionPanel::setFileController(FileController* controller) {
@@ -695,7 +718,11 @@ void DistributionPanel::setFileController(FileController* controller) {
 }
 
 void DistributionPanel::setMegaApi(mega::MegaApi* api) {
+    if (isRunning()) {
+        return;
+    }
     m_megaApi = api;
+    m_cloudCopier.reset();
     if (m_megaApi) {
         m_cloudCopier = std::make_unique<CloudCopier>(m_megaApi);
         // Set default conflict resolution to overwrite
@@ -828,7 +855,8 @@ void DistributionPanel::setDistributionController(DistributionController* contro
             if (!m_currentJobId.isEmpty()) {
                 saveDistributionCheckpoint(m_currentJobCancelled
                     ? "cancelled"
-                    : (result.membersFailed > 0 || result.filesFailed > 0 ? "finished_with_errors" : "completed"));
+                    : (result.membersFailed > 0 || result.filesFailed > 0 ? "finished_with_errors" : "completed"),
+                    {}, true);
                 if (m_currentJobCancelled) {
                     OperationJobStore::instance().markCancelled(
                         m_currentJobId,
@@ -2055,7 +2083,7 @@ void DistributionPanel::retryJob(const QString& jobId) {
             .arg(runnableTasks.size() == 1 ? "task" : "tasks"),
         runnableTasks.size(),
         metadata);
-    saveDistributionCheckpoint("retry_created");
+    saveDistributionCheckpoint("retry_created", {}, true);
 
     m_isRunning = true;
     m_isPaused = false;
@@ -2149,7 +2177,8 @@ QJsonArray DistributionPanel::serializeDistributionRows() const {
     return rows;
 }
 
-void DistributionPanel::saveDistributionCheckpoint(const QString& reason, const QString& jobId) {
+void DistributionPanel::saveDistributionCheckpoint(const QString& reason, const QString& jobId,
+                                                    bool forcePersist) {
     const QString targetJobId = jobId.trimmed().isEmpty() ? m_currentJobId : jobId.trimmed();
     if (targetJobId.isEmpty()) {
         return;
@@ -2159,6 +2188,28 @@ void DistributionPanel::saveDistributionCheckpoint(const QString& reason, const 
     if (record.id.isEmpty() || record.type != OperationJobType::Distribution) {
         return;
     }
+
+    if (forcePersist) {
+        m_checkpointFlushTimer.stop();
+        m_pendingCheckpointReason.clear();
+        m_pendingCheckpointJobId.clear();
+    }
+
+    ++m_checkpointDirtyEvents;
+    if (!forcePersist && m_checkpointTimer.isValid()
+        && m_checkpointTimer.elapsed() < 2000
+        && m_checkpointDirtyEvents < 20) {
+        m_pendingCheckpointReason = reason;
+        m_pendingCheckpointJobId = targetJobId;
+        if (!m_checkpointFlushTimer.isActive()) {
+            m_checkpointFlushTimer.start(qMax(1, 2000 - static_cast<int>(m_checkpointTimer.elapsed())));
+        }
+        return;
+    }
+
+    m_checkpointFlushTimer.stop();
+    m_pendingCheckpointReason.clear();
+    m_pendingCheckpointJobId.clear();
 
     int rowCount = 0;
     int pendingCount = 0;
@@ -2195,12 +2246,9 @@ void DistributionPanel::saveDistributionCheckpoint(const QString& reason, const 
     metadata["distributionDoneRows"] = doneCount;
     metadata["distributionFailedRows"] = failedCount;
 
-    OperationJobStore::instance().createJob(
-        OperationJobType::Distribution,
-        record.title,
-        qMax(record.plannedCount, rowCount),
-        metadata,
-        targetJobId);
+    OperationJobStore::instance().updateMetadata(targetJobId, metadata, forcePersist);
+    m_checkpointDirtyEvents = 0;
+    m_checkpointTimer.restart();
 }
 
 void DistributionPanel::recordDistributionCreatedFolder(int taskIndex, const QString& path) {
@@ -2233,12 +2281,7 @@ void DistributionPanel::recordDistributionCreatedFolder(int taskIndex, const QSt
     metadata["distributionCreatedRemoteFolders"] = createdFolders;
     metadata["distributionCreatedRemoteFolderCount"] = createdFolders.size();
 
-    OperationJobStore::instance().createJob(
-        OperationJobType::Distribution,
-        record.title,
-        record.plannedCount,
-        metadata,
-        m_currentJobId);
+    OperationJobStore::instance().updateMetadata(m_currentJobId, metadata);
     saveDistributionCheckpoint("remote_folder_created", m_currentJobId);
 }
 
@@ -2281,12 +2324,7 @@ void DistributionPanel::recordDistributionUploadedFile(int taskIndex,
     metadata["distributionCreatedRemoteFiles"] = uploadedFiles;
     metadata["distributionCreatedRemoteFileCount"] = uploadedFiles.size();
 
-    OperationJobStore::instance().createJob(
-        OperationJobType::Distribution,
-        record.title,
-        record.plannedCount,
-        metadata,
-        m_currentJobId);
+    OperationJobStore::instance().updateMetadata(m_currentJobId, metadata);
     saveDistributionCheckpoint("remote_file_uploaded", m_currentJobId);
 }
 
@@ -4161,7 +4199,7 @@ void DistributionPanel::onStartDistribution() {
                 .arg(m_pendingMemberFileMap.size()),
             m_currentJobPlannedCount,
             metadata);
-        saveDistributionCheckpoint("created_direct_upload");
+        saveDistributionCheckpoint("created_direct_upload", {}, true);
         m_retrySourceJobId.clear();
 
         m_isRunning = true;
@@ -4508,7 +4546,7 @@ void DistributionPanel::onStartDistribution() {
             .arg(tasks.size() == 1 ? "task" : "tasks"),
         tasks.size(),
         metadata);
-    saveDistributionCheckpoint("created");
+    saveDistributionCheckpoint("created", {}, true);
     m_retrySourceJobId.clear();
 
     emit distributionStarted();
@@ -4566,7 +4604,7 @@ void DistributionPanel::onStopDistribution() {
     if (reply != QMessageBox::Yes) return;
 
     m_currentJobCancelled = true;
-    saveDistributionCheckpoint("cancel_requested");
+    saveDistributionCheckpoint("cancel_requested", {}, true);
     OperationJobStore::instance().markCancelled(
         m_currentJobId,
         "Distribution cancellation requested");
@@ -4706,7 +4744,8 @@ void DistributionPanel::onWorkerAllCompleted(int success, int failed) {
     if (!m_currentJobId.isEmpty()) {
         saveDistributionCheckpoint(m_currentJobCancelled
             ? "cancelled"
-            : (failed > 0 ? "finished_with_errors" : "completed"));
+            : (failed > 0 ? "finished_with_errors" : "completed"),
+            {}, true);
         if (m_currentJobCancelled) {
             OperationJobStore::instance().markCancelled(
                 m_currentJobId,
@@ -4780,7 +4819,10 @@ void DistributionPanel::cleanupWorkerThread() {
                 m_copyWorker->cancel();
             }
             m_workerThread->quit();
-            m_workerThread->wait(5000);
+            if (!m_workerThread->wait(30000)) {
+                qCritical() << "Distribution worker did not stop after cancellation; waiting for safe shutdown";
+                m_workerThread->wait();
+            }
         }
         m_workerThread->deleteLater();
         m_workerThread = nullptr;
@@ -5021,16 +5063,28 @@ void DistributionPanel::executeBulkRename(const QString& folderPath) {
 
     qDebug() << "DistributionPanel: Executing bulk rename for folder:" << folderPath;
 
-    // Use QtConcurrent to avoid blocking UI
-    (void)QtConcurrent::run([this, folderPath]() {
-        mega::MegaApi* api = m_megaApi;
+    mega::MegaApi* api = m_megaApi;
+    ++m_activeBulkRenameTasks;
+    trackBackgroundTask(QtConcurrent::run([this, api, folderPath]() {
 
         // Get the folder node
         std::unique_ptr<mega::MegaNode> folderNode(api->getNodeByPath(folderPath.toUtf8().constData()));
         if (!folderNode) {
             QMetaObject::invokeMethod(this, [this, folderPath]() {
                 qDebug() << "Folder not found:" << folderPath;
-                m_statusLabel->setText("Error: Folder not found");
+                --m_activeBulkRenameTasks;
+                ++m_bulkRenameFailures;
+                if (m_bulkRenameBatchActive && --m_bulkRenameFoldersRemaining == 0) {
+                    m_bulkRenameBatchActive = false;
+                    m_progressBar->setVisible(false);
+                    m_bulkRenameBtn->setEnabled(true);
+                    m_statusLabel->setText("Bulk rename finished with errors");
+                    QMessageBox::warning(this, "Bulk Rename",
+                        QString("Renamed %1 files; %2 folder or file operations failed.")
+                            .arg(m_bulkRenameFilesRenamed).arg(m_bulkRenameFailures));
+                } else {
+                    m_statusLabel->setText("Error: Folder not found");
+                }
             }, Qt::QueuedConnection);
             return;
         }
@@ -5039,13 +5093,27 @@ void DistributionPanel::executeBulkRename(const QString& folderPath) {
         std::unique_ptr<mega::MegaNodeList> children(api->getChildren(folderNode.get()));
         if (!children) {
             QMetaObject::invokeMethod(this, [this]() {
-                m_statusLabel->setText("Error: Could not list folder contents");
+                --m_activeBulkRenameTasks;
+                ++m_bulkRenameFailures;
+                if (m_bulkRenameBatchActive && --m_bulkRenameFoldersRemaining == 0) {
+                    m_bulkRenameBatchActive = false;
+                    m_progressBar->setVisible(false);
+                    m_bulkRenameBtn->setEnabled(true);
+                    m_statusLabel->setText("Bulk rename finished with errors");
+                    QMessageBox::warning(this, "Bulk Rename",
+                        QString("Renamed %1 files; %2 folder or file operations failed.")
+                            .arg(m_bulkRenameFilesRenamed).arg(m_bulkRenameFailures));
+                } else {
+                    m_statusLabel->setText("Error: Could not list folder contents");
+                }
             }, Qt::QueuedConnection);
             return;
         }
 
         int renamed = 0;
+        int failed = 0;
         int total = children->size();
+        FolderManager folderManager(api);
 
         for (int i = 0; i < total; ++i) {
             mega::MegaNode* child = children->get(i);
@@ -5056,9 +5124,15 @@ void DistributionPanel::executeBulkRename(const QString& folderPath) {
                 QString newName = name;
                 newName.replace("_watermarked", "");
 
-                // Rename using MEGA SDK
-                api->renameNode(child, newName.toUtf8().constData());
-                renamed++;
+                const QString childPath = folderPath.endsWith('/')
+                    ? folderPath + name : folderPath + "/" + name;
+                const FolderOperationResult result = folderManager.renameFolder(
+                    childPath.toUtf8().toStdString(), newName.toUtf8().toStdString());
+                if (result.success) {
+                    renamed++;
+                } else {
+                    failed++;
+                }
 
                 // Update UI on main thread
                 QMetaObject::invokeMethod(this, [this, renamed, total]() {
@@ -5068,13 +5142,41 @@ void DistributionPanel::executeBulkRename(const QString& folderPath) {
         }
 
         // Final update on main thread
-        QMetaObject::invokeMethod(this, [this, renamed, folderPath]() {
-            qDebug() << "Bulk rename completed:" << renamed << "files in" << folderPath;
-            m_statusLabel->setText(QString("Renamed %1 files in %2")
-                .arg(renamed)
-                .arg(folderPath.section('/', -1)));
+        QMetaObject::invokeMethod(this, [this, renamed, failed, folderPath]() {
+            --m_activeBulkRenameTasks;
+            m_bulkRenameFilesRenamed += renamed;
+            m_bulkRenameFailures += failed;
+            qDebug() << "Bulk rename completed:" << renamed << "files in" << folderPath
+                     << "failures:" << failed;
+
+            if (m_bulkRenameBatchActive) {
+                --m_bulkRenameFoldersRemaining;
+                m_progressBar->setValue(m_bulkRenameFolderTotal - m_bulkRenameFoldersRemaining);
+                if (m_bulkRenameFoldersRemaining == 0) {
+                    m_bulkRenameBatchActive = false;
+                    m_progressBar->setVisible(false);
+                    m_bulkRenameBtn->setEnabled(true);
+                    if (m_bulkRenameFailures == 0) {
+                        m_statusLabel->setText(QString("Bulk rename complete: %1 files renamed")
+                            .arg(m_bulkRenameFilesRenamed));
+                        QMessageBox::information(this, "Bulk Rename",
+                            QString("Renamed %1 files across %2 folders.")
+                                .arg(m_bulkRenameFilesRenamed).arg(m_bulkRenameFolderTotal));
+                    } else {
+                        m_statusLabel->setText("Bulk rename finished with errors");
+                        QMessageBox::warning(this, "Bulk Rename",
+                            QString("Renamed %1 files; %2 file operations failed.")
+                                .arg(m_bulkRenameFilesRenamed).arg(m_bulkRenameFailures));
+                    }
+                }
+            } else {
+                m_statusLabel->setText(failed == 0
+                    ? QString("Renamed %1 files in %2").arg(renamed).arg(folderPath.section('/', -1))
+                    : QString("Renamed %1 files; %2 failed in %3")
+                        .arg(renamed).arg(failed).arg(folderPath.section('/', -1)));
+            }
         }, Qt::QueuedConnection);
-    });
+    }));
 }
 
 void DistributionPanel::onBulkRename() {
@@ -5104,24 +5206,20 @@ void DistributionPanel::onBulkRename() {
     if (ret != QMessageBox::Yes) return;
 
     m_statusLabel->setText("Bulk rename in progress...");
+    m_bulkRenameBtn->setEnabled(false);
     m_progressBar->setVisible(true);
     m_progressBar->setMaximum(selectedFolders.size());
     m_progressBar->setValue(0);
 
-    int processed = 0;
+    m_bulkRenameBatchActive = true;
+    m_bulkRenameFoldersRemaining = selectedFolders.size();
+    m_bulkRenameFolderTotal = selectedFolders.size();
+    m_bulkRenameFilesRenamed = 0;
+    m_bulkRenameFailures = 0;
+
     for (const QString& folder : selectedFolders) {
         executeBulkRename(folder);
-        processed++;
-        m_progressBar->setValue(processed);
-        QApplication::processEvents();
     }
-
-    m_progressBar->setVisible(false);
-    m_statusLabel->setText(QString("Bulk rename completed for %1 folders").arg(selectedFolders.size()));
-
-    QMessageBox::information(this, "Bulk Rename",
-        QString("Bulk rename operation completed for %1 folders.\n\n"
-                "Note: Files will be renamed asynchronously.").arg(selectedFolders.size()));
 }
 
 void DistributionPanel::onQuickTemplateChanged(int index) {
@@ -5299,15 +5397,27 @@ void DistributionPanel::onGenerateDestinations() {
 // ==================== Saved Template Management ====================
 
 QString DistributionPanel::savedTemplatesPath() const {
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    const QString configDir = Settings::instance().configDirectory();
     QDir().mkpath(configDir);
-    return configDir + "/dist_templates.json";
+    const QString target = configDir + "/dist_templates.json";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + "/dist_templates.json";
+    if (legacy != target && !QFile::exists(target) && QFile::exists(legacy)) {
+        QFile::copy(legacy, target);
+    }
+    return target;
 }
 
 QString DistributionPanel::lastJobProfilePath() const {
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    const QString configDir = Settings::instance().configDirectory();
     QDir().mkpath(configDir);
-    return configDir + "/dist_last_job.json";
+    const QString target = configDir + "/dist_last_job.json";
+    const QString legacy = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + "/dist_last_job.json";
+    if (legacy != target && !QFile::exists(target) && QFile::exists(legacy)) {
+        QFile::copy(legacy, target);
+    }
+    return target;
 }
 
 QVariantMap DistributionPanel::currentJobProfile(const QString& name) const {
