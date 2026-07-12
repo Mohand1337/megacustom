@@ -32,6 +32,7 @@ settings.ini
 *.log
 *.tmp
 *.bak
+megaclient_statecache*.db
 
 # OS files
 .DS_Store

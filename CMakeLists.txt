@@ -29,14 +29,31 @@ if(DEFINED ENV{VCPKG_ROOT})
 endif()
 
 # Find or build Mega SDK
+set(MEGA_SDK_TARGET "")
 if(USE_SYSTEM_MEGA)
-    find_package(mega REQUIRED)
+    find_package(SDKlib CONFIG REQUIRED)
+    set(MEGA_SDK_TARGET MEGA::SDKlib)
 else()
-    # We'll build Mega SDK as part of this project
     set(MEGA_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sdk")
-    if(NOT EXISTS ${MEGA_SDK_DIR})
-        message(STATUS "Mega SDK not found. Please clone it to third_party/sdk")
+    if(NOT EXISTS "${MEGA_SDK_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "Mega SDK not found. Please clone it to third_party/sdk or enable USE_SYSTEM_MEGA.")
     endif()
+
+    # Keep the embedded SDK build aligned with the local SDK build used by this app.
+    set(ENABLE_SDKLIB_EXAMPLES OFF CACHE BOOL "Build Mega SDK examples" FORCE)
+    set(ENABLE_SDKLIB_TESTS OFF CACHE BOOL "Build Mega SDK tests" FORCE)
+    set(ENABLE_CHAT OFF CACHE BOOL "Enable Mega SDK chat support" FORCE)
+    set(ENABLE_SYNC OFF CACHE BOOL "Enable Mega SDK sync support" FORCE)
+    set(ENABLE_ISOLATED_GFX OFF CACHE BOOL "Enable Mega SDK isolated graphics processor" FORCE)
+    set(ENABLE_MEDIA_FILE_METADATA OFF CACHE BOOL "Enable Mega SDK media metadata support" FORCE)
+    set(ENABLE_DRIVE_NOTIFICATIONS OFF CACHE BOOL "Enable Mega SDK drive notifications" FORCE)
+    set(USE_FREEIMAGE OFF CACHE BOOL "Enable Mega SDK FreeImage support" FORCE)
+    set(USE_FFMPEG OFF CACHE BOOL "Enable Mega SDK FFmpeg support" FORCE)
+    set(USE_LIBUV OFF CACHE BOOL "Enable Mega SDK libuv support" FORCE)
+    set(USE_PDFIUM OFF CACHE BOOL "Enable Mega SDK PDFium support" FORCE)
+
+    add_subdirectory("${MEGA_SDK_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mega-sdk" EXCLUDE_FROM_ALL)
+    set(MEGA_SDK_TARGET MEGA::SDKlib)
 endif()
 
 # PCRE2 for regex support (optional for initial build)
@@ -91,19 +108,22 @@ endif()
 # Only link libraries if it's not an INTERFACE library
 if(ALL_LIB_SOURCES)
     target_link_libraries(mega_custom_core
-        ${CMAKE_THREAD_LIBS_INIT}
-        OpenSSL::SSL
-        OpenSSL::Crypto
-        CURL::libcurl
-        ZLIB::ZLIB
+        PUBLIC
+            ${MEGA_SDK_TARGET}
+        PRIVATE
+            ${CMAKE_THREAD_LIBS_INIT}
+            OpenSSL::SSL
+            OpenSSL::Crypto
+            CURL::libcurl
+            ZLIB::ZLIB
     )
 
     if(nlohmann_json_FOUND)
-        target_link_libraries(mega_custom_core nlohmann_json::nlohmann_json)
+        target_link_libraries(mega_custom_core PRIVATE nlohmann_json::nlohmann_json)
     endif()
 
     if(PCRE2_FOUND)
-        target_link_libraries(mega_custom_core pcre2-8)
+        target_link_libraries(mega_custom_core PRIVATE pcre2-8)
     endif()
 endif()
 
@@ -116,24 +136,27 @@ add_executable(megacustom
 # Link appropriate libraries
 if(ALL_LIB_SOURCES)
     target_link_libraries(megacustom
-        mega_custom_core
+        PRIVATE
+            mega_custom_core
     )
 else()
     # Link libraries directly if no core library
     target_link_libraries(megacustom
-        ${CMAKE_THREAD_LIBS_INIT}
-        OpenSSL::SSL
-        OpenSSL::Crypto
-        CURL::libcurl
-        ZLIB::ZLIB
+        PRIVATE
+            ${MEGA_SDK_TARGET}
+            ${CMAKE_THREAD_LIBS_INIT}
+            OpenSSL::SSL
+            OpenSSL::Crypto
+            CURL::libcurl
+            ZLIB::ZLIB
     )
 
     if(nlohmann_json_FOUND)
-        target_link_libraries(megacustom nlohmann_json::nlohmann_json)
+        target_link_libraries(megacustom PRIVATE nlohmann_json::nlohmann_json)
     endif()
 
     if(PCRE2_FOUND)
-        target_link_libraries(megacustom pcre2-8)
+        target_link_libraries(megacustom PRIVATE pcre2-8)
     endif()
 
     target_include_directories(megacustom PRIVATE
@@ -164,8 +187,12 @@ endif()
 
 # Tests
 if(BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(WARNING "BUILD_TESTS is ON, but tests/CMakeLists.txt is missing; skipping tests.")
+    endif()
 endif()
 
 # Installation
