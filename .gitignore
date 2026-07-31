@@ -10,6 +10,7 @@ cmake-build-*/
 qt-gui/build-qt/
 qt-gui/build-win64/
 qt-gui/MegaCustomGUI-Portable/
+qt-gui/MegaCustomGUI-Portable-Staging/
 third_party/sdk/build_sdk/
 
 # IDE files
