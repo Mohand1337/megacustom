@@ -95,9 +95,17 @@ foreach ($entry in $candidateMap.GetEnumerator() | Sort-Object Name) {
         $memberCount = $members.Count
         $groupCount = $groups.Count
 
+        $fileMemberIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        $fileGroupNames = New-Object 'System.Collections.Generic.HashSet[string]'
         $latestEpoch = 0L
         foreach ($member in $members) {
-            if ($member.id) { [void]$allMemberIds.Add([string]$member.id) }
+            $memberId = [string]$member.id
+            if ([string]::IsNullOrWhiteSpace($memberId)) {
+                throw "Member entry has a blank or missing ID"
+            }
+            if (!$fileMemberIds.Add($memberId)) {
+                throw "Duplicate member ID detected"
+            }
             foreach ($value in @($member.updatedAt, $member.createdAt)) {
                 $epoch = 0L
                 if ($null -ne $value -and [Int64]::TryParse([string]$value, [ref]$epoch)) {
@@ -106,7 +114,13 @@ foreach ($entry in $candidateMap.GetEnumerator() | Sort-Object Name) {
             }
         }
         foreach ($group in $groups) {
-            if ($group.name) { [void]$allGroupNames.Add([string]$group.name) }
+            $groupName = [string]$group.name
+            if ([string]::IsNullOrWhiteSpace($groupName)) {
+                throw "Group entry has a blank or missing name"
+            }
+            if (!$fileGroupNames.Add($groupName)) {
+                throw "Duplicate group name detected"
+            }
             foreach ($value in @($group.updatedAt, $group.createdAt)) {
                 $epoch = 0L
                 if ($null -ne $value -and [Int64]::TryParse([string]$value, [ref]$epoch)) {
@@ -117,6 +131,8 @@ foreach ($entry in $candidateMap.GetEnumerator() | Sort-Object Name) {
         if ($latestEpoch -gt 0) {
             $latestRecordUtc = [DateTimeOffset]::FromUnixTimeSeconds($latestEpoch).UtcDateTime
         }
+        foreach ($memberId in $fileMemberIds) { [void]$allMemberIds.Add($memberId) }
+        foreach ($groupName in $fileGroupNames) { [void]$allGroupNames.Add($groupName) }
         $valid = $true
     } catch {
         $parseStatus = "Invalid: $($_.Exception.Message)"
