@@ -18,7 +18,9 @@ env:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    # Qt 6.6's prebuilt MSVC package is compatible with VS 2022. Newer MSVC
+    # toolsets removed stdext helpers still referenced by these Qt headers.
+    runs-on: windows-2022
 
     steps:
     - name: Checkout repository
