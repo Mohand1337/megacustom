@@ -8,6 +8,31 @@ namespace MegaCustom {
 
 namespace fs = std::filesystem;
 
+namespace {
+
+#ifdef _WIN32
+bool isPathSeparator(char value) {
+    return value == '/' || value == '\\';
+}
+
+bool isDrivePrefixColon(const std::string& path, size_t index) {
+    if (index != 1 || path.size() < 2) {
+        return false;
+    }
+
+    const char drive = path[0];
+    const bool isAsciiDrive = (drive >= 'A' && drive <= 'Z')
+        || (drive >= 'a' && drive <= 'z');
+    if (!isAsciiDrive) {
+        return false;
+    }
+
+    return path.size() == 2 || isPathSeparator(path[2]);
+}
+#endif
+
+} // namespace
+
 const std::vector<std::string> PathValidator::TRAVERSAL_PATTERNS = {
     "..",
     "../",
@@ -27,7 +52,13 @@ bool PathValidator::containsNullByte(const std::string& path) {
 bool PathValidator::containsTraversal(const std::string& path) {
     // Convert to lowercase for case-insensitive check
     std::string lowerPath = path;
-    std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::tolower);
+    std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
+        [](unsigned char value) {
+            if (value >= 'A' && value <= 'Z') {
+                return static_cast<char>(value - 'A' + 'a');
+            }
+            return static_cast<char>(value);
+        });
 
     for (const auto& pattern : TRAVERSAL_PATTERNS) {
         if (lowerPath.find(pattern) != std::string::npos) {
@@ -39,11 +70,29 @@ bool PathValidator::containsTraversal(const std::string& path) {
 }
 
 bool PathValidator::containsInvalidChars(const std::string& path) {
-    if (std::strlen(INVALID_CHARS) == 0) {
-        return false;
-    }
+#ifdef _WIN32
+    for (size_t i = 0; i < path.size(); ++i) {
+        const unsigned char value = static_cast<unsigned char>(path[i]);
+        if (value < 32) {
+            return true;
+        }
 
-    return path.find_first_of(INVALID_CHARS) != std::string::npos;
+        if (path[i] == ':') {
+            if (!isDrivePrefixColon(path, i)) {
+                return true;
+            }
+            continue;
+        }
+
+        if (std::strchr(INVALID_CHARS, path[i]) != nullptr) {
+            return true;
+        }
+    }
+#else
+    (void)path;
+#endif
+
+    return false;
 }
 
 bool PathValidator::isValidPath(const std::string& path) {
@@ -125,14 +174,22 @@ std::string PathValidator::sanitize(const std::string& path) {
         }
     }
 
-    // Remove invalid characters on Windows
-    if (std::strlen(INVALID_CHARS) > 0) {
-        result.erase(
-            std::remove_if(result.begin(), result.end(),
-                [](char c) { return std::strchr(INVALID_CHARS, c) != nullptr; }),
-            result.end()
-        );
+    // Remove invalid characters on Windows while preserving an absolute drive prefix.
+#ifdef _WIN32
+    std::string validCharacters;
+    validCharacters.reserve(result.size());
+    for (size_t i = 0; i < result.size(); ++i) {
+        const unsigned char value = static_cast<unsigned char>(result[i]);
+        const bool validDriveColon = result[i] == ':' && isDrivePrefixColon(result, i);
+        const bool invalidCharacter = value < 32
+            || (result[i] == ':' && !validDriveColon)
+            || std::strchr(INVALID_CHARS, result[i]) != nullptr;
+        if (!invalidCharacter) {
+            validCharacters += result[i];
+        }
     }
+    result = std::move(validCharacters);
+#endif
 
     // Normalize multiple separators
     std::string normalized;

@@ -100,7 +100,8 @@ public:
 
     // Platform-specific invalid characters
 #ifdef _WIN32
-    static constexpr const char* INVALID_CHARS = "<>:\"|?*";
+    // Colons are validated separately so an absolute drive prefix (C:\\) remains valid.
+    static constexpr const char* INVALID_CHARS = "<>\"|?*";
 #else
     static constexpr const char* INVALID_CHARS = "";  // Unix allows most chars
 #endif

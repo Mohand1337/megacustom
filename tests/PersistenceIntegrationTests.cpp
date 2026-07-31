@@ -1,6 +1,7 @@
 #include "integrations/MemberDatabase.h"
 #include "integrations/WordPressSync.h"
 #include "core/ConfigManager.h"
+#include "core/PathValidator.h"
 
 #ifdef USE_NLOHMANN_JSON
 #include <nlohmann/json.hpp>
@@ -78,6 +79,21 @@ int main() {
     const fs::path invalidWordpressPath = root / "invalid-wordpress.json";
     const fs::path configPath = root / "nested" / "config.json";
     const fs::path invalidConfigPath = root / "invalid-config.json";
+
+#ifdef _WIN32
+    if (!MegaCustom::PathValidator::isValidPath(pathUtf8(root))) {
+        return fail("a valid Unicode Windows drive path was rejected", root);
+    }
+    if (MegaCustom::PathValidator::isValidPath("C:\\safe\\file.txt:stream")
+        || MegaCustom::PathValidator::isValidPath("C:\\safe\\*.json")
+        || MegaCustom::PathValidator::isValidPath("C:drive-relative")) {
+        return fail("an unsafe Windows path was accepted", root);
+    }
+    if (MegaCustom::PathValidator::sanitize("C:\\safe\\bad:name?.json")
+        != "C:\\safe\\badname.json") {
+        return fail("Windows path sanitization damaged the drive prefix", root);
+    }
+#endif
 
     json fixture = json::object();
     fixture["version"] = 7;
