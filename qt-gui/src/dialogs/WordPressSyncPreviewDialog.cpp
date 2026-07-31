@@ -12,6 +12,8 @@
 #include <QMessageBox>
 #include <QDateTime>
 #include <QDebug>
+#include <QMap>
+#include <QTimer>
 
 namespace MegaCustom {
 
@@ -86,83 +88,6 @@ void WpFetchWorker::process()
 }
 
 void WpFetchWorker::cancel()
-{
-    m_cancelled = true;
-}
-
-// ============================================================================
-// WpSyncSelectedWorker
-// ============================================================================
-
-WpSyncSelectedWorker::WpSyncSelectedWorker(QObject* parent)
-    : QObject(parent)
-{
-}
-
-void WpSyncSelectedWorker::process()
-{
-    m_cancelled = false;
-    int created = 0, updated = 0, failed = 0;
-
-    MemberRegistry* registry = MemberRegistry::instance();
-    if (!registry) {
-        emit finished(0, 0, m_users.size(), "Member registry not available");
-        return;
-    }
-
-    int total = m_users.size();
-    for (int i = 0; i < m_users.size(); ++i) {
-        if (m_cancelled) break;
-
-        const WpUserPreview& user = m_users[i];
-        emit progress(i + 1, total, user.username);
-
-        // Check if member exists by email or username
-        QString memberId;
-        for (const MemberInfo& member : registry->getAllMembers()) {
-            if (!user.email.isEmpty() && member.email == user.email) {
-                memberId = member.id;
-                break;
-            }
-            if (member.id == user.username) {
-                memberId = member.id;
-                break;
-            }
-        }
-
-        if (memberId.isEmpty()) {
-            // Create new member
-            MemberInfo newMember;
-            newMember.id = user.username.isEmpty() ? QString("wp_%1").arg(user.wpUserId) : user.username;
-            newMember.displayName = user.displayName;
-            newMember.email = user.email;
-            newMember.wpUserId = QString::number(user.wpUserId);
-            newMember.active = true;
-            newMember.createdAt = QDateTime::currentSecsSinceEpoch();
-            newMember.updatedAt = newMember.createdAt;
-
-            registry->addMember(newMember);
-            created++;
-        } else {
-            // Update existing member
-            MemberInfo existingMember = registry->getMember(memberId);
-            existingMember.displayName = user.displayName;
-            existingMember.email = user.email;
-            existingMember.wpUserId = QString::number(user.wpUserId);
-            existingMember.updatedAt = QDateTime::currentSecsSinceEpoch();
-
-            registry->updateMember(existingMember);
-            updated++;
-        }
-    }
-
-    // Save changes
-    registry->save();
-
-    emit finished(created, updated, failed, "");
-}
-
-void WpSyncSelectedWorker::cancel()
 {
     m_cancelled = true;
 }
@@ -578,36 +503,69 @@ void WordPressSyncPreviewDialog::onSyncSelected()
     m_progressBar->setValue(0);
     m_statusLabel->setText("Syncing selected users...");
 
-    m_workerThread = new QThread(this);
-    m_syncWorker = new WpSyncSelectedWorker();
-    m_syncWorker->moveToThread(m_workerThread);
+    QTimer::singleShot(0, this, [this, selected]() {
+        MemberRegistry* registry = MemberRegistry::instance();
+        QMap<QString, MemberInfo> membersById;
+        for (const MemberInfo& member : registry->getAllMembers()) {
+            membersById[member.id] = member;
+        }
 
-    m_syncWorker->setSiteUrl(m_siteUrl);
-    m_syncWorker->setUsername(m_username);
-    m_syncWorker->setPassword(m_password);
-    m_syncWorker->setUsers(selected);
+        int created = 0;
+        int updated = 0;
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        for (int i = 0; i < selected.size(); ++i) {
+            const WpUserPreview& user = selected.at(i);
+            m_progressBar->setValue(i + 1);
+            m_statusLabel->setText(QString("Syncing %1 of %2: %3")
+                .arg(i + 1).arg(selected.size()).arg(user.username));
 
-    connect(m_workerThread, &QThread::started, m_syncWorker, &WpSyncSelectedWorker::process);
-    connect(m_syncWorker, &WpSyncSelectedWorker::progress, this, &WordPressSyncPreviewDialog::onSyncProgress);
-    connect(m_syncWorker, &WpSyncSelectedWorker::finished, this, &WordPressSyncPreviewDialog::onSyncFinished);
-    connect(m_syncWorker, &WpSyncSelectedWorker::finished, m_workerThread, &QThread::quit);
-    connect(m_workerThread, &QThread::finished, m_syncWorker, &QObject::deleteLater);
-    connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+            QString memberId;
+            for (const MemberInfo& member : membersById) {
+                if ((!user.email.isEmpty() && member.email == user.email)
+                    || member.id == user.username) {
+                    memberId = member.id;
+                    break;
+                }
+            }
 
-    m_workerThread->start();
-}
+            if (memberId.isEmpty()) {
+                MemberInfo member;
+                member.id = user.username.isEmpty()
+                    ? QString("wp_%1").arg(user.wpUserId) : user.username;
+                member.displayName = user.displayName;
+                member.email = user.email;
+                member.wpUserId = QString::number(user.wpUserId);
+                member.active = true;
+                member.createdAt = now;
+                member.updatedAt = now;
+                membersById[member.id] = member;
+                ++created;
+            } else {
+                MemberInfo member = membersById.value(memberId);
+                member.displayName = user.displayName;
+                member.email = user.email;
+                member.wpUserId = QString::number(user.wpUserId);
+                member.updatedAt = now;
+                membersById[member.id] = member;
+                ++updated;
+            }
+        }
 
-void WordPressSyncPreviewDialog::onSyncProgress(int current, int total, const QString& username)
-{
-    m_progressBar->setValue(current);
-    m_statusLabel->setText(QString("Syncing %1 of %2: %3").arg(current).arg(total).arg(username));
+        if (!registry->setMembers(membersById.values())) {
+            const QString error = registry->lastPersistenceError().isEmpty()
+                ? QString("Member registry could not be saved.")
+                : registry->lastPersistenceError();
+            onSyncFinished(0, 0, selected.size(), error);
+            return;
+        }
+        onSyncFinished(created, updated, 0, QString());
+    });
 }
 
 void WordPressSyncPreviewDialog::onSyncFinished(int created, int updated, int failed, const QString& error)
 {
     m_isSyncing = false;
     m_workerThread = nullptr;
-    m_syncWorker = nullptr;
     m_progressBar->setVisible(false);
 
     auto& tm = ThemeManager::instance();
@@ -636,9 +594,6 @@ void WordPressSyncPreviewDialog::onCancel()
     if (m_fetchWorker) {
         m_fetchWorker->cancel();
     }
-    if (m_syncWorker) {
-        m_syncWorker->cancel();
-    }
     m_statusLabel->setText("Cancelled");
 }
 
@@ -647,13 +602,11 @@ void WordPressSyncPreviewDialog::cleanupWorker()
     if (m_workerThread) {
         if (m_workerThread->isRunning()) {
             if (m_fetchWorker) m_fetchWorker->cancel();
-            if (m_syncWorker) m_syncWorker->cancel();
             m_workerThread->quit();
             m_workerThread->wait(3000);
         }
         m_workerThread = nullptr;
         m_fetchWorker = nullptr;
-        m_syncWorker = nullptr;
     }
 }
 

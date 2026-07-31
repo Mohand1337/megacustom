@@ -38,7 +38,11 @@ namespace {
         static bool pathDetermined = false;
 
         if (!pathDetermined) {
-            if (isPortableMode()) {
+            const QString configuredPath = QString::fromLocal8Bit(qgetenv("MEGACUSTOM_CONFIG_DIR")).trimmed();
+            if (!configuredPath.isEmpty()) {
+                cachedPath = QDir::cleanPath(QFileInfo(configuredPath).absoluteFilePath());
+                qDebug() << "Using configured app data directory:" << cachedPath;
+            } else if (isPortableMode()) {
                 cachedPath = QCoreApplication::applicationDirPath();
                 qDebug() << "Running in PORTABLE mode - config at:" << cachedPath;
             } else {

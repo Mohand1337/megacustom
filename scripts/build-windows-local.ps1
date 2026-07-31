@@ -152,39 +152,50 @@ Write-Host ""
 Write-Host "[6/6] Creating portable distribution..." -ForegroundColor Yellow
 
 $deployDir = "$guiPath\MegaCustomGUI-Portable"
-if (Test-Path $deployDir) { Remove-Item -Recurse -Force $deployDir }
-New-Item -ItemType Directory -Path $deployDir | Out-Null
+$stagingDir = "$guiPath\MegaCustomGUI-Portable-Staging"
+if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
+New-Item -ItemType Directory -Path $stagingDir | Out-Null
 
 # Copy executable
-Copy-Item "$guiBuild\Release\MegaCustomGUI.exe" $deployDir\
+Copy-Item "$guiBuild\Release\MegaCustomGUI.exe" $stagingDir\
 
 # Run windeployqt
-& "$QtPath\bin\windeployqt.exe" --release --no-translations "$deployDir\MegaCustomGUI.exe"
+& "$QtPath\bin\windeployqt.exe" --release --no-translations "$stagingDir\MegaCustomGUI.exe"
 
 # Copy vcpkg DLLs
 $vcpkgBin = "$VcpkgPath\installed\x64-windows\bin"
-Get-ChildItem "$vcpkgBin\*.dll" | Copy-Item -Destination $deployDir\
+Get-ChildItem "$vcpkgBin\*.dll" | Copy-Item -Destination $stagingDir\
 
 # Copy ffmpeg tools
 $ffmpegTools = "$VcpkgPath\installed\x64-windows\tools\ffmpeg"
 if (Test-Path $ffmpegTools) {
-    Copy-Item "$ffmpegTools\ffmpeg.exe" $deployDir\ -ErrorAction SilentlyContinue
-    Copy-Item "$ffmpegTools\ffprobe.exe" $deployDir\ -ErrorAction SilentlyContinue
+    Copy-Item "$ffmpegTools\ffmpeg.exe" $stagingDir\ -ErrorAction SilentlyContinue
+    Copy-Item "$ffmpegTools\ffprobe.exe" $stagingDir\ -ErrorAction SilentlyContinue
 }
 
 # Copy resources
-New-Item -ItemType Directory -Path "$deployDir\resources\styles" -Force | Out-Null
-New-Item -ItemType Directory -Path "$deployDir\resources\icons" -Force | Out-Null
-Copy-Item "$guiPath\resources\styles\*.qss" "$deployDir\resources\styles\" -ErrorAction SilentlyContinue
-Copy-Item "$guiPath\resources\icons\*.ico" "$deployDir\resources\icons\" -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path "$stagingDir\resources\styles" -Force | Out-Null
+New-Item -ItemType Directory -Path "$stagingDir\resources\icons" -Force | Out-Null
+Copy-Item "$guiPath\resources\styles\*.qss" "$stagingDir\resources\styles\" -ErrorAction SilentlyContinue
+Copy-Item "$guiPath\resources\icons\*.ico" "$stagingDir\resources\icons\" -ErrorAction SilentlyContinue
 
 # Create portable marker
-"MegaCustomGUI Portable Mode`n`nSettings stored in this folder." | Out-File "$deployDir\portable.marker" -Encoding UTF8
+"MegaCustomGUI Portable Mode`n`nSettings stored in this folder." | Out-File "$stagingDir\portable.marker" -Encoding UTF8
 
-# Create ZIP
+# Refresh application files in place. Never delete this directory: it may contain
+# the live portable members.json, settings, jobs, credentials, logs, and caches.
+if (!(Test-Path $deployDir)) {
+    New-Item -ItemType Directory -Path $deployDir | Out-Null
+} else {
+    Write-Host "  Preserving existing portable user data in $deployDir" -ForegroundColor Yellow
+}
+Copy-Item "$stagingDir\*" $deployDir\ -Recurse -Force
+
+# Create a clean ZIP from staging so local member/account data is never packaged.
 $zipPath = "$guiPath\MegaCustomGUI-Portable-Win64.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath }
-Compress-Archive -Path $deployDir -DestinationPath $zipPath
+Compress-Archive -Path "$stagingDir\*" -DestinationPath $zipPath
+Remove-Item -Recurse -Force $stagingDir
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green

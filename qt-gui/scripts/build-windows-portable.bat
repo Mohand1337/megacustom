@@ -43,7 +43,8 @@ if "%~2"=="" (
 )
 
 set BUILD_DIR=build-win64
-set DEPLOY_DIR=MegaCustomGUI-Portable
+set DEPLOY_DIR=MegaCustomGUI-Portable-Staging
+set LIVE_DIR=MegaCustomGUI-Portable
 set PROJECT_ROOT=%~dp0..
 
 REM Validate paths
@@ -64,6 +65,7 @@ echo Qt Directory: %QT_DIR%
 echo VCPKG Root: %VCPKG_ROOT%
 echo Build Directory: %BUILD_DIR%
 echo Deploy Directory: %DEPLOY_DIR%
+echo Live Portable Directory: %LIVE_DIR%
 echo.
 
 REM ============================================================================
@@ -283,13 +285,25 @@ echo Creating ZIP archive...
 set ZIP_NAME=MegaCustomGUI-Portable-Win64.zip
 if exist "%ZIP_NAME%" del "%ZIP_NAME%"
 
-powershell -Command "Compress-Archive -Path '%DEPLOY_DIR%' -DestinationPath '%ZIP_NAME%' -Force"
+powershell -Command "Compress-Archive -Path '%DEPLOY_DIR%\*' -DestinationPath '%ZIP_NAME%' -Force"
 
 if errorlevel 1 (
     echo WARNING: Could not create ZIP archive
 ) else (
     echo Created: %ZIP_NAME%
 )
+
+REM Refresh application files in place. Never delete the live portable folder:
+REM it may contain members.json, settings, jobs, credentials, logs, and caches.
+if not exist "%LIVE_DIR%" mkdir "%LIVE_DIR%"
+echo Updating %LIVE_DIR% while preserving portable user data...
+xcopy "%DEPLOY_DIR%\*" "%LIVE_DIR%\" /E /I /Y >nul
+if errorlevel 1 (
+    echo ERROR: Could not update the live portable directory.
+    popd
+    exit /b 1
+)
+rmdir /s /q "%DEPLOY_DIR%"
 
 popd
 
@@ -298,10 +312,10 @@ echo ============================================
 echo  Build Complete!
 echo ============================================
 echo.
-echo Portable distribution: %DEPLOY_DIR%\
+echo Portable distribution: %LIVE_DIR%\
 echo ZIP archive: %ZIP_NAME%
 echo.
-echo To test: Run %DEPLOY_DIR%\MegaCustomGUI.exe
+echo To test: Run %LIVE_DIR%\MegaCustomGUI.exe
 echo.
 
 endlocal

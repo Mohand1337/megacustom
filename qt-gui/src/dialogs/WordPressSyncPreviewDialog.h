@@ -60,35 +60,6 @@ private:
 };
 
 /**
- * Worker thread for syncing selected WordPress users
- */
-class WpSyncSelectedWorker : public QObject {
-    Q_OBJECT
-public:
-    explicit WpSyncSelectedWorker(QObject* parent = nullptr);
-
-    void setSiteUrl(const QString& url) { m_siteUrl = url; }
-    void setUsername(const QString& user) { m_username = user; }
-    void setPassword(const QString& pass) { m_password = pass; }
-    void setUsers(const QList<WpUserPreview>& users) { m_users = users; }
-
-public slots:
-    void process();
-    void cancel();
-
-signals:
-    void progress(int current, int total, const QString& username);
-    void finished(int created, int updated, int failed, const QString& error);
-
-private:
-    QString m_siteUrl;
-    QString m_username;
-    QString m_password;
-    QList<WpUserPreview> m_users;
-    bool m_cancelled = false;
-};
-
-/**
  * Dialog for previewing and selecting WordPress users to sync
  */
 class WordPressSyncPreviewDialog : public QDialog {
@@ -108,7 +79,6 @@ signals:
 private slots:
     void onFetchProgress(int current, int total);
     void onFetchFinished(const QList<WpUserPreview>& users, const QString& error);
-    void onSyncProgress(int current, int total, const QString& username);
     void onSyncFinished(int created, int updated, int failed, const QString& error);
 
     void onSearchChanged(const QString& text);
@@ -162,7 +132,6 @@ private:
     // Worker threads
     QThread* m_workerThread = nullptr;
     WpFetchWorker* m_fetchWorker = nullptr;
-    WpSyncSelectedWorker* m_syncWorker = nullptr;
     bool m_isFetching = false;
     bool m_isSyncing = false;
 };

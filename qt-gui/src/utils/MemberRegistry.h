@@ -8,6 +8,7 @@
 #include <QList>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QByteArray>
 
 namespace MegaCustom {
 
@@ -163,7 +164,7 @@ public:
 
     // Template management
     MemberTemplate getTemplate() const { return m_template; }
-    void setTemplate(const MemberTemplate& tmpl);
+    bool setTemplate(const MemberTemplate& tmpl);
 
     // Member management
     QList<MemberInfo> getAllMembers() const;
@@ -171,12 +172,12 @@ public:
     MemberInfo getMember(const QString& id) const;
     bool hasMember(const QString& id) const;
 
-    void addMember(const MemberInfo& member);
-    void updateMember(const MemberInfo& member);
-    void removeMember(const QString& id);
+    bool addMember(const MemberInfo& member);
+    bool updateMember(const MemberInfo& member);
+    bool removeMember(const QString& id);
 
     // Bulk operations
-    void setMembers(const QList<MemberInfo>& members);
+    bool setMembers(const QList<MemberInfo>& members);
 
     // Watermark folder discovery
     QString findWmFolder(const QString& memberId) const;
@@ -191,23 +192,25 @@ public:
     bool load();
     bool save();
     QString configPath() const;
+    QString lastPersistenceError() const { return m_lastPersistenceError; }
+    bool isPersistenceReady() const { return m_persistenceReady; }
 
     // Import/Export
     bool exportToFile(const QString& filePath);
     bool importFromFile(const QString& filePath, bool mergeMode = true);
 
     // === Phase 2: Distribution folder management ===
-    void setDistributionFolder(const QString& memberId, const QString& folderPath);
-    void clearDistributionFolder(const QString& memberId);
+    bool setDistributionFolder(const QString& memberId, const QString& folderPath);
+    bool clearDistributionFolder(const QString& memberId);
     QList<MemberInfo> getMembersWithDistributionFolders() const;
 
     // === Phase 2: Watermark configuration ===
-    void setWatermarkFields(const QString& memberId, const QStringList& fields);
-    void setUseGlobalWatermark(const QString& memberId, bool useGlobal);
+    bool setWatermarkFields(const QString& memberId, const QStringList& fields);
+    bool setUseGlobalWatermark(const QString& memberId, bool useGlobal);
     static QStringList availableWatermarkFields();
 
     // === Phase 2: WordPress sync tracking ===
-    void markWordPressSynced(const QString& memberId, const QString& wpUserId = QString());
+    bool markWordPressSynced(const QString& memberId, const QString& wpUserId = QString());
     QList<MemberInfo> getUnsyncedMembers() const;
 
     // === Phase 2: CSV Import/Export with extended fields ===
@@ -235,17 +238,18 @@ public:
     QList<FolderMatch> matchFoldersToMembers(const QStringList& folderNames) const;
 
     // === Pipeline Status ===
-    void recordWatermark(const QString& memberId, int fileCount);
-    void recordDistribution(const QString& memberId, int fileCount);
+    bool recordWatermark(const QString& memberId, int fileCount);
+    bool recordDistribution(const QString& memberId, int fileCount);
 
     // === Member Groups ===
     QList<MemberGroup> getAllGroups() const;
     MemberGroup getGroup(const QString& name) const;
     bool hasGroup(const QString& name) const;
     QStringList getGroupNames() const;
-    void addGroup(const MemberGroup& group);
-    void updateGroup(const MemberGroup& group);
-    void removeGroup(const QString& name);
+    bool addGroup(const MemberGroup& group);
+    bool updateGroup(const MemberGroup& group);
+    bool removeGroup(const QString& name);
+    bool renameGroup(const QString& oldName, const QString& newName);
     QStringList getGroupMemberIds(const QString& groupName) const;
     QStringList getGroupsForMember(const QString& memberId) const;
 
@@ -258,6 +262,7 @@ signals:
     void groupAdded(const QString& name);
     void groupUpdated(const QString& name);
     void groupRemoved(const QString& name);
+    void persistenceError(const QString& message);
 
 private:
     explicit MemberRegistry(QObject* parent = nullptr);
@@ -268,8 +273,19 @@ private:
     MemberTemplate m_template;
     QMap<QString, MemberInfo> m_members;
     QMap<QString, MemberGroup> m_groups;
+    QJsonObject m_loadedRoot;
+    QByteArray m_loadedFileHash;
+    QString m_lastPersistenceError;
+    bool m_loadedFileExisted = false;
+    bool m_persistenceReady = true;
 
     void initDefaults();
+    QString legacyConfigPath() const;
+    bool migrateLegacyRegistry(const QString& targetPath);
+    bool createRotatingBackup(const QString& path);
+    void reportPersistenceError(const QString& message);
+    void clearPersistenceError();
+    QJsonObject serializeRegistry() const;
 };
 
 } // namespace MegaCustom

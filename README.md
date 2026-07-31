@@ -128,6 +128,18 @@ $cmake = "path\to\cmake.exe"
 & $cmake --build qt-gui\build-win64 --config Release
 ```
 
+The local portable build scripts stage application files separately, refresh the
+existing `qt-gui\MegaCustomGUI-Portable` directory without deleting user data,
+and create the ZIP from clean staging files. To inventory member registry copies
+and rotating backups without modifying them:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\diagnose-member-registry.ps1
+```
+
+Use `-CreateSafetyCopies` only after reviewing the reported paths and counts.
+Safety copies are written outside the Git checkout by default.
+
 ## Documentation
 
 | File | Description |

@@ -31,6 +31,7 @@
 #include <QMenu>
 #include <QApplication>
 #include <QClipboard>
+#include <QTimer>
 
 namespace MegaCustom {
 
@@ -53,6 +54,20 @@ MemberRegistryPanel::MemberRegistryPanel(QWidget* parent)
         if (!m_suppressGroupRefresh) refresh();
     });
     connect(m_registry, &MemberRegistry::groupRemoved, this, &MemberRegistryPanel::refresh);
+    connect(m_registry, &MemberRegistry::persistenceError, this,
+            [this](const QString& message) {
+        QTimer::singleShot(0, this, [this, message]() {
+            QMessageBox::critical(this, "Member Data Was Not Saved",
+                message + "\n\nThe attempted change was rolled back and the existing registry was left "
+                          "untouched. Preserve any registry copies before retrying.");
+        });
+    });
+    if (!m_registry->isPersistenceReady() && !m_registry->lastPersistenceError().isEmpty()) {
+        const QString startupError = m_registry->lastPersistenceError();
+        QTimer::singleShot(0, this, [this, startupError]() {
+            QMessageBox::critical(this, "Member Registry Needs Attention", startupError);
+        });
+    }
 }
 
 void MemberRegistryPanel::setFileController(FileController* controller) {
@@ -238,7 +253,7 @@ void MemberRegistryPanel::setupUI() {
                         g.memberIds.append(memberId);
                     }
                     g.updatedAt = QDateTime::currentSecsSinceEpoch();
-                    m_registry->updateGroup(g);
+                    if (!m_registry->updateGroup(g)) refresh();
                 });
             }
         }
@@ -434,8 +449,7 @@ void MemberRegistryPanel::setupUI() {
             newType.description = descEdit->text().trimmed();
             newType.enabled = true;
             tmpl.pathTypes.append(newType);
-            m_registry->setTemplate(tmpl);
-            rebuildPathTypesGrid();
+            if (m_registry->setTemplate(tmpl)) rebuildPathTypesGrid();
         }
     });
 
@@ -688,8 +702,7 @@ void MemberRegistryPanel::rebuildPathTypesGrid() {
                             break;
                         }
                     }
-                    m_registry->setTemplate(tmpl);
-                    rebuildPathTypesGrid();
+                    if (m_registry->setTemplate(tmpl)) rebuildPathTypesGrid();
                 }
             });
             pathTypesGrid->addWidget(deleteBtn, row, 3, Qt::AlignCenter);
@@ -714,8 +727,9 @@ void MemberRegistryPanel::onSaveTemplate() {
         }
     }
 
-    m_registry->setTemplate(tmpl);
-    QMessageBox::information(this, "Template Saved", "Global template has been saved.");
+    if (m_registry->setTemplate(tmpl)) {
+        QMessageBox::information(this, "Template Saved", "Global template has been saved.");
+    }
 }
 
 void MemberRegistryPanel::populateTable() {
@@ -1665,7 +1679,7 @@ void MemberRegistryPanel::onDuplicateMember() {
     copy.createdAt = now;
     copy.updatedAt = now;
 
-    m_registry->addMember(copy);
+    if (!m_registry->addMember(copy)) return;
 
     if (copyGroupsCheck->isChecked()) {
         const QStringList groups = m_registry->getGroupsForMember(source.id);
@@ -1674,7 +1688,7 @@ void MemberRegistryPanel::onDuplicateMember() {
             if (!group.memberIds.contains(copy.id)) {
                 group.memberIds.append(copy.id);
                 group.updatedAt = now;
-                m_registry->updateGroup(group);
+                if (!m_registry->updateGroup(group)) return;
             }
         }
     }
@@ -1810,10 +1824,11 @@ void MemberRegistryPanel::onBindFolder() {
     if (browser.exec() == QDialog::Accepted) {
         QString selectedPath = browser.selectedPath();
         if (!selectedPath.isEmpty()) {
-            m_registry->setDistributionFolder(memberId, selectedPath);
-            QMessageBox::information(this, "Folder Bound",
-                QString("Distribution folder for %1 set to:\n%2")
-                    .arg(info.displayName).arg(selectedPath));
+            if (m_registry->setDistributionFolder(memberId, selectedPath)) {
+                QMessageBox::information(this, "Folder Bound",
+                    QString("Distribution folder for %1 set to:\n%2")
+                        .arg(info.displayName).arg(selectedPath));
+            }
         }
     }
 }
@@ -1987,8 +2002,9 @@ void MemberRegistryPanel::onPopulateDefaults() {
              "Fast Forward", "2- Theory Calls", "3- Hotseats"}, true, ""}
     };
 
-    m_registry->setMembers(defaults);
-    QMessageBox::information(this, "Done", "Populated with 14 default members");
+    if (m_registry->setMembers(defaults)) {
+        QMessageBox::information(this, "Done", "Populated with 14 default members");
+    }
 }
 
 void MemberRegistryPanel::onWordPressSync() {
@@ -2055,7 +2071,7 @@ void MemberRegistryPanel::onAddGroup() {
     group.name = name;
     group.createdAt = QDateTime::currentSecsSinceEpoch();
     group.updatedAt = group.createdAt;
-    m_registry->addGroup(group);
+    if (!m_registry->addGroup(group)) return;
 
     // Select the new group
     for (int i = 0; i < m_groupList->count(); ++i) {
@@ -2081,11 +2097,7 @@ void MemberRegistryPanel::onRenameGroup() {
         return;
     }
 
-    MemberGroup group = m_registry->getGroup(oldName);
-    m_registry->removeGroup(oldName);
-    group.name = newName;
-    group.updatedAt = QDateTime::currentSecsSinceEpoch();
-    m_registry->addGroup(group);
+    m_registry->renameGroup(oldName, newName);
 }
 
 void MemberRegistryPanel::onDeleteGroup() {
@@ -2117,7 +2129,7 @@ void MemberRegistryPanel::onDuplicateGroup() {
     copy.memberIds = original.memberIds;
     copy.createdAt = QDateTime::currentSecsSinceEpoch();
     copy.updatedAt = copy.createdAt;
-    m_registry->addGroup(copy);
+    if (!m_registry->addGroup(copy)) return;
 
     // Select the new group
     for (int i = 0; i < m_groupList->count(); ++i) {
@@ -2188,8 +2200,13 @@ void MemberRegistryPanel::onGroupMemberToggled(QListWidgetItem* item) {
 
     // Suppress refresh to avoid rebuilding member list (losing scroll position)
     m_suppressGroupRefresh = true;
-    m_registry->updateGroup(group);
+    const bool saved = m_registry->updateGroup(group);
     m_suppressGroupRefresh = false;
+
+    if (!saved) {
+        onGroupSelectionChanged();
+        return;
+    }
 
     // Update the group list count display without losing selection
     int row = m_groupList->currentRow();
@@ -2223,8 +2240,13 @@ void MemberRegistryPanel::onGroupSelectAll() {
     }
     group.updatedAt = QDateTime::currentSecsSinceEpoch();
     m_suppressGroupRefresh = true;
-    m_registry->updateGroup(group);
+    const bool saved = m_registry->updateGroup(group);
     m_suppressGroupRefresh = false;
+
+    if (!saved) {
+        onGroupSelectionChanged();
+        return;
+    }
 
     // Update count display
     int activeCount = m_registry->getGroupMemberIds(groupName).size();
@@ -2255,8 +2277,13 @@ void MemberRegistryPanel::onGroupDeselectAll() {
     }
     group.updatedAt = QDateTime::currentSecsSinceEpoch();
     m_suppressGroupRefresh = true;
-    m_registry->updateGroup(group);
+    const bool saved = m_registry->updateGroup(group);
     m_suppressGroupRefresh = false;
+
+    if (!saved) {
+        onGroupSelectionChanged();
+        return;
+    }
 
     // Update count display
     int activeCount = m_registry->getGroupMemberIds(groupName).size();
