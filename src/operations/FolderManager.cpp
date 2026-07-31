@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <queue>
 #include <condition_variable>
+#include <limits>
 #ifdef USE_NLOHMANN_JSON
 #include <nlohmann/json.hpp>
 #else
@@ -21,6 +22,15 @@
 #endif
 
 namespace MegaCustom {
+
+namespace {
+
+int boundedProgressCount(std::size_t value) {
+    const auto maximum = static_cast<std::size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(value, maximum));
+}
+
+} // namespace
 
 // Internal listener for folder operations
 class FolderManager::FolderListener : public mega::MegaRequestListener {
@@ -193,8 +203,8 @@ std::vector<FolderOperationResult> FolderManager::createFolders(const std::vecto
 
         // Notify progress if callback is set
         if (m_progressCallback) {
-            int current = results.size();
-            int total = paths.size();
+            const int current = boundedProgressCount(results.size());
+            const int total = boundedProgressCount(paths.size());
             m_progressCallback("Creating folders", current, total);
         }
     }
@@ -297,8 +307,8 @@ std::vector<FolderOperationResult> FolderManager::deleteFolders(const std::vecto
         results.push_back(deleteFolder(path, moveToTrash));
 
         if (m_progressCallback) {
-            int current = results.size();
-            int total = paths.size();
+            const int current = boundedProgressCount(results.size());
+            const int total = boundedProgressCount(paths.size());
             m_progressCallback("Deleting folders", current, total);
         }
     }
@@ -876,13 +886,13 @@ int FolderManager::bulkExportLinks(const std::vector<std::string>& paths, const 
     out << "## Files\n\n";
 
     int successCount = 0;
-    int totalCount = paths.size();
+    const int totalCount = boundedProgressCount(paths.size());
 
     for (size_t i = 0; i < paths.size(); ++i) {
         const std::string& path = paths[i];
 
         if (m_progressCallback) {
-            m_progressCallback(path, i + 1, totalCount);
+            m_progressCallback(path, boundedProgressCount(i + 1), totalCount);
         }
 
         std::string link = createNodeLink(path);

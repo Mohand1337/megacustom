@@ -10,7 +10,7 @@
 #include <condition_variable>
 #include <sstream>
 #include <iomanip>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <random>
 #include <map>
 
@@ -54,7 +54,7 @@ public:
 
         // Update progress
         m_progress.bytesTransferred = transfer->getTransferredBytes();
-        m_progress.speed = transfer->getSpeed();
+        m_progress.speed = static_cast<double>(transfer->getSpeed());
 
         if (m_progress.totalBytes > 0) {
             m_progress.progressPercentage = static_cast<int>(
@@ -415,21 +415,31 @@ std::string FileOperations::calculateChecksum(const std::string& filePath) {
         return "";
     }
 
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-
-    char buffer[8192];
-    while (file.good()) {
-        file.read(buffer, sizeof(buffer));
-        SHA256_Update(&sha256, buffer, file.gcount());
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest(
+        EVP_MD_CTX_new(), &EVP_MD_CTX_free);
+    if (!digest || EVP_DigestInit_ex(digest.get(), EVP_sha256(), nullptr) != 1) {
+        return "";
     }
 
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_Final(hash, &sha256);
+    char buffer[8192];
+    while (file) {
+        file.read(buffer, sizeof(buffer));
+        const std::streamsize bytesRead = file.gcount();
+        if (bytesRead > 0
+            && EVP_DigestUpdate(digest.get(), buffer, static_cast<std::size_t>(bytesRead)) != 1) {
+            return "";
+        }
+    }
+    if (!file.eof()) return "";
+
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hashLength = 0;
+    if (EVP_DigestFinal_ex(digest.get(), hash, &hashLength) != 1) return "";
 
     std::stringstream ss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+    for (unsigned int i = 0; i < hashLength; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0')
+           << static_cast<unsigned int>(hash[i]);
     }
 
     return ss.str();

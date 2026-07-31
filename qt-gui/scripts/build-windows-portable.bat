@@ -76,7 +76,11 @@ echo [1/6] Checking MEGA SDK...
 set SDK_DIR=%PROJECT_ROOT%\..\third_party\sdk
 set SDK_BUILD_DIR=%SDK_DIR%\build_sdk
 
-if not exist "%SDK_BUILD_DIR%\Release\SDKlib.lib" (
+set BUILD_SDK=0
+if not exist "%SDK_BUILD_DIR%\Release\SDKlib.lib" set BUILD_SDK=1
+if not exist "%SDK_BUILD_DIR%\third_party\ccronexpr\Release\ccronexpr.lib" set BUILD_SDK=1
+
+if "%BUILD_SDK%"=="1" (
     echo Building MEGA SDK...
 
     if not exist "%SDK_BUILD_DIR%" mkdir "%SDK_BUILD_DIR%"
@@ -95,10 +99,21 @@ if not exist "%SDK_BUILD_DIR%\Release\SDKlib.lib" (
         exit /b 1
     )
 
-    cmake --build . --config Release --parallel
+    cmake --build . --config Release --target SDKlib ccronexpr --parallel
 
     if errorlevel 1 (
         echo ERROR: SDK build failed
+        popd
+        exit /b 1
+    )
+
+    if not exist "Release\SDKlib.lib" (
+        echo ERROR: Required SDK artifact is missing: Release\SDKlib.lib
+        popd
+        exit /b 1
+    )
+    if not exist "third_party\ccronexpr\Release\ccronexpr.lib" (
+        echo ERROR: Required SDK artifact is missing: third_party\ccronexpr\Release\ccronexpr.lib
         popd
         exit /b 1
     )

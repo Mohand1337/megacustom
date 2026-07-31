@@ -436,12 +436,7 @@ void MegaManager::handleMegaRequest(mega::MegaRequest* request, mega::MegaError*
         }
     }
 
-    // Handle specific request types
-    switch (request->getType()) {
-        // Add cases for different request types when SDK available
-        default:
-            break;
-    }
+    // Request-specific handling can be added here when needed.
 }
 
 // Handle Mega transfer callback

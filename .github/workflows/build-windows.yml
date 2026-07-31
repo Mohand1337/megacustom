@@ -105,7 +105,19 @@ jobs:
           -DUSE_MEDIAINFO=OFF `
           -DUSE_LIBUV=ON `
           -DUSE_PDFIUM=OFF
-        cmake --build . --config ${{ env.BUILD_TYPE }} --target SDKlib --parallel
+        # SDKlib is static, so MSBuild does not reliably materialize its public
+        # static dependencies when only SDKlib is requested.
+        cmake --build . --config ${{ env.BUILD_TYPE }} --target SDKlib ccronexpr --parallel
+
+        $requiredArtifacts = @(
+          "Release/SDKlib.lib",
+          "third_party/ccronexpr/Release/ccronexpr.lib"
+        )
+        foreach ($artifact in $requiredArtifacts) {
+          if (!(Test-Path $artifact -PathType Leaf)) {
+            throw "Required MEGA SDK artifact was not built: $artifact"
+          }
+        }
       shell: pwsh
       timeout-minutes: 90
 

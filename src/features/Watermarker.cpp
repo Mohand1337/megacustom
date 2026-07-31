@@ -636,6 +636,11 @@ bool looksLikePostWriteEncodingFailure(const std::string& output) {
 namespace MegaCustom {
 
 namespace {
+int boundedProgressCount(std::size_t value) {
+    const auto maximum = static_cast<std::size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(value, maximum));
+}
+
 WatermarkResult failedWatermarkResult(const std::string& input,
                                       const std::string& output,
                                       const std::string& error) {
@@ -3816,11 +3821,12 @@ std::vector<WatermarkResult> Watermarker::watermarkVideoBatch(
 
     std::vector<WatermarkResult> results;
     m_cancelled = false;
+    const int totalFiles = boundedProgressCount(inputPaths.size());
 
     if (parallel <= 1) {
         // Sequential processing
         for (size_t i = 0; i < inputPaths.size() && !m_cancelled; ++i) {
-            reportProgress(inputPaths[i], i + 1, inputPaths.size(),
+            reportProgress(inputPaths[i], boundedProgressCount(i + 1), totalFiles,
                           (double)i / inputPaths.size() * 100.0, "encoding");
 
             try {
@@ -3882,7 +3888,7 @@ std::vector<WatermarkResult> Watermarker::watermarkVideoBatch(
         }
     }
 
-    reportProgress("", inputPaths.size(), inputPaths.size(), 100.0, "complete");
+    reportProgress("", totalFiles, totalFiles, 100.0, "complete");
     return results;
 }
 
@@ -3895,11 +3901,12 @@ std::vector<WatermarkResult> Watermarker::watermarkPdfBatch(
 
     std::vector<WatermarkResult> results;
     m_cancelled = false;
+    const int totalFiles = boundedProgressCount(inputPaths.size());
 
     // PDF processing is typically I/O bound, so parallel helps less
     // But we still support it for consistency
     for (size_t i = 0; i < inputPaths.size() && !m_cancelled; ++i) {
-        reportProgress(inputPaths[i], i + 1, inputPaths.size(),
+        reportProgress(inputPaths[i], boundedProgressCount(i + 1), totalFiles,
                       (double)i / inputPaths.size() * 100.0, "processing");
 
         try {
@@ -3914,7 +3921,7 @@ std::vector<WatermarkResult> Watermarker::watermarkPdfBatch(
         }
     }
 
-    reportProgress("", inputPaths.size(), inputPaths.size(), 100.0, "complete");
+    reportProgress("", totalFiles, totalFiles, 100.0, "complete");
     return results;
 }
 
@@ -3979,8 +3986,9 @@ std::vector<WatermarkResult> Watermarker::watermarkDirectory(
 
     // Process audio files (metadata embedding)
     if (!audioFiles.empty() && !m_cancelled) {
+        const int totalFiles = boundedProgressCount(audioFiles.size());
         for (size_t i = 0; i < audioFiles.size() && !m_cancelled; ++i) {
-            reportProgress(audioFiles[i], i + 1, audioFiles.size(),
+            reportProgress(audioFiles[i], boundedProgressCount(i + 1), totalFiles,
                           (double)i / audioFiles.size() * 100.0, "processing");
             try {
                 std::string outPath = generateOutputPath(audioFiles[i], outputDir);

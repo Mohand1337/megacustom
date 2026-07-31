@@ -5,6 +5,8 @@
 #include <QThread>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
+#include <algorithm>
+#include <limits>
 
 namespace MegaCustom {
 
@@ -41,7 +43,9 @@ void FolderMapperController::loadMappings()
         }
 
         auto mappings = mapper.getAllMappings();
-        m_mappingCount = mappings.size();
+        const auto maximumCount = static_cast<decltype(mappings.size())>(
+            std::numeric_limits<int>::max());
+        m_mappingCount = static_cast<int>(std::min(mappings.size(), maximumCount));
 
         // Emit signal for each mapping
         for (const auto& mapping : mappings) {

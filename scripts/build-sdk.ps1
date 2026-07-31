@@ -6,11 +6,26 @@ Copy-Item "$vcpkg\installed\x64-windows\lib\pkgconfig\cryptopp.pc" "$vcpkg\insta
 
 # Configure
 cd C:\Users\Administrator\Desktop\megacustom\third_party\sdk\build_sdk
-& $cmake .. -G "Visual Studio 16 2019" -A x64 -DCMAKE_TOOLCHAIN_FILE="$vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_MODE=OFF -DCMAKE_BUILD_TYPE=Release -DENABLE_SYNC=ON -DENABLE_CHAT=OFF -DENABLE_LOG_PERFORMANCE=OFF -DENABLE_SDKLIB_EXAMPLES=OFF -DENABLE_SDKLIB_TESTS=OFF -DUSE_OPENSSL=ON -DUSE_CURL=ON -DUSE_SODIUM=ON -DUSE_CRYPTOPP=ON -DUSE_SQLITE=ON -DUSE_FREEIMAGE=OFF -DUSE_FFMPEG=OFF -DUSE_MEDIAINFO=OFF -DUSE_LIBUV=ON -DUSE_PDFIUM=OFF
+$generatorArgs = @()
+if (!(Test-Path ".\CMakeCache.txt" -PathType Leaf)) {
+    $generatorArgs = @("-G", "Visual Studio 17 2022", "-A", "x64")
+}
+& $cmake .. @generatorArgs -DCMAKE_TOOLCHAIN_FILE="$vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_MODE=OFF -DCMAKE_BUILD_TYPE=Release -DENABLE_SYNC=ON -DENABLE_CHAT=OFF -DENABLE_LOG_PERFORMANCE=OFF -DENABLE_SDKLIB_EXAMPLES=OFF -DENABLE_SDKLIB_TESTS=OFF -DUSE_OPENSSL=ON -DUSE_CURL=ON -DUSE_SODIUM=ON -DUSE_CRYPTOPP=ON -DUSE_SQLITE=ON -DUSE_FREEIMAGE=OFF -DUSE_FFMPEG=OFF -DUSE_MEDIAINFO=OFF -DUSE_LIBUV=ON -DUSE_PDFIUM=OFF
 if ($LASTEXITCODE -ne 0) { Write-Host "Configure failed!" -ForegroundColor Red; exit 1 }
 
-# Build
-& $cmake --build . --config Release --target SDKlib --parallel
+# Build both static libraries consumed directly by qt-gui/CMakeLists.txt.
+& $cmake --build . --config Release --target SDKlib ccronexpr --parallel
 if ($LASTEXITCODE -ne 0) { Write-Host "Build failed!" -ForegroundColor Red; exit 1 }
+
+$requiredArtifacts = @(
+    "Release\SDKlib.lib",
+    "third_party\ccronexpr\Release\ccronexpr.lib"
+)
+foreach ($artifact in $requiredArtifacts) {
+    if (!(Test-Path $artifact -PathType Leaf)) {
+        Write-Host "Required SDK artifact is missing: $artifact" -ForegroundColor Red
+        exit 1
+    }
+}
 
 Write-Host "SDK built successfully!" -ForegroundColor Green

@@ -9,7 +9,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+
+function Get-CMakeGeneratorArgs {
+    param([string]$BuildDirectory)
+
+    if (Test-Path (Join-Path $BuildDirectory "CMakeCache.txt")) {
+        Write-Host "  Reusing the generator from $BuildDirectory\CMakeCache.txt" -ForegroundColor Gray
+        return @()
+    }
+
+    return @("-G", "Visual Studio 17 2022", "-A", "x64")
+}
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  MegaCustomGUI Windows Build Script" -ForegroundColor Cyan
@@ -84,9 +95,10 @@ if (!$SkipSdk) {
 
     $sdkBuild = "$sdkPath\build_sdk"
     if (!(Test-Path $sdkBuild)) { New-Item -ItemType Directory -Path $sdkBuild | Out-Null }
+    $sdkGeneratorArgs = @(Get-CMakeGeneratorArgs -BuildDirectory $sdkBuild)
 
     Push-Location $sdkBuild
-    cmake .. -G "Visual Studio 16 2019" -A x64 `
+    cmake .. @sdkGeneratorArgs `
         -DCMAKE_TOOLCHAIN_FILE="$VcpkgPath/scripts/buildsystems/vcpkg.cmake" `
         -DVCPKG_OVERLAY_PORTS="../cmake/vcpkg_overlay_ports" `
         -DVCPKG_OVERLAY_TRIPLETS="../cmake/vcpkg_overlay_triplets" `
@@ -105,17 +117,40 @@ if (!$SkipSdk) {
         exit 1
     }
 
-    cmake --build . --config Release --parallel
+    cmake --build . --config Release --target SDKlib ccronexpr --parallel
 
     if ($LASTEXITCODE -ne 0) {
         Pop-Location
         Write-Host "ERROR: SDK build failed" -ForegroundColor Red
         exit 1
     }
+
+    $requiredArtifacts = @(
+        "Release\SDKlib.lib",
+        "third_party\ccronexpr\Release\ccronexpr.lib"
+    )
+    foreach ($artifact in $requiredArtifacts) {
+        if (!(Test-Path $artifact -PathType Leaf)) {
+            Pop-Location
+            Write-Host "ERROR: Required SDK artifact is missing: $artifact" -ForegroundColor Red
+            exit 1
+        }
+    }
     Pop-Location
     Write-Host "  SDK built successfully" -ForegroundColor Green
 } else {
     Write-Host "[4/6] Skipping SDK build (--SkipSdk)" -ForegroundColor Gray
+
+    $requiredArtifacts = @(
+        "$sdkPath\build_sdk\Release\SDKlib.lib",
+        "$sdkPath\build_sdk\third_party\ccronexpr\Release\ccronexpr.lib"
+    )
+    foreach ($artifact in $requiredArtifacts) {
+        if (!(Test-Path $artifact -PathType Leaf)) {
+            Write-Host "ERROR: Cannot skip the SDK build; required artifact is missing: $artifact" -ForegroundColor Red
+            exit 1
+        }
+    }
 }
 
 # Build Qt GUI
@@ -124,9 +159,10 @@ Write-Host "[5/6] Building MegaCustomGUI..." -ForegroundColor Yellow
 
 $guiPath = "$ProjectRoot\qt-gui"
 $guiBuild = "$guiPath\build-win64"
+$guiGeneratorArgs = @(Get-CMakeGeneratorArgs -BuildDirectory $guiBuild)
 
 Push-Location $guiPath
-cmake -B build-win64 -G "Visual Studio 16 2019" -A x64 `
+cmake -B build-win64 @guiGeneratorArgs `
     -DCMAKE_PREFIX_PATH="$QtPath" `
     -DCMAKE_TOOLCHAIN_FILE="$VcpkgPath/scripts/buildsystems/vcpkg.cmake" `
     -DCMAKE_BUILD_TYPE=Release

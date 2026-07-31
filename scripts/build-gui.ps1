@@ -5,7 +5,11 @@ $project = "C:\Users\Administrator\Desktop\megacustom"
 
 # Configure
 cd "$project\qt-gui"
-& $cmake -B build-win64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_TOOLCHAIN_FILE="$vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_MODE=OFF -DCMAKE_BUILD_TYPE=Release
+$generatorArgs = @()
+if (!(Test-Path ".\build-win64\CMakeCache.txt" -PathType Leaf)) {
+    $generatorArgs = @("-G", "Visual Studio 17 2022", "-A", "x64")
+}
+& $cmake -B build-win64 @generatorArgs -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_TOOLCHAIN_FILE="$vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_MODE=OFF -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { Write-Host "Configure failed!" -ForegroundColor Red; exit 1 }
 
 # Build

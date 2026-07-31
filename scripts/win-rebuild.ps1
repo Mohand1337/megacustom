@@ -1,5 +1,5 @@
 # MegaCustomGUI Quick Rebuild Script
-# Run this after 'git pull' to rebuild only changed files and update the portable folder.
+# Pull the latest fast-forward update, rebuild changed files, and update the portable folder.
 # First-time setup: Run build-windows-local.ps1 first.
 #
 # Usage:
@@ -13,14 +13,31 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
 $GuiPath = "$ProjectRoot\qt-gui"
 $BuildDir = "$GuiPath\build-win64"
+$SdkBuildDir = "$ProjectRoot\third_party\sdk\build_sdk"
 
 # Pull latest changes
 Write-Host "Pulling latest changes..." -ForegroundColor Yellow
-git -C $ProjectRoot pull
+git -C $ProjectRoot pull --ff-only
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Pull failed; the build was not started." -ForegroundColor Red
+    exit 1
+}
 Write-Host ""
+
+$requiredSdkArtifacts = @(
+    "$SdkBuildDir\Release\SDKlib.lib",
+    "$SdkBuildDir\third_party\ccronexpr\Release\ccronexpr.lib"
+)
+foreach ($artifact in $requiredSdkArtifacts) {
+    if (!(Test-Path $artifact -PathType Leaf)) {
+        Write-Host "Required SDK artifact is missing: $artifact" -ForegroundColor Red
+        Write-Host "Run .\scripts\build-windows-local.ps1 once, then retry." -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 # Incremental build (only recompiles changed files)
 Write-Host "Building..." -ForegroundColor Yellow
