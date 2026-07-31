@@ -729,9 +729,10 @@ void LogViewerPanel::populateActivityTableFromEntries(const std::vector<LogEntry
         return;
     }
 
-    m_activityTable->setRowCount(entries.size());
+    const int rowCount = static_cast<int>(entries.size());
+    m_activityTable->setRowCount(rowCount);
 
-    for (int row = 0; row < static_cast<int>(entries.size()); ++row) {
+    for (int row = 0; row < rowCount; ++row) {
         const LogEntry& entry = entries[row];
 
         // Time

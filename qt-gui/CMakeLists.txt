@@ -22,9 +22,6 @@ endif()
 if(WIN32)
     message(STATUS "Configuring for Windows")
 
-    # Hide console window for GUI app
-    set(CMAKE_WIN32_EXECUTABLE ON)
-
     # Windows version targeting (Windows 10+)
     add_compile_definitions(
         NTDDI_VERSION=0x0A000000
@@ -440,6 +437,12 @@ set_target_properties(MegaCustomGUI PROPERTIES
     AUTOMOC ON
 )
 
+if(WIN32)
+    # Only the desktop application uses the Windows GUI subsystem. Keeping this
+    # target-scoped prevents console tools and tests from requiring WinMain.
+    set_target_properties(MegaCustomGUI PROPERTIES WIN32_EXECUTABLE ON)
+endif()
+
 # Installation
 install(TARGETS MegaCustomGUI
     BUNDLE DESTINATION .
@@ -451,6 +454,8 @@ install(TARGETS MegaCustomGUI
 qt_add_executable(mega_ops
     tools/mega_ops.cpp
 )
+
+set_target_properties(mega_ops PROPERTIES WIN32_EXECUTABLE OFF)
 
 target_link_libraries(mega_ops PRIVATE
     Qt6::Core

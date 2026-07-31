@@ -2,6 +2,10 @@ add_executable(watermarker_integration_tests
     WatermarkerIntegrationTests.cpp
 )
 
+set_target_properties(watermarker_integration_tests PROPERTIES
+    WIN32_EXECUTABLE OFF
+)
+
 target_link_libraries(watermarker_integration_tests
     PRIVATE
         mega_custom_core
@@ -16,6 +20,10 @@ set_tests_properties(watermarker_integration PROPERTIES TIMEOUT 90)
 
 add_executable(persistence_integration_tests
     PersistenceIntegrationTests.cpp
+)
+
+set_target_properties(persistence_integration_tests PROPERTIES
+    WIN32_EXECUTABLE OFF
 )
 
 target_link_libraries(persistence_integration_tests
