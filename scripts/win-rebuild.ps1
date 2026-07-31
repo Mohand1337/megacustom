@@ -27,16 +27,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host ""
 
-$requiredSdkArtifacts = @(
-    "$SdkBuildDir\Release\SDKlib.lib",
+$sdkArtifact = "$SdkBuildDir\Release\SDKlib.lib"
+$ccronexprCandidates = @(
+    "$SdkBuildDir\third_party\ccronexpr\ccronexpr.dir\Release\ccronexpr.lib",
     "$SdkBuildDir\third_party\ccronexpr\Release\ccronexpr.lib"
 )
-foreach ($artifact in $requiredSdkArtifacts) {
-    if (!(Test-Path $artifact -PathType Leaf)) {
-        Write-Host "Required SDK artifact is missing: $artifact" -ForegroundColor Red
-        Write-Host "Run .\scripts\build-windows-local.ps1 once, then retry." -ForegroundColor Yellow
-        exit 1
-    }
+$ccronexprArtifact = $ccronexprCandidates |
+    Where-Object { Test-Path $_ -PathType Leaf } |
+    Select-Object -First 1
+if (!(Test-Path $sdkArtifact -PathType Leaf) -or !$ccronexprArtifact) {
+    Write-Host "Required SDK artifacts are missing under $SdkBuildDir" -ForegroundColor Red
+    Write-Host "Run .\scripts\build-windows-local.ps1 once, then retry." -ForegroundColor Yellow
+    exit 1
 }
 
 # Incremental build (only recompiles changed files)

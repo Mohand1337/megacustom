@@ -17,15 +17,21 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Configure failed!" -ForegroundColor Red; 
 & $cmake --build . --config Release --target SDKlib ccronexpr --parallel
 if ($LASTEXITCODE -ne 0) { Write-Host "Build failed!" -ForegroundColor Red; exit 1 }
 
-$requiredArtifacts = @(
-    "Release\SDKlib.lib",
+$sdkArtifact = "Release\SDKlib.lib"
+if (!(Test-Path $sdkArtifact -PathType Leaf)) {
+    Write-Host "Required SDK artifact is missing: $sdkArtifact" -ForegroundColor Red
+    exit 1
+}
+$ccronexprCandidates = @(
+    "third_party\ccronexpr\ccronexpr.dir\Release\ccronexpr.lib",
     "third_party\ccronexpr\Release\ccronexpr.lib"
 )
-foreach ($artifact in $requiredArtifacts) {
-    if (!(Test-Path $artifact -PathType Leaf)) {
-        Write-Host "Required SDK artifact is missing: $artifact" -ForegroundColor Red
-        exit 1
-    }
+$ccronexprArtifact = $ccronexprCandidates |
+    Where-Object { Test-Path $_ -PathType Leaf } |
+    Select-Object -First 1
+if (!$ccronexprArtifact) {
+    Write-Host "Required ccronexpr artifact is missing. Checked: $($ccronexprCandidates -join ', ')" -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "SDK built successfully!" -ForegroundColor Green

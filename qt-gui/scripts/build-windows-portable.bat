@@ -78,7 +78,7 @@ set SDK_BUILD_DIR=%SDK_DIR%\build_sdk
 
 set BUILD_SDK=0
 if not exist "%SDK_BUILD_DIR%\Release\SDKlib.lib" set BUILD_SDK=1
-if not exist "%SDK_BUILD_DIR%\third_party\ccronexpr\Release\ccronexpr.lib" set BUILD_SDK=1
+if not exist "%SDK_BUILD_DIR%\third_party\ccronexpr\ccronexpr.dir\Release\ccronexpr.lib" if not exist "%SDK_BUILD_DIR%\third_party\ccronexpr\Release\ccronexpr.lib" set BUILD_SDK=1
 
 if "%BUILD_SDK%"=="1" (
     echo Building MEGA SDK...
@@ -112,10 +112,12 @@ if "%BUILD_SDK%"=="1" (
         popd
         exit /b 1
     )
-    if not exist "third_party\ccronexpr\Release\ccronexpr.lib" (
-        echo ERROR: Required SDK artifact is missing: third_party\ccronexpr\Release\ccronexpr.lib
-        popd
-        exit /b 1
+    if not exist "third_party\ccronexpr\ccronexpr.dir\Release\ccronexpr.lib" (
+        if not exist "third_party\ccronexpr\Release\ccronexpr.lib" (
+            echo ERROR: Required ccronexpr artifact is missing under third_party\ccronexpr
+            popd
+            exit /b 1
+        )
     )
 
     popd

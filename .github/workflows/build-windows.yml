@@ -105,19 +105,23 @@ jobs:
           -DUSE_MEDIAINFO=OFF `
           -DUSE_LIBUV=ON `
           -DUSE_PDFIUM=OFF
-        # SDKlib is static, so MSBuild does not reliably materialize its public
-        # static dependencies when only SDKlib is requested.
+        # The GUI links both static archives directly.
         cmake --build . --config ${{ env.BUILD_TYPE }} --target SDKlib ccronexpr --parallel
 
-        $requiredArtifacts = @(
-          "Release/SDKlib.lib",
+        if (!(Test-Path "Release/SDKlib.lib" -PathType Leaf)) {
+          throw "Required MEGA SDK artifact was not built: Release/SDKlib.lib"
+        }
+        $ccronexprCandidates = @(
+          "third_party/ccronexpr/ccronexpr.dir/Release/ccronexpr.lib",
           "third_party/ccronexpr/Release/ccronexpr.lib"
         )
-        foreach ($artifact in $requiredArtifacts) {
-          if (!(Test-Path $artifact -PathType Leaf)) {
-            throw "Required MEGA SDK artifact was not built: $artifact"
-          }
+        $ccronexprArtifact = $ccronexprCandidates |
+          Where-Object { Test-Path $_ -PathType Leaf } |
+          Select-Object -First 1
+        if (!$ccronexprArtifact) {
+          throw "Required ccronexpr artifact was not built. Checked: $($ccronexprCandidates -join ', ')"
         }
+        Write-Host "Using ccronexpr artifact: $ccronexprArtifact"
       shell: pwsh
       timeout-minutes: 90
 

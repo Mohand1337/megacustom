@@ -22,6 +22,18 @@ function Get-CMakeGeneratorArgs {
     return @("-G", "Visual Studio 17 2022", "-A", "x64")
 }
 
+function Get-CcronexprArtifact {
+    param([string]$SdkBuildDirectory)
+
+    $candidates = @(
+        (Join-Path $SdkBuildDirectory "third_party\ccronexpr\ccronexpr.dir\Release\ccronexpr.lib"),
+        (Join-Path $SdkBuildDirectory "third_party\ccronexpr\Release\ccronexpr.lib")
+    )
+    return $candidates |
+        Where-Object { Test-Path $_ -PathType Leaf } |
+        Select-Object -First 1
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  MegaCustomGUI Windows Build Script" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -125,31 +137,33 @@ if (!$SkipSdk) {
         exit 1
     }
 
-    $requiredArtifacts = @(
-        "Release\SDKlib.lib",
-        "third_party\ccronexpr\Release\ccronexpr.lib"
-    )
-    foreach ($artifact in $requiredArtifacts) {
-        if (!(Test-Path $artifact -PathType Leaf)) {
-            Pop-Location
-            Write-Host "ERROR: Required SDK artifact is missing: $artifact" -ForegroundColor Red
-            exit 1
-        }
+    $sdkArtifact = Join-Path $sdkBuild "Release\SDKlib.lib"
+    $ccronexprArtifact = Get-CcronexprArtifact -SdkBuildDirectory $sdkBuild
+    if (!(Test-Path $sdkArtifact -PathType Leaf)) {
+        Pop-Location
+        Write-Host "ERROR: Required SDK artifact is missing: $sdkArtifact" -ForegroundColor Red
+        exit 1
+    }
+    if ([string]::IsNullOrWhiteSpace($ccronexprArtifact)) {
+        Pop-Location
+        Write-Host "ERROR: Required ccronexpr artifact is missing under $sdkBuild\third_party\ccronexpr" -ForegroundColor Red
+        exit 1
     }
     Pop-Location
     Write-Host "  SDK built successfully" -ForegroundColor Green
 } else {
     Write-Host "[4/6] Skipping SDK build (--SkipSdk)" -ForegroundColor Gray
 
-    $requiredArtifacts = @(
-        "$sdkPath\build_sdk\Release\SDKlib.lib",
-        "$sdkPath\build_sdk\third_party\ccronexpr\Release\ccronexpr.lib"
-    )
-    foreach ($artifact in $requiredArtifacts) {
-        if (!(Test-Path $artifact -PathType Leaf)) {
-            Write-Host "ERROR: Cannot skip the SDK build; required artifact is missing: $artifact" -ForegroundColor Red
-            exit 1
-        }
+    $sdkBuild = "$sdkPath\build_sdk"
+    $sdkArtifact = Join-Path $sdkBuild "Release\SDKlib.lib"
+    $ccronexprArtifact = Get-CcronexprArtifact -SdkBuildDirectory $sdkBuild
+    if (!(Test-Path $sdkArtifact -PathType Leaf)) {
+        Write-Host "ERROR: Cannot skip the SDK build; required artifact is missing: $sdkArtifact" -ForegroundColor Red
+        exit 1
+    }
+    if ([string]::IsNullOrWhiteSpace($ccronexprArtifact)) {
+        Write-Host "ERROR: Cannot skip the SDK build; ccronexpr is missing under $sdkBuild\third_party\ccronexpr" -ForegroundColor Red
+        exit 1
     }
 }
 

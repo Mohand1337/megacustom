@@ -348,9 +348,30 @@ if(WIN32)
     find_package(c-ares CONFIG REQUIRED)
     find_package(libuv CONFIG REQUIRED)
 
-    # SDK library paths for Windows
-    set(MEGA_SDK_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk/build_sdk/Release/SDKlib.lib)
-    set(CCRONEXPR_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk/build_sdk/third_party/ccronexpr/Release/ccronexpr.lib)
+    # The SDK is built separately. Its ccronexpr output directory differs
+    # between SDK/CMake generator versions, so discover the generated files
+    # instead of hardcoding one MSBuild layout.
+    set(MEGA_SDK_BUILD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sdk/build_sdk)
+    find_library(MEGA_SDK_LIB
+        NAMES SDKlib
+        PATHS "${MEGA_SDK_BUILD_DIR}"
+        PATH_SUFFIXES Release
+        NO_DEFAULT_PATH
+    )
+    find_library(CCRONEXPR_LIB
+        NAMES ccronexpr
+        PATHS "${MEGA_SDK_BUILD_DIR}/third_party/ccronexpr"
+        PATH_SUFFIXES ccronexpr.dir/Release Release
+        NO_DEFAULT_PATH
+    )
+    if(NOT MEGA_SDK_LIB)
+        message(FATAL_ERROR "MEGA SDK library was not found under ${MEGA_SDK_BUILD_DIR}. Build SDKlib first.")
+    endif()
+    if(NOT CCRONEXPR_LIB)
+        message(FATAL_ERROR "ccronexpr library was not found under ${MEGA_SDK_BUILD_DIR}/third_party/ccronexpr. Build ccronexpr first.")
+    endif()
+    message(STATUS "Using MEGA SDK library: ${MEGA_SDK_LIB}")
+    message(STATUS "Using ccronexpr library: ${CCRONEXPR_LIB}")
 
     # Windows resource file for icon and version info
     set(WIN_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/resources/app.rc)
