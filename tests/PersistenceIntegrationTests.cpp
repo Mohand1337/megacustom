@@ -9,7 +9,9 @@
 #include "json_simple.hpp"
 #endif
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -64,6 +66,22 @@ int fail(const std::string& message, const fs::path& root) {
     std::error_code ec;
     fs::remove_all(root, ec);
     return 1;
+}
+
+bool setEnvironmentVariable(const char* name, const std::string& value) {
+#ifdef _WIN32
+    return _putenv_s(name, value.c_str()) == 0;
+#else
+    return setenv(name, value.c_str(), 1) == 0;
+#endif
+}
+
+bool clearEnvironmentVariable(const char* name) {
+#ifdef _WIN32
+    return _putenv_s(name, "") == 0;
+#else
+    return unsetenv(name) == 0;
+#endif
 }
 } // namespace
 
@@ -269,6 +287,47 @@ int main() {
         || config.getArray("test.values") != expectedArray) {
         return fail("ConfigManager array values did not round-trip", root);
     }
+
+    const char* previousConfigDir = std::getenv("MEGACUSTOM_CONFIG_DIR");
+    const bool hadPreviousConfigDir = previousConfigDir != nullptr;
+    const std::string previousConfigDirValue = hadPreviousConfigDir
+        ? previousConfigDir : std::string();
+    const fs::path profileConfigDir = root
+        / fs::u8path(u8"profile-config-測試");
+    if (!setEnvironmentVariable("MEGACUSTOM_CONFIG_DIR",
+                                pathUtf8(profileConfigDir))) {
+        return fail("could not set the isolated profile directory", root);
+    }
+
+    const std::string profileName = u8"profile-測試";
+    if (!config.saveProfile(profileName, u8"Unicode 測試 profile")) {
+        return fail("could not save a Unicode configuration profile", root);
+    }
+    config.setArray("test.values", {"changed-after-profile-save"});
+    if (!config.loadProfile(profileName)
+        || config.getArray("test.values") != expectedArray) {
+        return fail("Unicode configuration profile did not round-trip", root);
+    }
+    const std::vector<std::string> profiles = config.listProfiles();
+    if (std::find(profiles.begin(), profiles.end(), profileName) == profiles.end()) {
+        return fail("Unicode configuration profile was not listed", root);
+    }
+    if (config.saveProfile("../escape", "must be rejected")) {
+        return fail("unsafe configuration profile name was accepted", root);
+    }
+    if (!config.deleteProfile(profileName)
+        || fs::exists(profileConfigDir / "profiles"
+                      / fs::u8path(profileName + ".json"))) {
+        return fail("Unicode configuration profile was not deleted", root);
+    }
+
+    const bool environmentRestored = hadPreviousConfigDir
+        ? setEnvironmentVariable("MEGACUSTOM_CONFIG_DIR", previousConfigDirValue)
+        : clearEnvironmentVariable("MEGACUSTOM_CONFIG_DIR");
+    if (!environmentRestored) {
+        return fail("could not restore the profile directory environment", root);
+    }
+
     if (!writeText(invalidConfigPath, "{")
         || config.loadConfig(pathUtf8(invalidConfigPath))
         || config.getArray("test.values") != expectedArray) {

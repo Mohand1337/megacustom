@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -37,10 +38,10 @@ bool replaceFileAtomically(const fs::path& temporary, const fs::path& target,
 } // namespace
 
 // Helper function to get profiles directory
-static std::string getProfilesDir() {
+static fs::path getProfilesDir() {
     if (const char* configured = std::getenv("MEGACUSTOM_CONFIG_DIR")) {
         if (*configured != '\0') {
-            return (fs::u8path(configured) / "profiles").u8string();
+            return fs::u8path(configured) / "profiles";
         }
     }
 
@@ -59,13 +60,13 @@ static std::string getProfilesDir() {
     if (home.empty()) {
         home = ".";
     }
-    return (fs::u8path(home) / ".megacustom" / "profiles").u8string();
+    return fs::u8path(home) / ".megacustom" / "profiles";
 }
 
 // Helper function to ensure profiles directory exists
 static bool ensureProfilesDir() {
     try {
-        std::string dir = getProfilesDir();
+        const fs::path dir = getProfilesDir();
         if (!fs::exists(dir)) {
             return fs::create_directories(dir);
         }
@@ -73,6 +74,21 @@ static bool ensureProfilesDir() {
     } catch (const std::exception&) {
         return false;
     }
+}
+
+static bool isValidProfileName(const std::string& profileName) {
+    if (profileName.empty() || profileName == "." || profileName == "..") {
+        return false;
+    }
+
+    constexpr const char* forbidden = "/\\<>:\"|?*";
+    for (const unsigned char value : profileName) {
+        if (value < 32
+            || std::strchr(forbidden, static_cast<char>(value)) != nullptr) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Private constructor for singleton
@@ -94,7 +110,7 @@ ConfigManager& ConfigManager::getInstance() {
 
 bool ConfigManager::loadConfig(const std::string& filePath) {
     try {
-        std::ifstream file(filePath);
+        std::ifstream file(fs::u8path(filePath), std::ios::binary);
         if (!file.is_open()) {
             std::cerr << "Failed to open config file: " << filePath << std::endl;
             return false;
@@ -460,7 +476,13 @@ ConfigManager::UIConfig ConfigManager::getUIConfig() const {
 // Profile management implementations
 bool ConfigManager::loadProfile(const std::string& profileName) {
     try {
-        std::string profilePath = getProfilesDir() + "/" + profileName + ".json";
+        if (!isValidProfileName(profileName)) {
+            std::cerr << "Invalid profile name" << std::endl;
+            return false;
+        }
+
+        const fs::path profilePath = getProfilesDir()
+            / fs::u8path(profileName + ".json");
 
         // Check if profile exists on disk
         if (!fs::exists(profilePath)) {
@@ -469,9 +491,10 @@ bool ConfigManager::loadProfile(const std::string& profileName) {
         }
 
         // Read profile from file
-        std::ifstream file(profilePath);
+        std::ifstream file(profilePath, std::ios::binary);
         if (!file.is_open()) {
-            std::cerr << "Failed to open profile file: " << profilePath << std::endl;
+            std::cerr << "Failed to open profile file: "
+                      << profilePath.u8string() << std::endl;
             return false;
         }
 
@@ -521,13 +544,19 @@ bool ConfigManager::loadProfile(const std::string& profileName) {
 
 bool ConfigManager::saveProfile(const std::string& profileName, const std::string& description) {
     try {
+        if (!isValidProfileName(profileName)) {
+            std::cerr << "Invalid profile name" << std::endl;
+            return false;
+        }
+
         // Ensure profiles directory exists
         if (!ensureProfilesDir()) {
             std::cerr << "Failed to create profiles directory" << std::endl;
             return false;
         }
 
-        std::string profilePath = getProfilesDir() + "/" + profileName + ".json";
+        const fs::path profilePath = getProfilesDir()
+            / fs::u8path(profileName + ".json");
 
         // Create profile object
         ConfigProfile profile;
@@ -546,15 +575,47 @@ bool ConfigManager::saveProfile(const std::string& profileName, const std::strin
         // Cast time_t to int for json_simple compatibility
         profileJson["lastModified"] = static_cast<int>(std::chrono::system_clock::to_time_t(profile.lastModified));
 
-        // Write to file
-        std::ofstream file(profilePath);
+        // Write atomically so an interrupted save cannot truncate a working profile.
+        fs::path temporary = profilePath;
+        temporary += ".tmp";
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file.is_open()) {
-            std::cerr << "Failed to open profile file for writing: " << profilePath << std::endl;
+            std::cerr << "Failed to open profile file for writing: "
+                      << profilePath.u8string() << std::endl;
             return false;
         }
 
-        file << profileJson.dump(4);  // Pretty print with 4 spaces
+        file << profileJson.dump(4) << '\n';
+        file.flush();
+        if (!file.good()) {
+            file.close();
+            std::error_code cleanupError;
+            fs::remove(temporary, cleanupError);
+            std::cerr << "Failed while writing profile file: "
+                      << profilePath.u8string() << std::endl;
+            return false;
+        }
         file.close();
+
+        std::error_code error;
+#ifndef _WIN32
+        fs::permissions(temporary,
+                        fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace, error);
+        if (error) {
+            fs::remove(temporary, error);
+            std::cerr << "Failed to secure profile file permissions" << std::endl;
+            return false;
+        }
+#endif
+
+        if (!replaceFileAtomically(temporary, profilePath, error)) {
+            std::error_code cleanupError;
+            fs::remove(temporary, cleanupError);
+            std::cerr << "Failed to replace profile file: "
+                      << error.message() << std::endl;
+            return false;
+        }
 
         // Update in-memory cache
         m_profiles[profileName] = profile;
@@ -575,7 +636,7 @@ std::vector<std::string> ConfigManager::listProfiles() const {
     std::vector<std::string> profiles;
 
     try {
-        std::string profilesDir = getProfilesDir();
+        const fs::path profilesDir = getProfilesDir();
 
         // Check if directory exists
         if (!fs::exists(profilesDir)) {
@@ -585,7 +646,7 @@ std::vector<std::string> ConfigManager::listProfiles() const {
         // Scan for JSON files in profiles directory
         for (const auto& entry : fs::directory_iterator(profilesDir)) {
             if (entry.is_regular_file()) {
-                std::string filename = entry.path().filename().string();
+                std::string filename = entry.path().filename().u8string();
                 if (filename.size() > 5 && filename.substr(filename.size() - 5) == ".json") {
                     // Remove .json extension
                     profiles.push_back(filename.substr(0, filename.size() - 5));
@@ -601,7 +662,13 @@ std::vector<std::string> ConfigManager::listProfiles() const {
 
 bool ConfigManager::deleteProfile(const std::string& profileName) {
     try {
-        std::string profilePath = getProfilesDir() + "/" + profileName + ".json";
+        if (!isValidProfileName(profileName)) {
+            std::cerr << "Invalid profile name" << std::endl;
+            return false;
+        }
+
+        const fs::path profilePath = getProfilesDir()
+            / fs::u8path(profileName + ".json");
 
         // Check if profile exists
         if (!fs::exists(profilePath)) {
@@ -611,7 +678,8 @@ bool ConfigManager::deleteProfile(const std::string& profileName) {
 
         // Remove from disk
         if (!fs::remove(profilePath)) {
-            std::cerr << "Failed to delete profile file: " << profilePath << std::endl;
+            std::cerr << "Failed to delete profile file: "
+                      << profilePath.u8string() << std::endl;
             return false;
         }
 
