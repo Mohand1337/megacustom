@@ -268,6 +268,19 @@ try {
     Write-Host "Running PowerShell registry regression test..." -ForegroundColor Yellow
     & $diagnosticTest
 
+    $runningApp = Get-Process -Name "MegaCustomGUI" -ErrorAction SilentlyContinue
+    Assert-True (!$runningApp) `
+        "MegaCustomGUI was opened during the build. Close it and rerun; no application files were replaced."
+    $registryExistsBeforeInstall = Test-Path -LiteralPath $LiveRegistry -PathType Leaf
+    Assert-True ($registryExistsBeforeInstall -eq $registryExistedBefore) `
+        "The live member registry appeared or disappeared during the build. No application files were replaced."
+    if ($registryExistsBeforeInstall) {
+        $registryHashBeforeInstall = (Get-FileHash -LiteralPath $LiveRegistry `
+            -Algorithm SHA256).Hash
+        Assert-True ($registryHashBeforeInstall -eq $registryHashBefore) `
+            "The live member registry changed during the build. No application files were replaced."
+    }
+
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $backupDir = Join-Path (Split-Path -Parent $PortableDir) `
         "MegaCustomGUI-Before-Update-$stamp"
