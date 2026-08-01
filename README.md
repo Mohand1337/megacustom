@@ -138,6 +138,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\diagnose-member-registry.ps1
 ```
 
 Use `-CreateSafetyCopies` only after reviewing the reported paths and counts.
+The inventory applies strict JSON control-character validation and includes
+malformed files in safety copies without counting their records as valid.
+
+On first launch after a registry migration update, the GUI checks both known
+Windows AppData layouts in addition to the active portable directory. Valid
+copies are merged by member/group timestamps; equally dated records retain
+nonempty fields from either copy. Every input is backed up before the active
+registry is written. A malformed secondary copy is backed up and reported as a
+nonfatal recovery warning when a valid active registry exists. If there is no
+valid active registry, migration remains fail-closed for manual recovery.
 Safety copies are written outside the Git checkout by default.
 
 ## Documentation

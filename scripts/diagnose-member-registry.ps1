@@ -25,6 +25,40 @@ function Add-RegistryCandidate {
     }
 }
 
+function Assert-NoUnescapedJsonControlCharacters {
+    param([string]$Text)
+
+    $insideString = $false
+    $escaped = $false
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $character = $Text[$index]
+        if (!$insideString) {
+            if ($character -eq '"') { $insideString = $true }
+            $code = [int][char]$character
+            if ($code -lt 0x20 -and $character -ne "`t" -and
+                $character -ne "`n" -and $character -ne "`r") {
+                throw "Invalid JSON control character at character offset $index"
+            }
+            continue
+        }
+        if ($escaped) {
+            $escaped = $false
+            continue
+        }
+        if ($character -eq '\') {
+            $escaped = $true
+            continue
+        }
+        if ($character -eq '"') {
+            $insideString = $false
+            continue
+        }
+        if ([int][char]$character -lt 0x20) {
+            throw "Unescaped JSON control character at character offset $index"
+        }
+    }
+}
+
 $directCandidates = @()
 if ($env:LOCALAPPDATA) {
     $directCandidates += Join-Path $env:LOCALAPPDATA "MegaCustom\members.json"
@@ -83,7 +117,9 @@ foreach ($entry in $candidateMap.GetEnumerator() | Sort-Object Name) {
     $parseStatus = "Valid"
 
     try {
-        $document = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $jsonText = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        Assert-NoUnescapedJsonControlCharacters -Text $jsonText
+        $document = $jsonText | ConvertFrom-Json
         if ($null -eq $document -or $document -is [System.Array]) {
             throw "Root value is not a JSON object"
         }
@@ -158,6 +194,7 @@ $results | Sort-Object Members, Groups, ModifiedUtc -Descending |
 
 Write-Host ""
 Write-Host "Registry files found: $($results.Count)"
+Write-Host "Strictly invalid registry files: $(@($results | Where-Object { !$_.Valid }).Count)"
 Write-Host "Distinct member IDs across valid files: $($allMemberIds.Count)"
 Write-Host "Distinct group names across valid files: $($allGroupNames.Count)"
 Write-Host "Member names, emails, IDs, and group names were intentionally not printed."

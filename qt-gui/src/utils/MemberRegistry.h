@@ -193,6 +193,7 @@ public:
     bool save();
     QString configPath() const;
     QString lastPersistenceError() const { return m_lastPersistenceError; }
+    QString lastPersistenceWarning() const { return m_lastPersistenceWarning; }
     bool isPersistenceReady() const { return m_persistenceReady; }
 
     // Import/Export
@@ -263,6 +264,7 @@ signals:
     void groupUpdated(const QString& name);
     void groupRemoved(const QString& name);
     void persistenceError(const QString& message);
+    void persistenceWarning(const QString& message);
 
 private:
     explicit MemberRegistry(QObject* parent = nullptr);
@@ -276,15 +278,18 @@ private:
     QJsonObject m_loadedRoot;
     QByteArray m_loadedFileHash;
     QString m_lastPersistenceError;
+    QString m_lastPersistenceWarning;
     bool m_loadedFileExisted = false;
     bool m_persistenceReady = true;
 
     void initDefaults();
-    QString legacyConfigPath() const;
+    QStringList legacyConfigPaths() const;
     bool migrateLegacyRegistry(const QString& targetPath);
     bool createRotatingBackup(const QString& path);
     void reportPersistenceError(const QString& message);
+    void reportPersistenceWarning(const QString& message);
     void clearPersistenceError();
+    void clearPersistenceWarning();
     QJsonObject serializeRegistry() const;
 };
 

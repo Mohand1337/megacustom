@@ -81,35 +81,68 @@ int main(int argc, char** argv) {
 
     const QString activeDirectory = QDir(temporaryDirectory.path()).filePath("active");
     const QString legacyDirectory = QDir(temporaryDirectory.path()).filePath("legacy");
+    const QString secondaryLegacyDirectory =
+        QDir(temporaryDirectory.path()).filePath("secondary-legacy");
+    const QString malformedLegacyDirectory =
+        QDir(temporaryDirectory.path()).filePath("malformed-legacy");
     qputenv("MEGACUSTOM_CONFIG_DIR", activeDirectory.toUtf8());
-    qputenv("MEGACUSTOM_LEGACY_CONFIG_DIR", legacyDirectory.toUtf8());
+    qputenv("MEGACUSTOM_LEGACY_CONFIG_DIRS",
+            QStringList{legacyDirectory, secondaryLegacyDirectory, malformedLegacyDirectory}
+                .join(QDir::listSeparator()).toUtf8());
 
     const QString activePath = QDir(activeDirectory).filePath("members.json");
     const QString legacyPath = QDir(legacyDirectory).filePath("members.json");
+    const QString secondaryLegacyPath =
+        QDir(secondaryLegacyDirectory).filePath("members.json");
+    const QString malformedLegacyPath =
+        QDir(malformedLegacyDirectory).filePath("members.json");
+
+    QJsonObject sameTimestampActive = member("same-time", "Same Time", 150, "active");
+    sameTimestampActive["paths"] = QJsonObject{{"archiveRoot", ""}};
+    sameTimestampActive["activeSameTimestampField"] = "preserve-active";
 
     QJsonObject activeRoot;
     activeRoot["schemaVersion"] = 11;
     activeRoot["activeOnlyRootField"] = "preserve-me";
     activeRoot["members"] = QJsonArray{
         member("shared", "Older Name", 100, "active"),
-        member("active-only", "Active Only", 110, "active")
+        member("active-only", "Active Only", 110, "active"),
+        sameTimestampActive
     };
     activeRoot["groups"] = QJsonArray{
         group("Combined", {"active-only"}, 100)
     };
 
+    QJsonObject sameTimestampLegacy = member("same-time", "Same Time", 150, "legacy");
+    sameTimestampLegacy["paths"] = QJsonObject{{"archiveRoot", "/restored/path"}};
+    sameTimestampLegacy["legacySameTimestampField"] = "preserve-legacy";
+
     QJsonObject legacyRoot;
     legacyRoot["legacyOnlyRootField"] = "also-preserve-me";
     legacyRoot["members"] = QJsonArray{
         member("shared", "Newer Name", 200, "legacy"),
-        member("recent", "Recent Member", 210, "legacy")
+        member("recent", "Recent Member", 210, "legacy"),
+        sameTimestampLegacy
     };
     legacyRoot["groups"] = QJsonArray{
         group("Combined", {"active-only", "recent"}, 200),
         group("Recent Group", {"recent"}, 210)
     };
 
-    if (!writeJson(activePath, activeRoot) || !writeJson(legacyPath, legacyRoot)) {
+    QJsonObject secondaryLegacyRoot;
+    secondaryLegacyRoot["secondaryOnlyRootField"] = "preserve-secondary";
+    secondaryLegacyRoot["members"] = QJsonArray{
+        member("secondary", "Secondary Member", 220, "secondary")
+    };
+    secondaryLegacyRoot["groups"] = QJsonArray{
+        group("Secondary Group", {"secondary"}, 220)
+    };
+
+    const QByteArray malformedLegacy =
+        "{\"members\":[{\"id\":\"wrapped\n  value\"}],\"groups\":[]}";
+    if (!writeJson(activePath, activeRoot) || !writeJson(legacyPath, legacyRoot)
+        || !writeJson(secondaryLegacyPath, secondaryLegacyRoot)
+        || !writeBytes(malformedLegacyPath, malformedLegacy)) {
         return fail("could not create split-registry fixtures");
     }
 
@@ -117,24 +150,49 @@ int main(int argc, char** argv) {
     if (!registry->isPersistenceReady()) {
         return fail("registry did not load: " + registry->lastPersistenceError());
     }
-    if (registry->getAllMembers().size() != 3
+    if (registry->lastPersistenceWarning().isEmpty()) {
+        return fail("malformed secondary registry did not produce a recovery warning");
+    }
+    if (registry->getAllMembers().size() != 5
         || registry->getMember("shared").displayName != "Newer Name"
         || !registry->hasMember("active-only")
-        || !registry->hasMember("recent")) {
+        || !registry->hasMember("recent")
+        || !registry->hasMember("secondary")) {
         return fail("one-time migration did not merge active and newer legacy members");
+    }
+    const QJsonObject sameTimestamp = findMember(readJson(activePath), "same-time");
+    if (sameTimestamp.value("paths").toObject().value("archiveRoot").toString()
+            != "/restored/path"
+        || sameTimestamp.value("activeSameTimestampField").toString() != "preserve-active"
+        || sameTimestamp.value("legacySameTimestampField").toString() != "preserve-legacy") {
+        return fail("equal-timestamp merge did not preserve richer nonempty fields");
     }
     const QStringList combinedIds = registry->getGroup("Combined").memberIds;
     if (!combinedIds.contains("active-only") || !combinedIds.contains("recent")
-        || !registry->hasGroup("Recent Group")) {
+        || !registry->hasGroup("Recent Group")
+        || !registry->hasGroup("Secondary Group")) {
         return fail("one-time migration did not preserve groups and memberships");
     }
-    if (!QFileInfo::exists(activePath + ".migration-v2.json")) {
+    const QString migrationMarkerPath = activePath + ".migration-v3.json";
+    if (!QFileInfo::exists(migrationMarkerPath)) {
         return fail("migration completion marker was not created");
     }
+    const QJsonObject migrationMarker = readJson(migrationMarkerPath);
+    if (migrationMarker.value("mergedLegacyCount").toInt() != 2
+        || migrationMarker.value("ignoredInvalidCount").toInt() != 1) {
+        return fail("migration marker did not report merged and invalid legacy sources");
+    }
     QDir activeDir(activeDirectory);
-    if (activeDir.entryList({"members.json.pre-migration-v2-active-*.bak"}, QDir::Files).isEmpty()
-        || activeDir.entryList({"members.json.pre-migration-v2-legacy-*.bak"}, QDir::Files).isEmpty()) {
+    if (activeDir.entryList({"members.json.pre-migration-v3-active-*.bak"}, QDir::Files).isEmpty()
+        || activeDir.entryList({"members.json.pre-migration-v3-legacy-1-*.bak"}, QDir::Files).isEmpty()
+        || activeDir.entryList({"members.json.pre-migration-v3-legacy-2-*.bak"}, QDir::Files).isEmpty()
+        || activeDir.entryList({"members.json.pre-migration-v3-invalid-3-*.bak"}, QDir::Files).isEmpty()) {
         return fail("pre-migration safety backups were not created");
+    }
+    QFile malformedAfterMigration(malformedLegacyPath);
+    if (!malformedAfterMigration.open(QIODevice::ReadOnly)
+        || malformedAfterMigration.readAll() != malformedLegacy) {
+        return fail("malformed secondary registry was modified during migration");
     }
 
     MegaCustom::MemberInfo duplicateMember = registry->getMember("recent");
@@ -161,6 +219,7 @@ int main(int argc, char** argv) {
     if (saved.value("schemaVersion").toInt() != 11
         || saved.value("activeOnlyRootField").toString() != "preserve-me"
         || saved.value("legacyOnlyRootField").toString() != "also-preserve-me"
+        || saved.value("secondaryOnlyRootField").toString() != "preserve-secondary"
         || findMember(saved, "shared").value("sourceOnlyField").toString() != "legacy") {
         return fail("saving discarded unknown root or member fields");
     }

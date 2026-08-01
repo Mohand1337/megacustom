@@ -19,7 +19,7 @@ namespace MegaCustom {
 
 namespace {
 
-constexpr int kRegistryMigrationVersion = 2;
+constexpr int kRegistryMigrationVersion = 3;
 constexpr int kBackupGenerations = 5;
 
 QString cleanAbsolutePath(const QString& path) {
@@ -28,6 +28,39 @@ QString cleanAbsolutePath(const QString& path) {
 
 QByteArray fileHash(const QByteArray& bytes) {
     return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+}
+
+bool findUnescapedJsonControlCharacter(const QByteArray& contents, qsizetype* offset) {
+    bool insideString = false;
+    bool escaped = false;
+    for (qsizetype index = 0; index < contents.size(); ++index) {
+        const unsigned char byte = static_cast<unsigned char>(contents.at(index));
+        if (!insideString) {
+            if (byte == '"') insideString = true;
+            if (byte < 0x20 && byte != '\t' && byte != '\n' && byte != '\r') {
+                if (offset) *offset = index;
+                return true;
+            }
+            continue;
+        }
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (byte == '"') {
+            insideString = false;
+            continue;
+        }
+        if (byte < 0x20) {
+            if (offset) *offset = index;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool readRegistryObject(const QString& path, QJsonObject* root, QByteArray* bytes,
@@ -45,6 +78,17 @@ bool readRegistryObject(const QString& path, QJsonObject* root, QByteArray* byte
         if (error) {
             *error = QString("Could not finish reading %1: %2")
                 .arg(path, file.errorString());
+        }
+        return false;
+    }
+
+    qsizetype controlOffset = -1;
+    if (findUnescapedJsonControlCharacter(contents, &controlOffset)) {
+        if (error) {
+            *error = QString(
+                "Invalid member registry %1: unescaped JSON control character at byte %2.")
+                .arg(path)
+                .arg(controlOffset);
         }
         return false;
     }
@@ -161,6 +205,31 @@ QMap<QString, QJsonObject> objectsByKey(const QJsonArray& values, const QString&
     return result;
 }
 
+bool isEmptyJsonValue(const QJsonValue& value) {
+    if (value.isUndefined() || value.isNull()) return true;
+    if (value.isString()) return value.toString().isEmpty();
+    if (value.isArray()) return value.toArray().isEmpty();
+    if (value.isObject()) return value.toObject().isEmpty();
+    return false;
+}
+
+QJsonValue mergeEqualTimestampValue(const QJsonValue& active, const QJsonValue& legacy) {
+    if (isEmptyJsonValue(active) && !isEmptyJsonValue(legacy)) return legacy;
+    if (!active.isObject() || !legacy.isObject()) return active;
+
+    QJsonObject merged = active.toObject();
+    const QJsonObject legacyObject = legacy.toObject();
+    for (auto it = legacyObject.constBegin(); it != legacyObject.constEnd(); ++it) {
+        merged[it.key()] = mergeEqualTimestampValue(merged.value(it.key()), it.value());
+    }
+    return merged;
+}
+
+QJsonObject mergeEqualTimestampObjects(const QJsonObject& active,
+                                       const QJsonObject& legacy) {
+    return mergeEqualTimestampValue(active, legacy).toObject();
+}
+
 qint64 updatedAt(const QJsonObject& object) {
     return object.value("updatedAt").toInteger(0);
 }
@@ -184,6 +253,8 @@ QJsonArray mergeMembers(const QJsonArray& activeValues, const QJsonArray& legacy
     for (auto it = legacy.constBegin(); it != legacy.constEnd(); ++it) {
         if (!merged.contains(it.key()) || updatedAt(it.value()) > updatedAt(merged.value(it.key()))) {
             merged[it.key()] = it.value();
+        } else if (updatedAt(it.value()) == updatedAt(merged.value(it.key()))) {
+            merged[it.key()] = mergeEqualTimestampObjects(merged.value(it.key()), it.value());
         }
     }
 
@@ -536,13 +607,51 @@ QString MemberRegistry::configPath() const {
     return QDir(configDir).filePath("members.json");
 }
 
-QString MemberRegistry::legacyConfigPath() const {
-    const QString overrideDirectory = QString::fromLocal8Bit(qgetenv("MEGACUSTOM_LEGACY_CONFIG_DIR"));
-    if (!overrideDirectory.trimmed().isEmpty()) {
-        return QDir(overrideDirectory).filePath("members.json");
+QStringList MemberRegistry::legacyConfigPaths() const {
+    QStringList paths;
+    auto addDirectory = [&paths](const QString& directory) {
+        if (directory.trimmed().isEmpty()) return;
+        const QString candidate = cleanAbsolutePath(QDir(directory).filePath("members.json"));
+#ifdef Q_OS_WIN
+        for (const QString& existing : paths) {
+            if (existing.compare(candidate, Qt::CaseInsensitive) == 0) return;
+        }
+#else
+        if (paths.contains(candidate)) return;
+#endif
+        paths.append(candidate);
+    };
+
+    const QString overrideDirectories =
+        QString::fromLocal8Bit(qgetenv("MEGACUSTOM_LEGACY_CONFIG_DIRS")).trimmed();
+    if (!overrideDirectories.isEmpty()) {
+        for (const QString& directory : overrideDirectories.split(QDir::listSeparator(),
+                                                                   Qt::SkipEmptyParts)) {
+            addDirectory(directory);
+        }
+        return paths;
     }
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation))
-        .filePath("members.json");
+
+    const QString overrideDirectory =
+        QString::fromLocal8Bit(qgetenv("MEGACUSTOM_LEGACY_CONFIG_DIR")).trimmed();
+    if (!overrideDirectory.isEmpty()) {
+        addDirectory(overrideDirectory);
+        return paths;
+    }
+
+    addDirectory(QDir(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation))
+                     .filePath("MegaCustom"));
+    addDirectory(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
+
+#ifdef Q_OS_WIN
+    const QString localAppData = QString::fromLocal8Bit(qgetenv("LOCALAPPDATA"));
+    const QString roamingAppData = QString::fromLocal8Bit(qgetenv("APPDATA"));
+    for (const QString& root : {localAppData, roamingAppData}) {
+        addDirectory(QDir(root).filePath("MegaCustom"));
+        addDirectory(QDir(root).filePath("MegaCustom/MegaCustom"));
+    }
+#endif
+    return paths;
 }
 
 void MemberRegistry::reportPersistenceError(const QString& message) {
@@ -551,21 +660,37 @@ void MemberRegistry::reportPersistenceError(const QString& message) {
     emit persistenceError(message);
 }
 
+void MemberRegistry::reportPersistenceWarning(const QString& message) {
+    m_lastPersistenceWarning = message;
+    qWarning().noquote() << message;
+    emit persistenceWarning(message);
+}
+
 void MemberRegistry::clearPersistenceError() {
     m_lastPersistenceError.clear();
 }
 
+void MemberRegistry::clearPersistenceWarning() {
+    m_lastPersistenceWarning.clear();
+}
+
 bool MemberRegistry::migrateLegacyRegistry(const QString& targetPath) {
     const QString target = cleanAbsolutePath(targetPath);
-    const QString legacy = cleanAbsolutePath(legacyConfigPath());
-    if (target == legacy) return true;
-
-    const QString markerPath = target + ".migration-v2.json";
+    const QString markerPath = target + QString(".migration-v%1.json")
+                                          .arg(kRegistryMigrationVersion);
     if (QFileInfo::exists(markerPath) && QFileInfo::exists(target)) return true;
 
     bool targetExists = QFileInfo::exists(target);
-    bool legacyExists = QFileInfo::exists(legacy);
-    if (!targetExists && !legacyExists) return true;
+    QStringList sourcePaths;
+    for (const QString& candidate : legacyConfigPaths()) {
+#ifdef Q_OS_WIN
+        const bool isTarget = candidate.compare(target, Qt::CaseInsensitive) == 0;
+#else
+        const bool isTarget = candidate == target;
+#endif
+        if (!isTarget && QFileInfo::exists(candidate)) sourcePaths.append(candidate);
+    }
+    if (!targetExists && sourcePaths.isEmpty()) return true;
 
     QLockFile lock(target + ".lock");
     lock.setStaleLockTime(30000);
@@ -577,27 +702,72 @@ bool MemberRegistry::migrateLegacyRegistry(const QString& targetPath) {
     }
 
     targetExists = QFileInfo::exists(target);
-    legacyExists = QFileInfo::exists(legacy);
     if (QFileInfo::exists(markerPath) && targetExists) return true;
 
     QJsonObject targetRoot;
-    QJsonObject legacyRoot;
     QByteArray targetBytes;
-    QByteArray legacyBytes;
     QString error;
 
     if (targetExists && !readRegistryObject(target, &targetRoot, &targetBytes, &error)) {
         reportPersistenceError(error + " The file was left untouched; member changes are disabled.");
         return false;
     }
-    if (legacyExists && !readRegistryObject(legacy, &legacyRoot, &legacyBytes, &error)) {
-        reportPersistenceError(error + " The registry copies were left untouched; member changes are disabled.");
-        return false;
-    }
 
     const QString stamp = QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmsszzz");
+    struct RegistrySource {
+        QString path;
+        QJsonObject root;
+    };
+    QList<RegistrySource> validSources;
+    QStringList invalidSources;
+    QStringList invalidBackupPaths;
+    int sourceNumber = 0;
+    for (const QString& sourcePath : sourcePaths) {
+        ++sourceNumber;
+        QJsonObject sourceRoot;
+        if (!readRegistryObject(sourcePath, &sourceRoot, nullptr, &error)) {
+            const QString backup = target
+                + QString(".pre-migration-v%1-invalid-%2-")
+                      .arg(kRegistryMigrationVersion)
+                      .arg(sourceNumber)
+                + stamp + ".bak";
+            if (!QFile::copy(sourcePath, backup)) {
+                reportPersistenceError(QString(
+                    "Could not preserve the malformed legacy member registry %1 as %2. "
+                    "The registries were left untouched.")
+                    .arg(sourcePath, backup));
+                return false;
+            }
+            invalidSources.append(sourcePath);
+            invalidBackupPaths.append(backup);
+            qWarning().noquote() << error
+                << "The malformed secondary registry was backed up and excluded from migration:" << backup;
+            continue;
+        }
+        validSources.append({sourcePath, sourceRoot});
+    }
+
+    if (!targetExists && !invalidSources.isEmpty()) {
+        reportPersistenceError(QString(
+            "No valid active member registry exists, and %1 legacy registry file(s) are malformed. "
+            "Safety backups were created next to %2; automatic migration stopped to avoid partial recovery.")
+            .arg(invalidSources.size())
+            .arg(target));
+        return false;
+    }
+    if (!targetExists && validSources.isEmpty()) return true;
+    if (targetExists && !invalidSources.isEmpty()) {
+        reportPersistenceWarning(QString(
+            "%1 malformed secondary member registry file(s) were excluded from migration. "
+            "The valid active registry will be used. Exact safety backups: %2")
+            .arg(invalidSources.size())
+            .arg(invalidBackupPaths.join(", ")));
+    }
+
     if (targetExists) {
-        const QString backup = target + ".pre-migration-v2-active-" + stamp + ".bak";
+        const QString backup = target
+            + QString(".pre-migration-v%1-active-").arg(kRegistryMigrationVersion)
+            + stamp + ".bak";
         if (!QFile::copy(target, backup)) {
             reportPersistenceError(QString(
                 "Could not create the pre-migration member backup %1. The registry was left untouched.")
@@ -605,9 +775,14 @@ bool MemberRegistry::migrateLegacyRegistry(const QString& targetPath) {
             return false;
         }
     }
-    if (legacyExists) {
-        const QString backup = target + ".pre-migration-v2-legacy-" + stamp + ".bak";
-        if (!QFile::copy(legacy, backup)) {
+    for (int index = 0; index < validSources.size(); ++index) {
+        const RegistrySource& source = validSources.at(index);
+        const QString backup = target
+            + QString(".pre-migration-v%1-legacy-%2-")
+                  .arg(kRegistryMigrationVersion)
+                  .arg(index + 1)
+            + stamp + ".bak";
+        if (!QFile::copy(source.path, backup)) {
             reportPersistenceError(QString(
                 "Could not create the legacy member backup %1. The registry was left untouched.")
                 .arg(backup));
@@ -616,17 +791,26 @@ bool MemberRegistry::migrateLegacyRegistry(const QString& targetPath) {
     }
 
     QJsonObject selectedRoot;
-    QString action;
-    if (!targetExists) {
-        selectedRoot = legacyRoot;
-        action = "copied_legacy";
-    } else if (!legacyRoot.isEmpty()) {
-        selectedRoot = mergeRegistryRoots(targetRoot, legacyRoot);
-        action = "merged_active_and_legacy";
-    } else {
+    bool selected = false;
+    if (targetExists) {
         selectedRoot = targetRoot;
-        action = "kept_active";
+        selected = true;
     }
+    for (const RegistrySource& source : validSources) {
+        if (!selected) {
+            selectedRoot = source.root;
+            selected = true;
+        } else {
+            selectedRoot = mergeRegistryRoots(selectedRoot, source.root);
+        }
+    }
+
+    QString action;
+    if (targetExists && !validSources.isEmpty()) action = "merged_active_and_legacy_sources";
+    else if (targetExists) action = "kept_active";
+    else if (validSources.size() == 1) action = "copied_legacy";
+    else action = "merged_legacy_sources";
+    if (!invalidSources.isEmpty()) action += "_ignored_invalid_sources";
 
     const QByteArray selectedBytes = QJsonDocument(selectedRoot).toJson(QJsonDocument::Indented);
     if ((!targetExists || selectedBytes != targetBytes)
@@ -640,7 +824,14 @@ bool MemberRegistry::migrateLegacyRegistry(const QString& targetPath) {
     marker["completedAtUtc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     marker["action"] = action;
     marker["activePath"] = target;
-    marker["legacyPath"] = legacy;
+    QJsonArray mergedPaths;
+    for (const RegistrySource& source : validSources) mergedPaths.append(source.path);
+    marker["mergedLegacyPaths"] = mergedPaths;
+    QJsonArray ignoredPaths;
+    for (const QString& source : invalidSources) ignoredPaths.append(source);
+    marker["ignoredInvalidPaths"] = ignoredPaths;
+    marker["mergedLegacyCount"] = validSources.size();
+    marker["ignoredInvalidCount"] = invalidSources.size();
     marker["memberCount"] = selectedRoot.value("members").toArray().size();
     marker["groupCount"] = selectedRoot.value("groups").toArray().size();
     QString markerError;
@@ -659,6 +850,7 @@ bool MemberRegistry::migrateLegacyRegistry(const QString& targetPath) {
 
 bool MemberRegistry::load() {
     const QString path = cleanAbsolutePath(configPath());
+    clearPersistenceWarning();
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
         m_persistenceReady = false;
         reportPersistenceError(QString("Could not create the member registry directory for %1.").arg(path));

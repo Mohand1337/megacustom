@@ -62,10 +62,21 @@ MemberRegistryPanel::MemberRegistryPanel(QWidget* parent)
                           "untouched. Preserve any registry copies before retrying.");
         });
     });
+    connect(m_registry, &MemberRegistry::persistenceWarning, this,
+            [this](const QString& message) {
+        QTimer::singleShot(0, this, [this, message]() {
+            QMessageBox::warning(this, "Member Registry Recovery Notice", message);
+        });
+    });
     if (!m_registry->isPersistenceReady() && !m_registry->lastPersistenceError().isEmpty()) {
         const QString startupError = m_registry->lastPersistenceError();
         QTimer::singleShot(0, this, [this, startupError]() {
             QMessageBox::critical(this, "Member Registry Needs Attention", startupError);
+        });
+    } else if (!m_registry->lastPersistenceWarning().isEmpty()) {
+        const QString startupWarning = m_registry->lastPersistenceWarning();
+        QTimer::singleShot(0, this, [this, startupWarning]() {
+            QMessageBox::warning(this, "Member Registry Recovery Notice", startupWarning);
         });
     }
 }

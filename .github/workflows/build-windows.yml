@@ -7,6 +7,8 @@ on:
       - 'qt-gui/**'
       - 'src/**'
       - 'include/**'
+      - 'scripts/**'
+      - 'tests/**'
       - '.github/workflows/build-windows.yml'
   pull_request:
     branches: [ main, master ]
@@ -25,6 +27,10 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Test member registry diagnostic script
+      run: ./tests/MemberRegistryDiagnosticScriptTests.ps1
+      shell: pwsh
 
     - name: Clone MEGA SDK
       run: |
