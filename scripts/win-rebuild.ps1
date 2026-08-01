@@ -161,6 +161,13 @@ try {
                  (Test-Path -LiteralPath $PortableSettings -PathType Leaf)) `
         "The selected folder does not appear to be a portable installation: $PortableDir"
 
+    $registryExistedBefore = Test-Path -LiteralPath $LiveRegistry -PathType Leaf
+    $registryHashBefore = $null
+    if ($registryExistedBefore) {
+        $registryHashBefore = (Get-FileHash -LiteralPath $LiveRegistry `
+            -Algorithm SHA256).Hash
+    }
+
     $gitCommand = Get-Command "git.exe" -ErrorAction SilentlyContinue |
         Select-Object -First 1
     Assert-True ($null -ne $gitCommand) "git.exe was not found on PATH."
@@ -285,15 +292,22 @@ try {
     Assert-True ($installedHash -eq $builtHash) `
         "Installed executable verification failed. Restore from $backupDir before launching."
 
+    $registryExistsAfter = Test-Path -LiteralPath $LiveRegistry -PathType Leaf
+    Assert-True ($registryExistsAfter -eq $registryExistedBefore) `
+        "The live member registry appeared or disappeared during the update. Restore from $backupDir before launching."
+
     $registryMembers = $null
     $registryGroups = $null
-    $registryHash = $null
-    if (Test-Path -LiteralPath $LiveRegistry -PathType Leaf) {
+    $registryHashAfter = $null
+    if ($registryExistsAfter) {
+        $registryHashAfter = (Get-FileHash -LiteralPath $LiveRegistry `
+            -Algorithm SHA256).Hash
+        Assert-True ($registryHashAfter -eq $registryHashBefore) `
+            "The live member registry changed during the executable update. Restore from $backupDir before launching."
         $registry = Get-Content -LiteralPath $LiveRegistry -Raw -Encoding UTF8 |
             ConvertFrom-Json
         $registryMembers = @($registry.members).Count
         $registryGroups = @($registry.groups).Count
-        $registryHash = (Get-FileHash -LiteralPath $LiveRegistry -Algorithm SHA256).Hash
     }
 
     [PSCustomObject]@{
@@ -304,8 +318,8 @@ try {
         FFmpeg = $ffmpeg
         InstalledExecutable = $PortableExe
         InstalledExecutableHash = $installedHash
-        RegistryWasModified = $false
-        RegistryHash = $registryHash
+        RegistryWasModified = ($registryHashAfter -ne $registryHashBefore)
+        RegistryHash = $registryHashAfter
         MembersBeforeFirstLaunch = $registryMembers
         GroupsBeforeFirstLaunch = $registryGroups
         SafetyBackup = $backupDir
