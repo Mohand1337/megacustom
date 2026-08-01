@@ -44,7 +44,7 @@ try {
     $validHashBefore = (Get-FileHash -LiteralPath $validPath -Algorithm SHA256).Hash
     $invalidHashBefore = (Get-FileHash -LiteralPath $invalidPath -Algorithm SHA256).Hash
 
-    $inventory = & $diagnosticScript -SearchRoot $temporaryRoot 6>&1 |
+    $inventory = & $diagnosticScript -SearchRoot $temporaryRoot -SearchRootOnly 6>&1 |
         Out-String -Width 4096
     Assert-True ($inventory -match "Strictly invalid registry files:\s+1") `
         "Diagnostic did not reject the unescaped JSON control character."
@@ -53,6 +53,7 @@ try {
 
     $copyOutput = & $diagnosticScript `
         -SearchRoot $temporaryRoot `
+        -SearchRootOnly `
         -CreateSafetyCopies `
         -SafetyCopyDirectory $copyDirectory 6>&1 |
         Out-String -Width 4096

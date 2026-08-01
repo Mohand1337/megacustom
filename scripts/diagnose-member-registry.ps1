@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [string[]]$SearchRoot = @(),
+    [switch]$SearchRootOnly,
     [switch]$CreateSafetyCopies,
     [string]$SafetyCopyDirectory = ""
 )
@@ -59,24 +60,27 @@ function Assert-NoUnescapedJsonControlCharacters {
     }
 }
 
-$directCandidates = @()
-if ($env:LOCALAPPDATA) {
-    $directCandidates += Join-Path $env:LOCALAPPDATA "MegaCustom\members.json"
-    $directCandidates += Join-Path $env:LOCALAPPDATA "MegaCustom\MegaCustom\members.json"
-}
-if ($env:APPDATA) {
-    $directCandidates += Join-Path $env:APPDATA "MegaCustom\members.json"
-    $directCandidates += Join-Path $env:APPDATA "MegaCustom\MegaCustom\members.json"
-}
-foreach ($path in $directCandidates) {
-    Add-RegistryCandidate -Path $path -Source "Known AppData path"
-}
+$roots = @()
+if (!$SearchRootOnly) {
+    $directCandidates = @()
+    if ($env:LOCALAPPDATA) {
+        $directCandidates += Join-Path $env:LOCALAPPDATA "MegaCustom\members.json"
+        $directCandidates += Join-Path $env:LOCALAPPDATA "MegaCustom\MegaCustom\members.json"
+    }
+    if ($env:APPDATA) {
+        $directCandidates += Join-Path $env:APPDATA "MegaCustom\members.json"
+        $directCandidates += Join-Path $env:APPDATA "MegaCustom\MegaCustom\members.json"
+    }
+    foreach ($path in $directCandidates) {
+        Add-RegistryCandidate -Path $path -Source "Known AppData path"
+    }
 
-$roots = @($ProjectRoot)
-if ($env:USERPROFILE) {
-    $desktop = Join-Path $env:USERPROFILE "Desktop"
-    if (Test-Path -LiteralPath $desktop -PathType Container) {
-        $roots += $desktop
+    $roots += $ProjectRoot
+    if ($env:USERPROFILE) {
+        $desktop = Join-Path $env:USERPROFILE "Desktop"
+        if (Test-Path -LiteralPath $desktop -PathType Container) {
+            $roots += $desktop
+        }
     }
 }
 $roots += $SearchRoot
