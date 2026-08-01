@@ -264,6 +264,16 @@ jobs:
         Get-ChildItem $deployDir
       shell: pwsh
 
+    - name: Verify portable incremental updater
+      run: |
+        ./scripts/win-rebuild.ps1 `
+          -SkipPull `
+          -QtPath "${{ env.Qt6_DIR }}" `
+          -VcpkgPath "${{ github.workspace }}\vcpkg" `
+          -PortableDir "${{ github.workspace }}\qt-gui\MegaCustomGUI-Portable" `
+          -ExpectedCommit "${{ github.sha }}"
+      shell: pwsh
+
     - name: Upload Portable Artifact
       uses: actions/upload-artifact@v4
       with:

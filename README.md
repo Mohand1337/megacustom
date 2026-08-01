@@ -128,6 +128,18 @@ $cmake = "path\to\cmake.exe"
 & $cmake --build qt-gui\build-win64 --config Release
 ```
 
+After the first full Windows build, use the verified incremental updater for
+subsequent portable updates. It resolves CMake from the existing cache or
+vcpkg, requires FFmpeg and FFprobe, runs all C++ integration tests plus the
+PowerShell registry regression, backs up the current executable and member
+registry files, and installs the new executable only after every check passes:
+
+```powershell
+.\scripts\win-rebuild.ps1 `
+    -PortableDir "C:\path\to\MegaCustomGUI-Portable" `
+    -ExpectedCommit "full-40-character-commit"
+```
+
 The local portable build scripts stage application files separately, refresh the
 existing `qt-gui\MegaCustomGUI-Portable` directory without deleting user data,
 and create the ZIP from clean staging files. To inventory member registry copies
