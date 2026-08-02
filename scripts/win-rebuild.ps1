@@ -48,6 +48,27 @@ function Invoke-NativeCommand {
     }
 }
 
+function Get-NativeToolVersionLine {
+    param(
+        [string]$FilePath,
+        [string]$ToolName
+    )
+
+    $versionOutput = @(& $FilePath -hide_banner -version 2>&1)
+    $versionExitCode = $LASTEXITCODE
+    if ($versionExitCode -ne 0) {
+        $details = ($versionOutput | ForEach-Object { $_.ToString() }) -join `
+            [Environment]::NewLine
+        $message = "$ToolName version check failed with exit code $versionExitCode at $FilePath"
+        if ($details) { $message += ":`n$details" } else { $message += "." }
+        throw $message
+    }
+    if ($versionOutput.Count -eq 0) {
+        throw "$ToolName returned no version information: $FilePath"
+    }
+    return $versionOutput[0].ToString()
+}
+
 function Resolve-CMakeExecutable {
     param(
         [string]$BuildDirectory,
@@ -301,10 +322,8 @@ try {
     $ffmpeg = $ffmpegToolset.FFmpeg
     $ffprobe = $ffmpegToolset.FFprobe
 
-    $ffmpegVersion = (& $ffmpeg -hide_banner -version 2>&1 | Select-Object -First 1)
-    Assert-True ($LASTEXITCODE -eq 0) "The resolved ffmpeg.exe could not be executed: $ffmpeg"
-    $ffprobeVersion = (& $ffprobe -hide_banner -version 2>&1 | Select-Object -First 1)
-    Assert-True ($LASTEXITCODE -eq 0) "The resolved ffprobe.exe could not be executed: $ffprobe"
+    $ffmpegVersion = Get-NativeToolVersionLine -FilePath $ffmpeg -ToolName "FFmpeg"
+    $ffprobeVersion = Get-NativeToolVersionLine -FilePath $ffprobe -ToolName "FFprobe"
 
     $runtimePaths = @(
         $PortableDir,
