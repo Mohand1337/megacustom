@@ -32,6 +32,10 @@ jobs:
       run: ./tests/MemberRegistryDiagnosticScriptTests.ps1
       shell: pwsh
 
+    - name: Test Windows FFmpeg tool resolver
+      run: ./tests/WindowsFFmpegToolResolverTests.ps1
+      shell: pwsh
+
     - name: Clone MEGA SDK
       run: |
         mkdir -p third_party

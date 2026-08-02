@@ -140,6 +140,13 @@ registry files, and installs the new executable only after every check passes:
     -ExpectedCommit "full-40-character-commit"
 ```
 
+The updater requires `ffmpeg.exe` and `ffprobe.exe` from the same toolset. If
+neither the portable folder nor the local build environment contains a complete
+pair, add `-ProvisionFFmpegIfMissing`. The updater downloads the current Windows
+essentials ZIP from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), verifies its
+published SHA-256 checksum, tests the tools, and installs both executables beside
+`MegaCustomGUI.exe`.
+
 The local portable build scripts stage application files separately, refresh the
 existing `qt-gui\MegaCustomGUI-Portable` directory without deleting user data,
 and create the ZIP from clean staging files. To inventory member registry copies

@@ -12,7 +12,9 @@ param(
     [string]$QtPath = "C:\Qt\6.6.0\msvc2019_64",
     [string]$VcpkgPath = "C:\vcpkg",
     [string]$PortableDir = "",
+    [string]$FFmpegDir = "",
     [string]$ExpectedCommit = "",
+    [switch]$ProvisionFFmpegIfMissing,
     [switch]$SkipPull
 )
 
@@ -23,6 +25,7 @@ $BuildDir = Join-Path $GuiPath "build-win64"
 $SdkBuildDir = Join-Path $ProjectRoot "third_party\sdk\build_sdk"
 $ReleaseDir = Join-Path $BuildDir "Release"
 $BuiltExe = Join-Path $ReleaseDir "MegaCustomGUI.exe"
+$FFmpegToolsScript = Join-Path $PSScriptRoot "windows-ffmpeg-tools.ps1"
 
 function Assert-True {
     param(
@@ -97,44 +100,112 @@ function Resolve-CMakeExecutable {
         Select-Object -First 1
 }
 
-function Resolve-FFmpegExecutable {
+function Find-FFmpegToolsetUnderDirectory {
     param(
-        [string]$PortableDirectory,
-        [string]$VcpkgRoot
+        [string]$Directory
     )
 
-    $candidates = New-Object 'System.Collections.Generic.List[string]'
-    if ($PortableDirectory) {
-        $candidates.Add((Join-Path $PortableDirectory "ffmpeg.exe"))
-        $candidates.Add((Join-Path $PortableDirectory "bin\ffmpeg.exe"))
+    if (!(Test-Path -LiteralPath $Directory -PathType Container)) { return $null }
+    $ffmpegCandidates = @(Get-ChildItem -LiteralPath $Directory -Filter "ffmpeg.exe" `
+        -File -Recurse -ErrorAction SilentlyContinue)
+    foreach ($candidate in $ffmpegCandidates) {
+        $ffprobe = Join-Path $candidate.DirectoryName "ffprobe.exe"
+        if (Test-Path -LiteralPath $ffprobe -PathType Leaf) {
+            return [PSCustomObject]@{
+                FFmpeg = $candidate.FullName
+                FFprobe = [IO.Path]::GetFullPath($ffprobe)
+            }
+        }
     }
+    return $null
+}
 
-    $candidates.Add("C:\ffmpeg\bin\ffmpeg.exe")
-    if ($env:ProgramFiles) {
-        $candidates.Add((Join-Path $env:ProgramFiles "ffmpeg\bin\ffmpeg.exe"))
+function Get-VerifiedDownloadedFFmpegToolset {
+    param(
+        [string]$CacheDirectory
+    )
+
+    $baseUri = "https://www.gyan.dev/ffmpeg/builds"
+    New-Item -ItemType Directory -Path $CacheDirectory -Force | Out-Null
+
+    $oldProgressPreference = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor `
+            [Net.SecurityProtocolType]::Tls12
+
+        $versionFile = Join-Path $CacheDirectory "release-version.txt"
+        Invoke-WebRequest -UseBasicParsing -Uri "$baseUri/ffmpeg-release-essentials.zip.ver" `
+            -OutFile $versionFile
+        $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+        Assert-True ($version -match '^\d+\.\d+(?:\.\d+)?$') `
+            "The FFmpeg provider returned an invalid release version: $version"
+
+        $archiveName = "ffmpeg-$version-essentials_build.zip"
+        $archive = Join-Path $CacheDirectory $archiveName
+        $checksumFile = "$archive.sha256"
+        $archiveUri = "$baseUri/packages/$archiveName"
+        $checksumUri = "$archiveUri.sha256"
+
+        Invoke-WebRequest -UseBasicParsing -Uri $checksumUri -OutFile $checksumFile
+        $checksumText = Get-Content -LiteralPath $checksumFile -Raw
+        $checksumMatch = [regex]::Match($checksumText, '(?i)\b[a-f0-9]{64}\b')
+        Assert-True ($checksumMatch.Success) `
+            "The FFmpeg provider returned an invalid SHA-256 checksum."
+        $expectedHash = $checksumMatch.Value.ToUpperInvariant()
+
+        if (Test-Path -LiteralPath $archive -PathType Leaf) {
+            $cachedHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+            if ($cachedHash -ne $expectedHash) {
+                Remove-Item -LiteralPath $archive -Force
+            }
+        }
+
+        if (!(Test-Path -LiteralPath $archive -PathType Leaf)) {
+            Write-Host "Downloading the verified FFmpeg essentials package..." `
+                -ForegroundColor Yellow
+            $partialArchive = "$archive.partial"
+            Remove-Item -LiteralPath $partialArchive -Force -ErrorAction SilentlyContinue
+            Invoke-WebRequest -UseBasicParsing -Uri $archiveUri -OutFile $partialArchive
+            $downloadedHash = (Get-FileHash -LiteralPath $partialArchive `
+                -Algorithm SHA256).Hash
+            Assert-True ($downloadedHash -eq $expectedHash) `
+                "Downloaded FFmpeg package failed SHA-256 verification."
+            Move-Item -LiteralPath $partialArchive -Destination $archive -Force
+        }
+
+        $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+        Assert-True ($archiveHash -eq $expectedHash) `
+            "Cached FFmpeg package failed SHA-256 verification."
+
+        $extractDirectory = Join-Path $CacheDirectory "ffmpeg-$version"
+        $toolset = Find-FFmpegToolsetUnderDirectory -Directory $extractDirectory
+        if ($null -eq $toolset) {
+            $extractStage = "$extractDirectory.extracting"
+            Remove-Item -LiteralPath $extractStage -Recurse -Force `
+                -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $extractStage -Force | Out-Null
+            Expand-Archive -LiteralPath $archive -DestinationPath $extractStage -Force
+            Remove-Item -LiteralPath $extractDirectory -Recurse -Force `
+                -ErrorAction SilentlyContinue
+            Move-Item -LiteralPath $extractStage -Destination $extractDirectory
+            $toolset = Find-FFmpegToolsetUnderDirectory -Directory $extractDirectory
+        }
+
+        Assert-True ($null -ne $toolset) `
+            "The verified FFmpeg archive did not contain ffmpeg.exe and ffprobe.exe together."
+        return $toolset
+    } finally {
+        $ProgressPreference = $oldProgressPreference
     }
-    if (${env:ProgramFiles(x86)}) {
-        $candidates.Add((Join-Path ${env:ProgramFiles(x86)} `
-            "ffmpeg\bin\ffmpeg.exe"))
-    }
-    if ($env:USERPROFILE) {
-        $candidates.Add((Join-Path $env:USERPROFILE `
-            "projects\Mega - SDK\mega-custom-app\bin\ffmpeg.exe"))
-    }
-
-    $pathCommand = Get-Command "ffmpeg.exe" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($pathCommand) { $candidates.Add($pathCommand.Source) }
-
-    $candidates.Add((Join-Path $VcpkgRoot `
-        "installed\x64-windows\tools\ffmpeg\ffmpeg.exe"))
-
-    return $candidates |
-        Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
-        Select-Object -First 1
 }
 
 try {
+    Assert-True (Test-Path -LiteralPath $FFmpegToolsScript -PathType Leaf) `
+        "FFmpeg resolver script is missing: $FFmpegToolsScript"
+    . $FFmpegToolsScript
+
     $runningApp = Get-Process -Name "MegaCustomGUI" -ErrorAction SilentlyContinue
     Assert-True (!$runningApp) `
         "MegaCustomGUI is running. Close every app window, wait 10 seconds, and retry."
@@ -213,13 +284,27 @@ try {
     Assert-True (Test-Path -LiteralPath $ctest -PathType Leaf) `
         "ctest.exe was not found next to the resolved CMake executable: $cmake"
 
-    $ffmpeg = Resolve-FFmpegExecutable -PortableDirectory $PortableDir `
-        -VcpkgRoot $VcpkgPath
-    Assert-True (![string]::IsNullOrWhiteSpace($ffmpeg)) `
-        "FFmpeg was not found beside the app, in its bin folder, on PATH, or under vcpkg."
-    $ffprobe = Join-Path (Split-Path -Parent $ffmpeg) "ffprobe.exe"
-    Assert-True (Test-Path -LiteralPath $ffprobe -PathType Leaf) `
-        "ffprobe.exe was not found next to FFmpeg: $ffmpeg"
+    $ffmpegToolset = Resolve-MegaCustomFFmpegToolset `
+        -PortableDirectory $PortableDir `
+        -VcpkgRoot $VcpkgPath `
+        -ProjectRoot $ProjectRoot `
+        -ExplicitDirectory $FFmpegDir
+    if ($null -eq $ffmpegToolset -and $ProvisionFFmpegIfMissing) {
+        $ffmpegCache = Join-Path $BuildDir "verified-tools\ffmpeg"
+        $ffmpegToolset = Get-VerifiedDownloadedFFmpegToolset `
+            -CacheDirectory $ffmpegCache
+    }
+    Assert-True ($null -ne $ffmpegToolset) `
+        ("A complete FFmpeg toolset was not found. Fast segments require ffmpeg.exe " +
+         "and ffprobe.exe in the same directory. Pass -FFmpegDir with a complete toolset " +
+         "or use -ProvisionFFmpegIfMissing.")
+    $ffmpeg = $ffmpegToolset.FFmpeg
+    $ffprobe = $ffmpegToolset.FFprobe
+
+    $ffmpegVersion = (& $ffmpeg -hide_banner -version 2>&1 | Select-Object -First 1)
+    Assert-True ($LASTEXITCODE -eq 0) "The resolved ffmpeg.exe could not be executed: $ffmpeg"
+    $ffprobeVersion = (& $ffprobe -hide_banner -version 2>&1 | Select-Object -First 1)
+    Assert-True ($LASTEXITCODE -eq 0) "The resolved ffprobe.exe could not be executed: $ffprobe"
 
     $runtimePaths = @(
         $PortableDir,
@@ -268,6 +353,14 @@ try {
     Write-Host "Running PowerShell registry regression test..." -ForegroundColor Yellow
     & $diagnosticTest
 
+    $ffmpegResolverTest = Join-Path $ProjectRoot `
+        "tests\WindowsFFmpegToolResolverTests.ps1"
+    Assert-True (Test-Path -LiteralPath $ffmpegResolverTest -PathType Leaf) `
+        "FFmpeg resolver regression script is missing: $ffmpegResolverTest"
+    Write-Host "Running PowerShell FFmpeg resolver regression test..." `
+        -ForegroundColor Yellow
+    & $ffmpegResolverTest
+
     $runningApp = Get-Process -Name "MegaCustomGUI" -ErrorAction SilentlyContinue
     Assert-True (!$runningApp) `
         "MegaCustomGUI was opened during the build. Close it and rerun; no application files were replaced."
@@ -286,24 +379,78 @@ try {
         "MegaCustomGUI-Before-Update-$stamp"
     New-Item -ItemType Directory -Path $backupDir | Out-Null
     Copy-Item -LiteralPath $PortableExe -Destination $backupDir
+    $PortableFFmpeg = Join-Path $PortableDir "ffmpeg.exe"
+    $PortableFFprobe = Join-Path $PortableDir "ffprobe.exe"
+    foreach ($runtimeTool in @($PortableFFmpeg, $PortableFFprobe)) {
+        if (Test-Path -LiteralPath $runtimeTool -PathType Leaf) {
+            Copy-Item -LiteralPath $runtimeTool -Destination $backupDir
+        }
+    }
     if (Test-Path -LiteralPath $LiveRegistry -PathType Leaf) {
         Get-ChildItem -LiteralPath $PortableDir -File |
             Where-Object { $_.Name -like "members.json*" } |
             Copy-Item -Destination $backupDir
     }
 
-    $builtHash = (Get-FileHash -LiteralPath $BuiltExe -Algorithm SHA256).Hash
-    $stagedExe = Join-Path $PortableDir "MegaCustomGUI.exe.update-$stamp"
-    Copy-Item -LiteralPath $BuiltExe -Destination $stagedExe
-    $stagedHash = (Get-FileHash -LiteralPath $stagedExe -Algorithm SHA256).Hash
-    Assert-True ($stagedHash -eq $builtHash) `
-        "The staged executable hash does not match the verified build. The old executable remains active."
+    $deploymentFiles = @(
+        [PSCustomObject]@{
+            Name = "ffprobe.exe"
+            Source = $ffprobe
+            Destination = $PortableFFprobe
+        },
+        [PSCustomObject]@{
+            Name = "ffmpeg.exe"
+            Source = $ffmpeg
+            Destination = $PortableFFmpeg
+        },
+        [PSCustomObject]@{
+            Name = "MegaCustomGUI.exe"
+            Source = $BuiltExe
+            Destination = $PortableExe
+        }
+    )
 
-    $atomicBackup = Join-Path $backupDir "MegaCustomGUI.exe.atomic-old"
-    [IO.File]::Replace($stagedExe, $PortableExe, $atomicBackup)
+    foreach ($deploymentFile in $deploymentFiles) {
+        $deploymentFile | Add-Member -NotePropertyName ExpectedHash `
+            -NotePropertyValue ((Get-FileHash -LiteralPath $deploymentFile.Source `
+                -Algorithm SHA256).Hash)
+        $samePath = $deploymentFile.Source.Equals($deploymentFile.Destination, `
+            [StringComparison]::OrdinalIgnoreCase)
+        $deploymentFile | Add-Member -NotePropertyName RequiresInstall `
+            -NotePropertyValue (!$samePath)
+        $deploymentFile | Add-Member -NotePropertyName StagePath `
+            -NotePropertyValue $null
+        if (!$samePath) {
+            $stagePath = "$($deploymentFile.Destination).update-$stamp"
+            Copy-Item -LiteralPath $deploymentFile.Source -Destination $stagePath
+            $stageHash = (Get-FileHash -LiteralPath $stagePath -Algorithm SHA256).Hash
+            Assert-True ($stageHash -eq $deploymentFile.ExpectedHash) `
+                "The staged $($deploymentFile.Name) hash does not match its verified source."
+            $deploymentFile.StagePath = $stagePath
+        }
+    }
+
+    foreach ($deploymentFile in $deploymentFiles) {
+        if (!$deploymentFile.RequiresInstall) { continue }
+        if (Test-Path -LiteralPath $deploymentFile.Destination -PathType Leaf) {
+            $atomicBackup = Join-Path $backupDir `
+                "$($deploymentFile.Name).atomic-old"
+            [IO.File]::Replace($deploymentFile.StagePath, `
+                $deploymentFile.Destination, $atomicBackup)
+        } else {
+            [IO.File]::Move($deploymentFile.StagePath, $deploymentFile.Destination)
+        }
+        $installedFileHash = (Get-FileHash -LiteralPath $deploymentFile.Destination `
+            -Algorithm SHA256).Hash
+        Assert-True ($installedFileHash -eq $deploymentFile.ExpectedHash) `
+            "Installed $($deploymentFile.Name) verification failed. Restore from $backupDir before launching."
+    }
+
     $installedHash = (Get-FileHash -LiteralPath $PortableExe -Algorithm SHA256).Hash
-    Assert-True ($installedHash -eq $builtHash) `
-        "Installed executable verification failed. Restore from $backupDir before launching."
+    $installedFFmpegHash = (Get-FileHash -LiteralPath $PortableFFmpeg `
+        -Algorithm SHA256).Hash
+    $installedFFprobeHash = (Get-FileHash -LiteralPath $PortableFFprobe `
+        -Algorithm SHA256).Hash
 
     $registryExistsAfter = Test-Path -LiteralPath $LiveRegistry -PathType Leaf
     Assert-True ($registryExistsAfter -eq $registryExistedBefore) `
@@ -328,7 +475,13 @@ try {
         RepositoryCommit = $head
         CppIntegrationTests = "PASSED"
         PowerShellRegistryTest = "PASSED"
-        FFmpeg = $ffmpeg
+        PowerShellFFmpegResolverTest = "PASSED"
+        FFmpeg = $PortableFFmpeg
+        FFmpegHash = $installedFFmpegHash
+        FFprobe = $PortableFFprobe
+        FFprobeHash = $installedFFprobeHash
+        FFmpegVersion = $ffmpegVersion
+        FFprobeVersion = $ffprobeVersion
         InstalledExecutable = $PortableExe
         InstalledExecutableHash = $installedHash
         RegistryWasModified = ($registryHashAfter -ne $registryHashBefore)
