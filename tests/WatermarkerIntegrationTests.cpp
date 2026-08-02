@@ -7,26 +7,114 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
-std::string quoteShellArgument(const std::string& value) {
 #ifdef _WIN32
-    std::string quoted = "\"";
-    for (char c : value) {
-        quoted += c == '"' ? "\\\"" : std::string(1, c);
+std::wstring utf8ToWide(const std::string& value) {
+    if (value.empty()) return {};
+    int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+        static_cast<int>(value.size()), nullptr, 0);
+    if (length <= 0) {
+        throw std::runtime_error("Could not convert a fixture process argument to UTF-16");
     }
-    return quoted + "\"";
+    std::wstring converted(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+        static_cast<int>(value.size()), converted.data(), length);
+    return converted;
+}
+
+std::wstring quoteWindowsArgument(const std::wstring& value) {
+    if (value.empty()) return L"\"\"";
+    if (value.find_first_of(L" \t\n\v\"") == std::wstring::npos) return value;
+
+    std::wstring quoted = L"\"";
+    size_t backslashCount = 0;
+    for (wchar_t character : value) {
+        if (character == L'\\') {
+            ++backslashCount;
+        } else if (character == L'"') {
+            quoted.append(backslashCount * 2 + 1, L'\\');
+            quoted.push_back(character);
+            backslashCount = 0;
+        } else {
+            quoted.append(backslashCount, L'\\');
+            backslashCount = 0;
+            quoted.push_back(character);
+        }
+    }
+    quoted.append(backslashCount * 2, L'\\');
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+int runCommand(const std::vector<std::string>& arguments, std::string& error) {
+    if (arguments.empty()) {
+        error = "No command arguments were provided";
+        return -1;
+    }
+
+    std::wstring commandLine;
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        if (index > 0) commandLine.push_back(L' ');
+        commandLine += quoteWindowsArgument(utf8ToWide(arguments[index]));
+    }
+    std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
+    mutableCommandLine.push_back(L'\0');
+    const std::wstring executable = utf8ToWide(arguments.front());
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    PROCESS_INFORMATION processInfo{};
+    const BOOL created = CreateProcessW(
+        executable.c_str(), mutableCommandLine.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo, &processInfo);
+    if (!created) {
+        error = "CreateProcessW failed with Windows error " + std::to_string(GetLastError());
+        return -1;
+    }
+
+    const DWORD waitResult = WaitForSingleObject(processInfo.hProcess, INFINITE);
+    DWORD exitCode = static_cast<DWORD>(-1);
+    if (waitResult != WAIT_OBJECT_0 || !GetExitCodeProcess(processInfo.hProcess, &exitCode)) {
+        error = "Could not read the fixture process exit code; Windows error "
+            + std::to_string(GetLastError());
+    }
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return static_cast<int>(exitCode);
+}
 #else
+std::string quoteShellArgument(const std::string& value) {
     std::string quoted = "'";
     for (char c : value) {
         quoted += c == '\'' ? "'\\''" : std::string(1, c);
     }
     return quoted + "'";
-#endif
 }
+
+int runCommand(const std::vector<std::string>& arguments, std::string& error) {
+    std::string command;
+    for (const std::string& argument : arguments) {
+        if (!command.empty()) command.push_back(' ');
+        command += quoteShellArgument(argument);
+    }
+    const int exitCode = std::system(command.c_str());
+    if (exitCode != 0) error = "fixture process exited with code " + std::to_string(exitCode);
+    return exitCode;
+}
+#endif
 
 std::string pathUtf8(const std::filesystem::path& path) {
 #ifdef _WIN32
@@ -100,13 +188,19 @@ int main() {
     fs::create_directories(outputDirectory);
 
     const std::string ffmpeg = MegaCustom::Watermarker::getFFmpegPath();
-    const std::string generateCommand = quoteShellArgument(ffmpeg) +
-        " -y -v error -f lavfi -i testsrc2=size=640x360:rate=30" +
-        " -f lavfi -i sine=frequency=880:sample_rate=48000" +
-        " -t 30 -c:v libx264 -pix_fmt yuv420p -g 60 -c:a aac " +
-        quoteShellArgument(pathUtf8(generatedInput));
-    if (std::system(generateCommand.c_str()) != 0 || !fs::exists(generatedInput)) {
-        return fail("could not generate the source fixture", root);
+    const std::vector<std::string> generateArguments = {
+        ffmpeg,
+        "-y", "-v", "error",
+        "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000",
+        "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-g", "60", "-c:a", "aac", pathUtf8(generatedInput)
+    };
+    std::string generationError;
+    const int generationExitCode = runCommand(generateArguments, generationError);
+    if (generationExitCode != 0 || !fs::exists(generatedInput)) {
+        return fail("could not generate the source fixture (exit code "
+            + std::to_string(generationExitCode) + "): " + generationError, root);
     }
     fs::copy_file(generatedInput, input, fs::copy_options::overwrite_existing);
 
