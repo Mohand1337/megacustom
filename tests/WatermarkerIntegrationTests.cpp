@@ -189,6 +189,25 @@ bool filesEqual(const std::filesystem::path& first, const std::filesystem::path&
     return true;
 }
 
+std::filesystem::path findTestFont() {
+#ifdef _WIN32
+    const char* windowsDirectory = std::getenv("WINDIR");
+    const std::filesystem::path font = std::filesystem::u8path(
+        windowsDirectory ? windowsDirectory : "C:\\Windows") / "Fonts" / "arial.ttf";
+    return std::filesystem::exists(font) ? font : std::filesystem::path();
+#else
+    const std::vector<std::filesystem::path> candidates = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) return candidate;
+    }
+    return {};
+#endif
+}
+
 int fail(const std::string& message, const std::filesystem::path& root) {
     std::cerr << "FAIL: " << message << "\n";
     std::error_code ec;
@@ -235,7 +254,10 @@ int main() {
     fs::create_directories(outputDirectory);
     fs::create_directories(customFont.parent_path());
 
-    const fs::path bundledFont = fs::u8path(MEGACUSTOM_TEST_FONT_PATH);
+    const fs::path bundledFont = findTestFont();
+    if (bundledFont.empty()) {
+        return fail("could not locate a system font for the custom-path fixture", root);
+    }
     std::error_code fontCopyError;
     fs::copy_file(bundledFont, customFont, fs::copy_options::overwrite_existing, fontCopyError);
     if (fontCopyError) {
