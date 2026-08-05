@@ -5,6 +5,8 @@
 #include "utils/DpiScaler.h"
 #include <QStyle>
 #include <QIcon>
+#include <QEvent>
+#include <QKeyEvent>
 
 namespace MegaCustom {
 
@@ -69,6 +71,7 @@ void TopToolbar::setupSearchSection()
     m_searchEdit->setMinimumWidth(180);
     m_searchEdit->setMaximumWidth(280);
     m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->installEventFilter(this);
     // Add search icon as leading action
     m_searchEdit->addAction(QIcon(":/icons/search.svg"), QLineEdit::LeadingPosition);
     connect(m_searchEdit, &QLineEdit::textChanged,
@@ -164,6 +167,25 @@ void TopToolbar::onSearchTextChanged(const QString& text)
 void TopToolbar::onSearchReturnPressed()
 {
     emit searchRequested(m_searchEdit->text());
+}
+
+bool TopToolbar::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_searchEdit) {
+        if (event->type() == QEvent::FocusIn) {
+            emit searchFocusGained();
+        } else if (event->type() == QEvent::FocusOut) {
+            emit searchFocusLost();
+        } else if (event->type() == QEvent::KeyPress) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() == Qt::Key_Escape) {
+                m_searchEdit->clearFocus();
+                keyEvent->accept();
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 QRect TopToolbar::searchWidgetGeometry() const

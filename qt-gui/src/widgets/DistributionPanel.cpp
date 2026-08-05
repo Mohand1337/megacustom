@@ -703,16 +703,31 @@ void DistributionPanel::setFileController(FileController* controller) {
     }
 
     m_fileController = controller;
+    m_cloudScanRequestId = 0;
+    m_cloudScanPending = false;
 
     if (m_fileController) {
-        connect(m_fileController, &FileController::fileListReceived,
-                this, &DistributionPanel::onFileListReceived);
-        // Re-enable scan button on error (e.g., folder not found)
-        connect(m_fileController, &FileController::loadingFinished,
-                this, [this]() {
-            if (!m_scanBtn->isEnabled()) {
-                m_scanBtn->setEnabled(true);
+        connect(m_fileController, &FileController::remoteListingReceived,
+                this, [this](quint64 requestId, const QString& path,
+                             const QVariantList& files) {
+            if (!m_cloudScanPending || requestId != m_cloudScanRequestId) {
+                return;
             }
+            m_cloudScanPending = false;
+            m_cloudScanRequestId = 0;
+            m_cloudScanPath = path;
+            onFileListReceived(files);
+        });
+        connect(m_fileController, &FileController::remoteListingFailed,
+                this, [this](quint64 requestId, const QString& path,
+                             const QString& error) {
+            if (!m_cloudScanPending || requestId != m_cloudScanRequestId) {
+                return;
+            }
+            m_cloudScanPending = false;
+            m_cloudScanRequestId = 0;
+            m_scanBtn->setEnabled(true);
+            m_statusLabel->setText(QString("Could not scan %1: %2").arg(path, error));
         });
     }
 }
@@ -2840,6 +2855,9 @@ void DistributionPanel::prepareForUpload(const QMap<QString, QStringList>& membe
 
 void DistributionPanel::onScanWmFolder() {
     const QString detectedIntent = autoDetectDistributionIntent();
+    m_cloudScanRequestId = 0;
+    m_cloudScanPending = false;
+    m_smartRouteReviewPending = false;
 
     // Dispatch to local scan if Local mode is selected
     const bool isLocal = m_sourceTypeCombo &&
@@ -2871,7 +2889,11 @@ void DistributionPanel::onScanWmFolder() {
         return;
     }
 
-    QString wmPath = m_wmPathEdit->text();
+    QString wmPath = m_wmPathEdit->text().trimmed();
+    if (wmPath.isEmpty()) {
+        m_statusLabel->setText("Enter a cloud source folder path");
+        return;
+    }
     m_statusLabel->setText(detectedIntent.isEmpty()
         ? QString("Scanning %1...").arg(wmPath)
         : QString("Scanning %1... %2").arg(wmPath, detectedIntent));
@@ -2879,13 +2901,18 @@ void DistributionPanel::onScanWmFolder() {
     m_wmFolders.clear();
     m_memberTable->setRowCount(0);
 
-    // Request folder listing via FileController
-    // The result will come back via onFileListReceived slot
-    m_fileController->refreshRemote(wmPath);
+    // Distribution owns this request ID; Cloud Drive navigation uses a separate channel.
+    m_cloudScanPath = wmPath;
+    m_cloudScanPending = true;
+    m_cloudScanRequestId = m_fileController->requestRemoteListing(wmPath);
 }
 
 void DistributionPanel::onSourceTypeChanged(int /*index*/) {
     if (!m_sourceTypeCombo) return;
+    m_cloudScanRequestId = 0;
+    m_cloudScanPending = false;
+    m_smartRouteReviewPending = false;
+    if (m_scanBtn) m_scanBtn->setEnabled(true);
     const bool isLocal = m_sourceTypeCombo->currentData().toString() == "local";
     if (m_browseLocalBtn) m_browseLocalBtn->setVisible(isLocal);
     if (m_wmPathEdit) {
@@ -2915,6 +2942,9 @@ void DistributionPanel::onBrowseLocalFolder() {
 }
 
 void DistributionPanel::onScanLocalFolder() {
+    m_cloudScanRequestId = 0;
+    m_cloudScanPending = false;
+    m_smartRouteReviewPending = false;
     m_controllerActive = false;
     m_modeIndicator->setText("Mode: Local Upload");
     m_modeIndicator->setProperty("mode", "active");
@@ -3048,12 +3078,9 @@ void DistributionPanel::onScanLocalFolder() {
         }
     }
 
-    if (smartRouted > 0) {
-        SmartRouteReviewDialog reviewDialog(this);
-        reviewDialog.setRoutes(m_wmFolders, m_registry);
-        if (reviewDialog.exec() == QDialog::Accepted) {
-            m_wmFolders = reviewDialog.getReviewedFolders();
-        }
+    m_smartRouteReviewPending = smartRouted > 0;
+    if (m_smartRouteReviewPending && isVisible()) {
+        reviewPendingSmartRoutes();
     }
 
     int matched = 0, unmatched = 0;
@@ -3072,7 +3099,8 @@ void DistributionPanel::onScanLocalFolder() {
         ? QString(" Audit: %1 blockers.").arg(blockers)
         : (warnings > 0 ? QString(" Audit: %1 warnings.").arg(warnings) : QString(" Audit clean."));
     m_statsLabel->setText(statsText);
-    m_statusLabel->setText("Local scan complete." + auditSuffix);
+    m_statusLabel->setText("Local scan complete." + auditSuffix
+        + (m_smartRouteReviewPending ? " Smart Route review pending." : QString()));
     updateEmptyState();
 }
 
@@ -3155,9 +3183,10 @@ void DistributionPanel::populateBroadcastTable(const QString& sourcePath) {
 
 void DistributionPanel::onFileListReceived(const QVariantList& files) {
     m_scanBtn->setEnabled(true);
+    m_cloudScanPending = false;
     m_wmFolders.clear();
 
-    QString wmBasePath = m_wmPathEdit->text();
+    QString wmBasePath = m_cloudScanPath.isEmpty() ? m_wmPathEdit->text() : m_cloudScanPath;
     if (!wmBasePath.endsWith("/")) wmBasePath += "/";
 
     // Extract timestamp if present
@@ -3238,13 +3267,11 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
         }
     }
 
-    // Show Smart Route Review Dialog if any routes were detected
-    if (smartRouted > 0) {
-        SmartRouteReviewDialog reviewDialog(this);
-        reviewDialog.setRoutes(m_wmFolders, m_registry);
-        if (reviewDialog.exec() == QDialog::Accepted) {
-            m_wmFolders = reviewDialog.getReviewedFolders();
-        }
+    // A late scan may finish after the user leaves Distribution. Keep the review
+    // pending and present it only inside the visible Distribution workflow.
+    m_smartRouteReviewPending = smartRouted > 0;
+    if (m_smartRouteReviewPending && isVisible()) {
+        reviewPendingSmartRoutes();
     }
 
     // Update stats
@@ -3267,7 +3294,29 @@ void DistributionPanel::onFileListReceived(const QVariantList& files) {
         ? QString(" Audit: %1 blockers.").arg(blockers)
         : (warnings > 0 ? QString(" Audit: %1 warnings.").arg(warnings) : QString(" Audit clean."));
     m_statsLabel->setText(statsText);
-    m_statusLabel->setText("Scan complete." + auditSuffix);
+    m_statusLabel->setText("Scan complete." + auditSuffix
+        + (m_smartRouteReviewPending ? " Smart Route review pending." : QString()));
+}
+
+bool DistributionPanel::reviewPendingSmartRoutes() {
+    if (!m_smartRouteReviewPending) {
+        return true;
+    }
+    if (!isVisible() || !window() || !window()->isActiveWindow()) {
+        return false;
+    }
+
+    SmartRouteReviewDialog reviewDialog(this);
+    reviewDialog.setRoutes(m_wmFolders, m_registry);
+    if (reviewDialog.exec() != QDialog::Accepted) {
+        m_statusLabel->setText(
+            "Smart Route review is still pending. Review it before starting Distribution.");
+        return false;
+    }
+
+    m_wmFolders = reviewDialog.getReviewedFolders();
+    m_smartRouteReviewPending = false;
+    return true;
 }
 
 void DistributionPanel::populateTable() {
@@ -4218,6 +4267,13 @@ void DistributionPanel::onStartDistribution() {
         m_distController->uploadToMembers(m_pendingMemberFileMap);
         m_pendingMemberFileMap.clear();
         return;
+    }
+
+    if (m_smartRouteReviewPending) {
+        if (!reviewPendingSmartRoutes()) {
+            return;
+        }
+        populateTable();
     }
 
     // Check for a local-only batch: only CloudCopier is optional in that case

@@ -8,6 +8,8 @@
 #include <QFuture>
 #include <QVector>
 
+#include <atomic>
+
 namespace MegaCustom {
 
 // Forward declaration
@@ -25,6 +27,7 @@ public:
     void navigateToLocal(const QString& path);
     void navigateToRemote(const QString& path);
     void refreshRemote(const QString& path);
+    quint64 requestRemoteListing(const QString& path);
     void createRemoteFolder(const QString& name);
     void createRemoteFile(const QString& name);
     void deleteRemote(const QString& path);
@@ -73,6 +76,10 @@ signals:
 
     // Response signals
     void fileListReceived(const QVariantList& files);
+    void remoteListingReceived(quint64 requestId, const QString& path,
+                               const QVariantList& files);
+    void remoteListingFailed(quint64 requestId, const QString& path,
+                             const QString& error);
     void searchResultsReceived(const QVariantList& results);
     void uploadProgress(const QString& transferId, qint64 bytesTransferred, qint64 totalBytes);
     void downloadProgress(const QString& transferId, qint64 bytesTransferred, qint64 totalBytes);
@@ -90,6 +97,7 @@ private:
     QString m_currentLocalPath;
     QString m_currentRemotePath;
     QVector<QFuture<void>> m_backgroundTasks;
+    std::atomic<quint64> m_nextRemoteListingRequestId{1};
 };
 
 } // namespace MegaCustom

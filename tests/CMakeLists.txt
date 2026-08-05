@@ -39,6 +39,29 @@ add_test(
 set_tests_properties(persistence_integration PROPERTIES TIMEOUT 30)
 
 if(TARGET Qt6::Core)
+    add_executable(watermark_diagnostics_tests
+        WatermarkDiagnosticsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qt-gui/src/utils/WatermarkDiagnostics.cpp
+    )
+
+    set_target_properties(watermark_diagnostics_tests PROPERTIES
+        WIN32_EXECUTABLE OFF
+    )
+
+    target_include_directories(watermark_diagnostics_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qt-gui/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qt-gui/src/utils
+    )
+
+    target_link_libraries(watermark_diagnostics_tests PRIVATE Qt6::Core)
+
+    add_test(
+        NAME watermark_diagnostics
+        COMMAND watermark_diagnostics_tests
+    )
+
+    set_tests_properties(watermark_diagnostics PROPERTIES TIMEOUT 30)
+
     add_executable(member_registry_integration_tests
         MemberRegistryIntegrationTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../qt-gui/src/utils/MemberRegistry.cpp

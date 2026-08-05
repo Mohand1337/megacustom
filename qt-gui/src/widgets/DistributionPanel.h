@@ -147,6 +147,7 @@ private:
     void showDistributionSettingsDialog();
     QString autoDetectDistributionIntent();
     ContentType routeCourseTypeFromTemplate() const;
+    bool reviewPendingSmartRoutes();
     QString buildDistributionAudit(bool includeDetails = true, int* blockerCount = nullptr, int* warningCount = nullptr);
     bool confirmDistributionAudit();
     void updateCurrentJobProgress(const QString& summary = {});
@@ -242,6 +243,10 @@ private:
     bool m_isPaused = false;
     bool m_isMoving = false;
     bool m_controllerActive = false;  // True when DistributionController is driving the UI
+    quint64 m_cloudScanRequestId = 0;
+    bool m_cloudScanPending = false;
+    QString m_cloudScanPath;
+    bool m_smartRouteReviewPending = false;
     QString m_currentJobId;
     QString m_retrySourceJobId;
     bool m_currentJobCancelled = false;

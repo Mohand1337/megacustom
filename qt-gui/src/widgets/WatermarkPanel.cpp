@@ -8,6 +8,7 @@
 #include "utils/MegaUploadUtils.h"
 #include "utils/OperationJobStore.h"
 #include "utils/Settings.h"
+#include "utils/WatermarkDiagnostics.h"
 #include "core/LogManager.h"
 #include "features/Watermarker.h"
 #include "controllers/WatermarkerController.h"
@@ -48,6 +49,20 @@
 #include <functional>
 
 namespace MegaCustom {
+
+static FastSegmentDiagnostics collectFastSegmentDiagnostics(
+    const QList<WatermarkFileInfo>& files,
+    bool requested) {
+    QList<WatermarkDiagnosticRow> rows;
+    rows.reserve(files.size());
+    for (const WatermarkFileInfo& info : files) {
+        if (info.isHeader) {
+            continue;
+        }
+        rows.append({info.filePath, info.processingMode, info.diagnostic});
+    }
+    return summarizeFastSegmentDiagnostics(rows, requested);
+}
 
 static QString watermarkSettingsFile() {
     const QString path = Settings::instance().configDirectory() + "/watermark.ini";
@@ -1828,10 +1843,6 @@ void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QStrin
     int completeCount = 0;
     int uploadedCount = 0;
     int errorCount = 0;
-    int fastCacheHitCount = 0;
-    int fastCacheBuildCount = 0;
-    int fullEncodeCount = 0;
-    int fastFallbackCount = 0;
     for (const WatermarkFileInfo& info : m_files) {
         if (info.isHeader) {
             continue;
@@ -1843,15 +1854,13 @@ void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QStrin
         else if (info.status == "uploaded") ++uploadedCount;
         else if (info.status == "error") ++errorCount;
 
-        if (info.processingMode == "fast_segment_cache_hit") ++fastCacheHitCount;
-        else if (info.processingMode == "fast_segment_cache_build") ++fastCacheBuildCount;
-        else if (info.processingMode == "full_encode_fallback") {
-            ++fullEncodeCount;
-            ++fastFallbackCount;
-        } else if (info.processingMode == "full_encode") {
-            ++fullEncodeCount;
-        }
     }
+
+    const bool fastRequested = record.metadata.contains("fastSegmentedEncode")
+        ? record.metadata.value("fastSegmentedEncode").toBool()
+        : (m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked());
+    const FastSegmentDiagnostics fastDiagnostics =
+        collectFastSegmentDiagnostics(m_files, fastRequested);
 
     QJsonObject metadata = record.metadata;
     metadata["watermarkCheckpointVersion"] = 2;
@@ -1864,10 +1873,7 @@ void WatermarkPanel::saveWatermarkCheckpoint(const QString& reason, const QStrin
     metadata["watermarkCompleteRows"] = completeCount;
     metadata["watermarkUploadedRows"] = uploadedCount;
     metadata["watermarkErrorRows"] = errorCount;
-    metadata["watermarkFastCacheHitRows"] = fastCacheHitCount;
-    metadata["watermarkFastCacheBuildRows"] = fastCacheBuildCount;
-    metadata["watermarkFullEncodeRows"] = fullEncodeCount;
-    metadata["watermarkFastFallbackRows"] = fastFallbackCount;
+    applyFastSegmentDiagnosticsToMetadata(metadata, fastDiagnostics);
 
     OperationJobStore::instance().updateMetadata(targetJobId, metadata, forcePersist);
     m_checkpointDirtyEvents = 0;
@@ -4108,6 +4114,27 @@ QString WatermarkPanel::writeWatermarkCompletionReport(int successCount, int fai
     stream << "Output root: " << rootDir << "\n";
     stream << "Succeeded rows: " << successCount << "\n";
     stream << "Failed rows: " << failCount << "\n\n";
+
+    const FastSegmentDiagnostics fastDiagnostics = collectFastSegmentDiagnostics(
+        m_files,
+        m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked());
+    stream << "Fast Segments requested: " << (fastDiagnostics.requested ? "Yes" : "No") << "\n";
+    stream << "Fast Segments outcome: " << fastDiagnostics.outcome << "\n";
+    stream << "Fast Segments attempted rows: " << fastDiagnostics.attemptedRows() << "\n";
+    stream << "Fast Segments accelerated rows: " << fastDiagnostics.acceleratedRows() << "\n";
+    stream << "Fast Segments cache built rows: " << fastDiagnostics.cacheBuildRows << "\n";
+    stream << "Fast Segments cache reused rows: " << fastDiagnostics.cacheHitRows << "\n";
+    stream << "Fast Segments full fallback rows: " << fastDiagnostics.fallbackRows << "\n";
+    stream << "Fast Segments summary: " << fastDiagnostics.summary << "\n";
+    if (!fastDiagnostics.fallbackReasons.isEmpty()) {
+        stream << "Fast Segments fallback reasons:\n";
+        for (const FastSegmentFallbackReason& reason : fastDiagnostics.fallbackReasons) {
+            stream << "  - " << reason.rows << " row(s), " << reason.sourceFiles
+                   << " source file(s): " << reason.reason << "\n";
+        }
+    }
+    stream << "\n";
+
     if (missingCompletedOutputs > 0) {
         stream << "Completed rows with missing local outputs: " << missingCompletedOutputs << "\n\n";
     }
@@ -5059,6 +5086,10 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         finalFailCount = failCount;
     }
 
+    const FastSegmentDiagnostics fastDiagnostics = collectFastSegmentDiagnostics(
+        m_files,
+        m_fastSegmentedCheck && m_fastSegmentedCheck->isChecked());
+
     emit watermarkCompleted(finalSuccessCount, finalFailCount);
 
     AnimationHelper::animateProgress(m_progressBar, 100);
@@ -5076,6 +5107,7 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
             metadata["watermarkManualUploadBlocked"] = finalFailCount > 0;
             metadata["watermarkFinalSuccessCount"] = finalSuccessCount;
             metadata["watermarkFinalFailCount"] = finalFailCount;
+            applyFastSegmentDiagnosticsToMetadata(metadata, fastDiagnostics);
             OperationJobStore::instance().createJob(
                 OperationJobType::Watermark,
                 record.title,
@@ -5085,10 +5117,30 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
         }
 
         saveWatermarkCheckpoint(finalFailCount > 0 ? "finished_with_errors" : "completed", {}, true);
+        QString jobSummary = finalFailCount > 0
+            ? QString("Watermark completed with %1 failed").arg(finalFailCount)
+            : QString("Watermark complete: %1 succeeded").arg(finalSuccessCount);
+        if (fastDiagnostics.requested) {
+            jobSummary += " " + fastDiagnostics.summary;
+        }
+
+        if (fastDiagnostics.requested) {
+            const QJsonObject fastDetails = fastSegmentDiagnosticsToJson(fastDiagnostics);
+            LogManager::instance().logWithContext(
+                fastDiagnostics.fallbackRows > 0 ? LogLevel::Warning : LogLevel::Info,
+                LogCategory::Watermark,
+                "watermark.fast_segments_summary",
+                fastDiagnostics.summary.toStdString(),
+                "",
+                "",
+                m_currentJobId.toStdString(),
+                QString::fromUtf8(QJsonDocument(fastDetails).toJson(QJsonDocument::Compact)).toStdString());
+        }
+
         if (finalFailCount > 0) {
             OperationJobStore::instance().markFailed(
                 m_currentJobId,
-                QString("Watermark completed with %1 failed").arg(finalFailCount),
+                jobSummary,
                 finalSuccessCount,
                 finalFailCount);
         } else {
@@ -5097,25 +5149,30 @@ void WatermarkPanel::onWorkerFinished(int successCount, int failCount) {
                 finalSuccessCount,
                 finalFailCount,
                 0,
-                QString("Watermark complete: %1 succeeded").arg(finalSuccessCount));
+                jobSummary);
         }
     }
 
+    const QString fastCompletionDetail = fastDiagnostics.requested
+        ? QString("\n\n%1").arg(fastDiagnostics.summary)
+        : QString();
     if (finalFailCount == 0) {
         QMessageBox::information(this, "Complete",
-            QString("Successfully watermarked %1 %2.\n\nCompletion manifest:\n%3")
+            QString("Successfully watermarked %1 %2.%4\n\nCompletion manifest:\n%3")
                 .arg(finalSuccessCount)
                 .arg(finalSuccessCount == 1 ? "file" : "files")
-                .arg(reportPath));
+                .arg(reportPath)
+                .arg(fastCompletionDetail));
     } else {
         QMessageBox::warning(this, "Complete with Errors",
             QString("This watermark session is incomplete: %1 succeeded, %2 failed.\n\n"
                     "Do not manually upload these member folders yet.\n\n"
                     "A DO_NOT_UPLOAD report was written here:\n%3\n\n"
-                    "Each incomplete member folder also has a marker file listing its missing outputs.")
+                    "Each incomplete member folder also has a marker file listing its missing outputs.%4")
                 .arg(finalSuccessCount)
                 .arg(finalFailCount)
-                .arg(reportPath));
+                .arg(reportPath)
+                .arg(fastCompletionDetail));
     }
 
     m_currentJobId.clear();

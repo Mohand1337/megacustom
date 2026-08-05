@@ -1653,6 +1653,8 @@ void MainWindow::onTransferFailed(const QString& file, const QString& error)
 
 void MainWindow::onNavigationItemClicked(int item)
 {
+    dismissSearchPanel();
+
     // Map NavigationItem enum to content stack index
     // CloudDrive=0, FolderMapper=1, MultiUploader=2, CloudCopier=3, SmartSync=4,
     // MemberRegistry=5, Distribution=6, Watermark=7, ContentManager=8,
@@ -1687,6 +1689,8 @@ void MainWindow::onNavigationItemClicked(int item)
 
 void MainWindow::onBreadcrumbPathClicked(const QString& path)
 {
+    dismissSearchPanel();
+
     // Navigate to path from breadcrumb
     if (m_remoteExplorer && m_isLoggedIn) {
         m_remoteExplorer->navigateTo(path);
@@ -1716,6 +1720,8 @@ void MainWindow::onSearchTextChanged(const QString& text)
 
 void MainWindow::onGlobalSearchRequested(const QString& text)
 {
+    dismissSearchPanel();
+
     if (text.isEmpty()) {
         return;
     }
@@ -1732,6 +1738,8 @@ void MainWindow::onGlobalSearchRequested(const QString& text)
 
 void MainWindow::onSearchResultsReceived(const QVariantList& results)
 {
+    dismissSearchPanel();
+
     qDebug() << "Search results received:" << results.size() << "items";
 
     // Display results in the remote explorer
@@ -1859,6 +1867,8 @@ void MainWindow::showSearchPanel()
         return;
     }
 
+    ++m_searchPanelVisibilityGeneration;
+
     // Position panel below search field
     QPoint globalPos = m_topToolbar->searchWidgetGlobalPos();
 
@@ -1876,12 +1886,22 @@ void MainWindow::showSearchPanel()
 void MainWindow::hideSearchPanel()
 {
     if (m_searchPanel) {
+        const quint64 hideGeneration = ++m_searchPanelVisibilityGeneration;
         // Small delay to allow click events to process first
-        QTimer::singleShot(150, this, [this]() {
-            if (m_searchPanel && !m_searchPanel->underMouse()) {
+        QTimer::singleShot(150, this, [this, hideGeneration]() {
+            if (hideGeneration == m_searchPanelVisibilityGeneration
+                && m_searchPanel && !m_searchPanel->underMouse()) {
                 m_searchPanel->hide();
             }
         });
+    }
+}
+
+void MainWindow::dismissSearchPanel()
+{
+    ++m_searchPanelVisibilityGeneration;
+    if (m_searchPanel) {
+        m_searchPanel->hide();
     }
 }
 
@@ -1889,10 +1909,7 @@ void MainWindow::onSearchResultActivated(const QString& handle, const QString& p
 {
     qDebug() << "Search result activated - handle:" << handle << "path:" << path << "isFolder:" << isFolder;
 
-    // Hide the search panel
-    if (m_searchPanel) {
-        m_searchPanel->hide();
-    }
+    dismissSearchPanel();
 
     // Navigate to the result
     if (m_remoteExplorer && m_isLoggedIn) {

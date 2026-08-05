@@ -173,6 +173,62 @@ void FileController::refreshRemote(const QString& path) {
     }));
 }
 
+quint64 FileController::requestRemoteListing(const QString& path) {
+    const quint64 requestId = m_nextRemoteListingRequestId.fetch_add(1);
+    const QString targetPath = path.trimmed().isEmpty() ? "/" : path.trimmed();
+    mega::MegaApi* megaApi = getMegaApiForController(m_megaApi);
+
+    if (!megaApi || megaApi->isLoggedIn() <= 0) {
+        const QString error = megaApi ? "Not logged in" : "MegaApi not initialized";
+        QMetaObject::invokeMethod(this, [this, requestId, targetPath, error]() {
+            emit remoteListingFailed(requestId, targetPath, error);
+        }, Qt::QueuedConnection);
+        return requestId;
+    }
+
+    trackTask(QtConcurrent::run([this, requestId, targetPath, megaApi]() {
+        MegaNodePtr folderNode;
+        if (targetPath == "/") {
+            folderNode.reset(megaApi->getRootNode());
+        } else {
+            folderNode.reset(megaApi->getNodeByPath(targetPath.toUtf8().constData()));
+        }
+
+        if (!folderNode) {
+            QMetaObject::invokeMethod(this, [this, requestId, targetPath]() {
+                emit remoteListingFailed(requestId, targetPath, "Folder not found");
+            }, Qt::QueuedConnection);
+            return;
+        }
+
+        MegaNodeListPtr children(megaApi->getChildren(folderNode.get()));
+        QVariantList files;
+        if (children) {
+            for (int i = 0; i < children->size(); ++i) {
+                mega::MegaNode* node = children->get(i);
+                if (!node) {
+                    continue;
+                }
+                QVariantMap fileInfo;
+                const QString nodeName = QString::fromUtf8(node->getName());
+                fileInfo["name"] = nodeName;
+                fileInfo["path"] = (targetPath == "/" ? "/" : targetPath + "/") + nodeName;
+                fileInfo["size"] = static_cast<qint64>(node->getSize());
+                fileInfo["modified"] = static_cast<qint64>(node->getModificationTime());
+                fileInfo["isFolder"] = node->isFolder();
+                fileInfo["handle"] = QString::number(node->getHandle());
+                files.append(fileInfo);
+            }
+        }
+
+        QMetaObject::invokeMethod(this, [this, requestId, targetPath, files]() {
+            emit remoteListingReceived(requestId, targetPath, files);
+        }, Qt::QueuedConnection);
+    }));
+
+    return requestId;
+}
+
 void FileController::createRemoteFolder(const QString& name) {
     qDebug() << "Creating remote folder:" << name;
 

@@ -373,6 +373,7 @@ private:
     bool canSwitchAccounts();
     void rebindAccountControllers();
     void scheduleControllerRebind();
+    void dismissSearchPanel();
 
     /**
      * Refresh remote UI and rebuild the cloud search index after rename batches.
@@ -414,6 +415,7 @@ private:
     CloudSearchIndex* m_searchIndex;
     AdvancedSearchPanel* m_advancedSearchPanel;
     QTimer* m_postRenameRefreshTimer;
+    quint64 m_searchPanelVisibilityGeneration = 0;
 
     // Cross-account components
     CrossAccountLogPanel* m_crossAccountLogPanel;

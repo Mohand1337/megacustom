@@ -3,6 +3,7 @@
 #include "core/LogManager.h"
 #include "utils/MemberRegistry.h"
 #include "utils/CopyHelper.h"
+#include "utils/WatermarkDiagnostics.h"
 #include "styles/ThemeManager.h"
 #include <QApplication>
 #include <QClipboard>
@@ -1502,7 +1503,89 @@ QString LogViewerPanel::formatJobRecordDetails(const OperationJobRecord& record)
         stream << "Destinations: " << record.destinationRoots.join(" | ") << "\n";
     }
     if (!record.metadata.isEmpty()) {
+        const bool fastRequested = record.metadata.value("watermarkFastRequested").toBool(
+            record.metadata.value("fastSegmentedEncode").toBool(false));
+        QList<WatermarkDiagnosticRow> checkpointRows;
+        const QJsonArray serializedRows = record.metadata.value("watermarkRows").toArray();
+        checkpointRows.reserve(serializedRows.size());
+        for (const QJsonValue& value : serializedRows) {
+            const QJsonObject row = value.toObject();
+            if (row.value("isHeader").toBool(false)) {
+                continue;
+            }
+            checkpointRows.append({
+                row.value("sourcePath").toString(),
+                row.value("processingMode").toString(),
+                row.value("diagnostic").toString()
+            });
+        }
+        const bool reconstructedFastDiagnostics = !checkpointRows.isEmpty();
+        const FastSegmentDiagnostics checkpointDiagnostics =
+            summarizeFastSegmentDiagnostics(checkpointRows, fastRequested);
+        const bool hasFastDiagnostics = fastRequested
+            || record.metadata.contains("watermarkFastOutcome")
+            || record.metadata.contains("watermarkFastFallbackRows")
+            || reconstructedFastDiagnostics;
+        if (hasFastDiagnostics) {
+            const int built = reconstructedFastDiagnostics
+                ? checkpointDiagnostics.cacheBuildRows
+                : record.metadata.value("watermarkFastCacheBuildRows").toInt();
+            const int reused = reconstructedFastDiagnostics
+                ? checkpointDiagnostics.cacheHitRows
+                : record.metadata.value("watermarkFastCacheHitRows").toInt();
+            const int fallback = reconstructedFastDiagnostics
+                ? checkpointDiagnostics.fallbackRows
+                : record.metadata.value("watermarkFastFallbackRows").toInt();
+            const int accelerated = reconstructedFastDiagnostics
+                ? checkpointDiagnostics.acceleratedRows()
+                : record.metadata.value("watermarkFastAcceleratedRows").toInt(built + reused);
+            const int attempted = reconstructedFastDiagnostics
+                ? checkpointDiagnostics.attemptedRows()
+                : record.metadata.value("watermarkFastAttemptRows").toInt(accelerated + fallback);
+            QString outcome = record.metadata.value("watermarkFastOutcome").toString();
+            if (reconstructedFastDiagnostics) {
+                outcome = checkpointDiagnostics.outcome;
+            }
+            if (outcome.isEmpty()) {
+                if (!fastRequested) outcome = "not_requested";
+                else if (attempted == 0) outcome = "no_video_attempts";
+                else if (fallback == 0) outcome = "accelerated";
+                else if (accelerated == 0) outcome = "all_fallback";
+                else outcome = "partial_fallback";
+            }
+
+            stream << "Fast Segments: " << outcome << "\n";
+            stream << "Fast Segment Rows: " << attempted << " attempted, "
+                   << accelerated << " accelerated (" << built << " cache built, "
+                   << reused << " cache reused), " << fallback << " full fallback\n";
+            const QString fastSummary = reconstructedFastDiagnostics
+                ? checkpointDiagnostics.summary
+                : record.metadata.value("watermarkFastSummary").toString();
+            if (!fastSummary.isEmpty()) {
+                stream << "Fast Segment Summary: " << fastSummary << "\n";
+            }
+            const QJsonArray reasons = reconstructedFastDiagnostics
+                ? fastSegmentFallbackReasonsToJson(checkpointDiagnostics)
+                : record.metadata.value("watermarkFastFallbackReasons").toArray();
+            if (!reasons.isEmpty()) {
+                stream << "Fast Segment Fallback Reasons:\n";
+                for (const QJsonValue& value : reasons) {
+                    const QJsonObject reason = value.toObject();
+                    stream << "  - " << reason.value("rows").toInt() << " row(s), "
+                           << reason.value("sourceFiles").toInt() << " source file(s): "
+                           << reason.value("reason").toString() << "\n";
+                }
+            } else if (fallback > 0) {
+                stream << "Fast Segment Fallback Reasons: not captured by this job record\n";
+            }
+            if (reconstructedFastDiagnostics
+                && !record.metadata.contains("watermarkFastOutcome")) {
+                stream << "Fast Segment Diagnostics Source: reconstructed from saved checkpoint rows\n";
+            }
+        }
+
         QJsonObject displayMetadata = record.metadata;
+        displayMetadata.remove("watermarkFastFallbackReasons");
         QStringList omitted;
         auto omitArray = [&displayMetadata, &omitted](const QString& key,
                                                        const QString& label) {
