@@ -768,6 +768,31 @@ std::string ffmpegFilterEscape(const std::string& text) {
     return result;
 }
 
+#ifdef _WIN32
+std::string windowsAsciiShortPath(const std::string& utf8Path) {
+    const std::wstring widePath = utf8ToWideString(utf8Path);
+    const DWORD required = GetShortPathNameW(widePath.c_str(), nullptr, 0);
+    if (required == 0) {
+        return {};
+    }
+
+    std::vector<wchar_t> shortPath(static_cast<size_t>(required) + 1, L'\0');
+    const DWORD length = GetShortPathNameW(
+        widePath.c_str(), shortPath.data(), static_cast<DWORD>(shortPath.size()));
+    if (length == 0 || length >= shortPath.size()) {
+        return {};
+    }
+
+    const std::wstring value(shortPath.data(), length);
+    if (std::any_of(value.begin(), value.end(), [](wchar_t character) {
+            return character > 0x7f;
+        })) {
+        return {};
+    }
+    return wideToUtf8String(value);
+}
+#endif
+
 std::string drawtextFontOption(const std::string& configuredPath) {
     std::string fontFilePath = configuredPath;
 #ifdef _WIN32
@@ -779,6 +804,20 @@ std::string drawtextFontOption(const std::string& configuredPath) {
         const std::string arialPath = fontsDirectory + "\\arial.ttf";
         if (fileExists(arialPath)) {
             fontFilePath = arialPath;
+        }
+    }
+
+    // FreeType's Windows file loader cannot reliably open a non-ASCII font
+    // filename received through drawtext, even though FFmpeg itself accepts
+    // Unicode input and output arguments. Prefer the existing DOS alias when
+    // one is available; no font is copied and ASCII paths remain unchanged.
+    if (!fontFilePath.empty()
+        && std::any_of(fontFilePath.begin(), fontFilePath.end(), [](unsigned char character) {
+            return character > 0x7f;
+        })) {
+        const std::string shortPath = windowsAsciiShortPath(fontFilePath);
+        if (!shortPath.empty()) {
+            fontFilePath = shortPath;
         }
     }
 #endif
