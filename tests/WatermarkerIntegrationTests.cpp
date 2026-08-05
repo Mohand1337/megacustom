@@ -74,16 +74,51 @@ int runCommand(const std::vector<std::string>& arguments, std::string& error) {
     mutableCommandLine.push_back(L'\0');
     const std::wstring executable = utf8ToWide(arguments.front());
 
-    STARTUPINFOW startupInfo{};
-    startupInfo.cb = sizeof(startupInfo);
-    PROCESS_INFORMATION processInfo{};
-    const BOOL created = CreateProcessW(
-        executable.c_str(), mutableCommandLine.data(), nullptr, nullptr, FALSE,
-        CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo, &processInfo);
-    if (!created) {
-        error = "CreateProcessW failed with Windows error " + std::to_string(GetLastError());
+    SECURITY_ATTRIBUTES pipeSecurity{};
+    pipeSecurity.nLength = sizeof(pipeSecurity);
+    pipeSecurity.bInheritHandle = TRUE;
+    HANDLE outputRead = nullptr;
+    HANDLE outputWrite = nullptr;
+    if (!CreatePipe(&outputRead, &outputWrite, &pipeSecurity, 0)) {
+        error = "CreatePipe failed with Windows error " + std::to_string(GetLastError());
         return -1;
     }
+    if (!SetHandleInformation(outputRead, HANDLE_FLAG_INHERIT, 0)) {
+        const DWORD pipeError = GetLastError();
+        CloseHandle(outputRead);
+        CloseHandle(outputWrite);
+        error = "SetHandleInformation failed with Windows error "
+            + std::to_string(pipeError);
+        return -1;
+    }
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startupInfo.hStdOutput = outputWrite;
+    startupInfo.hStdError = outputWrite;
+    PROCESS_INFORMATION processInfo{};
+    const BOOL created = CreateProcessW(
+        executable.c_str(), mutableCommandLine.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startupInfo, &processInfo);
+    const DWORD createError = created ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(outputWrite);
+    if (!created) {
+        CloseHandle(outputRead);
+        error = "CreateProcessW failed with Windows error " + std::to_string(createError);
+        return -1;
+    }
+
+    std::string processOutput;
+    std::thread outputReader([&]() {
+        char buffer[4096];
+        DWORD bytesRead = 0;
+        while (ReadFile(outputRead, buffer, sizeof(buffer), &bytesRead, nullptr)
+            && bytesRead > 0) {
+            processOutput.append(buffer, static_cast<size_t>(bytesRead));
+        }
+    });
 
     const DWORD waitResult = WaitForSingleObject(processInfo.hProcess, INFINITE);
     DWORD exitCode = static_cast<DWORD>(-1);
@@ -93,6 +128,13 @@ int runCommand(const std::vector<std::string>& arguments, std::string& error) {
     }
     CloseHandle(processInfo.hThread);
     CloseHandle(processInfo.hProcess);
+    outputReader.join();
+    CloseHandle(outputRead);
+    if (exitCode != 0 && error.empty()) {
+        error = processOutput.empty()
+            ? "fixture process produced no diagnostic output"
+            : processOutput;
+    }
     return static_cast<int>(exitCode);
 }
 #else

@@ -70,10 +70,10 @@ jobs:
         # Note: freeimage removed due to imath download issues on GitHub runners
         ${{ github.workspace }}/vcpkg/vcpkg.exe install --triplet x64-windows `
           cryptopp "curl[ssl]" icu libsodium sqlite3 zlib zstd c-ares `
-          openssl "ffmpeg[avcodec,avformat,swresample,swscale,ffmpeg,ffprobe,drawtext]" `
+          openssl "ffmpeg[avcodec,avformat,swresample,swscale,ffmpeg,ffprobe,drawtext,x264]" `
           libuv nlohmann-json
       shell: pwsh
-      timeout-minutes: 60
+      timeout-minutes: 75
 
     - name: Fix pkg-config aliases
       run: |
@@ -224,7 +224,13 @@ jobs:
             $ffmpegFilters -notmatch '(?m)^\s*[T.][S.][C.]\s+drawtext\s') {
           throw "The packaged ffmpeg.exe does not provide the drawtext watermark filter"
         }
-        Write-Host "Copied and verified FFmpeg, FFprobe, and drawtext support"
+
+        $ffmpegEncoders = (& $portableFFmpeg -hide_banner -encoders 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0 -or
+            $ffmpegEncoders -notmatch '(?m)^\s*V\S*\s+libx264\s') {
+          throw "The packaged ffmpeg.exe does not provide the libx264 video encoder"
+        }
+        Write-Host "Copied and verified FFmpeg, FFprobe, drawtext, and libx264 support"
 
         # Create resources directory
         New-Item -ItemType Directory -Path "$deployDir/resources/styles" -Force
