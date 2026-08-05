@@ -70,7 +70,8 @@ jobs:
         # Note: freeimage removed due to imath download issues on GitHub runners
         ${{ github.workspace }}/vcpkg/vcpkg.exe install --triplet x64-windows `
           cryptopp "curl[ssl]" icu libsodium sqlite3 zlib zstd c-ares `
-          openssl "ffmpeg[avcodec,avformat,swresample,swscale]" libuv nlohmann-json
+          openssl "ffmpeg[avcodec,avformat,swresample,swscale,ffmpeg,ffprobe,drawtext]" `
+          libuv nlohmann-json
       shell: pwsh
       timeout-minutes: 60
 
@@ -188,19 +189,41 @@ jobs:
 
         # Copy vcpkg DLLs (classic mode location)
         $vcpkgBin = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin"
-        $vcpkgTools = "${{ github.workspace }}/vcpkg/installed/x64-windows/tools/ffmpeg"
 
         if (Test-Path $vcpkgBin) {
           Get-ChildItem "$vcpkgBin/*.dll" | Copy-Item -Destination $deployDir/
           Write-Host "Copied vcpkg DLLs from $vcpkgBin"
         }
 
-        # Copy ffmpeg executables
-        if (Test-Path $vcpkgTools) {
-          Copy-Item "$vcpkgTools/ffmpeg.exe" $deployDir/ -ErrorAction SilentlyContinue
-          Copy-Item "$vcpkgTools/ffprobe.exe" $deployDir/ -ErrorAction SilentlyContinue
-          Write-Host "Copied ffmpeg tools"
+        # Resolve and verify the exact FFmpeg pair used by the portable app.
+        . "${{ github.workspace }}/scripts/windows-ffmpeg-tools.ps1"
+        $ffmpegToolset = Resolve-MegaCustomFFmpegToolset `
+          -VcpkgRoot "${{ github.workspace }}/vcpkg" `
+          -SkipSystemCandidates
+        if ($null -eq $ffmpegToolset) {
+          throw "vcpkg did not produce ffmpeg.exe and ffprobe.exe together"
         }
+
+        Copy-Item -LiteralPath $ffmpegToolset.FFmpeg -Destination $deployDir/
+        Copy-Item -LiteralPath $ffmpegToolset.FFprobe -Destination $deployDir/
+
+        $portableFFmpeg = Join-Path $deployDir "ffmpeg.exe"
+        $portableFFprobe = Join-Path $deployDir "ffprobe.exe"
+        & $portableFFmpeg -version | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0) {
+          throw "The packaged ffmpeg.exe could not be executed"
+        }
+        & $portableFFprobe -version | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0) {
+          throw "The packaged ffprobe.exe could not be executed"
+        }
+
+        $ffmpegFilters = (& $portableFFmpeg -hide_banner -filters 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0 -or
+            $ffmpegFilters -notmatch '(?m)^\s*[T.][S.][C.]\s+drawtext\s') {
+          throw "The packaged ffmpeg.exe does not provide the drawtext watermark filter"
+        }
+        Write-Host "Copied and verified FFmpeg, FFprobe, and drawtext support"
 
         # Create resources directory
         New-Item -ItemType Directory -Path "$deployDir/resources/styles" -Force
