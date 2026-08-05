@@ -163,7 +163,8 @@ jobs:
         }
 
         $ffmpegTools = "${{ github.workspace }}/vcpkg/installed/x64-windows/tools/ffmpeg"
-        $env:PATH = "$ffmpegTools;$env:PATH"
+        $vcpkgBin = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin"
+        $env:PATH = "$ffmpegTools;$vcpkgBin;$env:PATH"
         ctest --test-dir qt-gui/build-win64 -C ${{ env.BUILD_TYPE }} --output-on-failure
       shell: pwsh
 
