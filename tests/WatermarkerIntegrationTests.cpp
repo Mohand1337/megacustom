@@ -225,9 +225,22 @@ int main() {
     const fs::path passthroughInput = sourceDirectory / "captions.vtt";
     const fs::path passthroughOutput = outputDirectory / "captions.vtt";
     const fs::path unrelatedCacheFile = cache / "keep-me.txt";
+#ifdef _WIN32
+    const fs::path customFont = root / fs::u8path(u8"font unicode ü") / "custom font.ttf";
+#else
+    const fs::path customFont = root / fs::u8path(u8"font unicode ü") / "custom:font.ttf";
+#endif
     fs::create_directories(generatedDirectory);
     fs::create_directories(sourceDirectory);
     fs::create_directories(outputDirectory);
+    fs::create_directories(customFont.parent_path());
+
+    const fs::path bundledFont = fs::u8path(MEGACUSTOM_TEST_FONT_PATH);
+    std::error_code fontCopyError;
+    fs::copy_file(bundledFont, customFont, fs::copy_options::overwrite_existing, fontCopyError);
+    if (fontCopyError) {
+        return fail("could not prepare the custom font fixture: " + fontCopyError.message(), root);
+    }
 
     const std::string ffmpeg = MegaCustom::Watermarker::getFFmpegPath();
     const std::vector<std::string> generateArguments = {
@@ -398,6 +411,7 @@ int main() {
     MegaCustom::WatermarkConfig fallbackConfig = config;
     fallbackConfig.fastSegmentedEncode = true;
     fallbackConfig.segmentCacheDirectory = pathUtf8(input);
+    fallbackConfig.fontPath = pathUtf8(customFont);
     fallbackConfig.preset = "ultrafast";
     MegaCustom::Watermarker fallbackWatermarker;
     fallbackWatermarker.setConfig(fallbackConfig);

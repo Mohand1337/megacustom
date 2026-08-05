@@ -768,6 +768,32 @@ std::string ffmpegFilterEscape(const std::string& text) {
     return result;
 }
 
+std::string drawtextFontOption(const std::string& configuredPath) {
+    std::string fontFilePath = configuredPath;
+#ifdef _WIN32
+    if (fontFilePath.empty()) {
+        const char* windir = std::getenv("WINDIR");
+        const std::string fontsDirectory = windir
+            ? std::string(windir) + "\\Fonts"
+            : "C:\\Windows\\Fonts";
+        const std::string arialPath = fontsDirectory + "\\arial.ttf";
+        if (fileExists(arialPath)) {
+            fontFilePath = arialPath;
+        }
+    }
+#endif
+
+    if (fontFilePath.empty()) {
+        return {};
+    }
+
+    // FFmpeg's filter parser treats ':' as an option delimiter, including the
+    // colon in a Windows drive prefix. Preserve the absolute path and escape it
+    // as one quoted filter value instead of making it current-drive-relative.
+    std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
+    return "fontfile='" + ffmpegFilterEscape(fontFilePath) + "':";
+}
+
 std::map<std::string, std::string> parseKeyValueProbe(const std::string& output) {
     std::map<std::string, std::string> values;
     for (const std::string& line : splitLines(output)) {
@@ -869,25 +895,7 @@ std::string ffprobePathFromFFmpegPath(const std::string& ffmpegPath) {
 
 std::string buildScheduledDrawtextFilter(const WatermarkConfig& config,
                                          const std::vector<VisibleWatermarkWindow>& windows) {
-    std::string fontFilePath = config.fontPath;
-#ifdef _WIN32
-    if (fontFilePath.empty()) {
-        const char* windir = std::getenv("WINDIR");
-        std::string winFontsDir = windir ? std::string(windir) + "\\Fonts" : "C:\\Windows\\Fonts";
-        std::string arialPath = winFontsDir + "\\arial.ttf";
-        if (fileExists(arialPath)) {
-            fontFilePath = arialPath;
-        }
-    }
-#endif
-    std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
-#ifdef _WIN32
-    if (fontFilePath.size() >= 2 && fontFilePath[1] == ':') {
-        fontFilePath = fontFilePath.substr(2);
-    }
-#endif
-
-    const std::string fontFile = fontFilePath.empty() ? "" : "fontfile=" + fontFilePath + ":";
+    const std::string fontFile = drawtextFontOption(config.fontPath);
 
     std::ostringstream filter;
     bool first = true;
@@ -1803,52 +1811,12 @@ int64_t Watermarker::getFileSize(const std::string& path) {
 
 std::string Watermarker::buildFFmpegFilter() const {
     std::ostringstream filter;
-
-    // Escape special characters in text
-    auto escapeText = [](const std::string& text) -> std::string {
-        std::string result;
-        for (char c : text) {
-            if (c == '\'' || c == ':' || c == '\\') {
-                result += '\\';
-            }
-            result += c;
-        }
-        return result;
-    };
-
-    std::string fontFilePath = m_config.fontPath;
-#ifdef _WIN32
-    // On Windows, fontconfig is typically not configured, so we must specify
-    // a font file explicitly. Use Arial as a safe default.
-    if (fontFilePath.empty()) {
-        const char* windir = std::getenv("WINDIR");
-        std::string winFontsDir = windir ? std::string(windir) + "\\Fonts" : "C:\\Windows\\Fonts";
-        std::string arialPath = winFontsDir + "\\arial.ttf";
-        if (fileExists(arialPath)) {
-            fontFilePath = arialPath;
-        }
-    }
-#endif
-    // Use forward slashes for FFmpeg compatibility
-    std::replace(fontFilePath.begin(), fontFilePath.end(), '\\', '/');
-
-#ifdef _WIN32
-    // Strip drive letter (e.g. "C:/Windows/..." -> "/Windows/...") because
-    // FFmpeg's filter option parser treats ':' as a delimiter and no escaping
-    // method (\: or single quotes) prevents it. The drive-relative path
-    // "/Windows/Fonts/arial.ttf" resolves to the current drive's root.
-    if (fontFilePath.size() >= 2 && fontFilePath[1] == ':') {
-        fontFilePath = fontFilePath.substr(2);
-    }
-#endif
-
-    std::string fontFile = fontFilePath.empty() ? "" :
-        "fontfile=" + fontFilePath + ":";
+    const std::string fontFile = drawtextFontOption(m_config.fontPath);
 
     // Primary text (line 1) - golden color, random position, appears periodically
     filter << "drawtext=" << fontFile
            << "expansion=none:"
-           << "text='" << escapeText(m_config.primaryText) << "':"
+           << "text='" << ffmpegFilterEscape(m_config.primaryText) << "':"
            << "fontsize=" << m_config.primaryFontSize << ":"
            << "fontcolor=" << m_config.primaryColor << ":"
            << "x=if(lt(mod(t\\," << m_config.intervalSeconds << ")\\,"
@@ -1862,7 +1830,7 @@ std::string Watermarker::buildFFmpegFilter() const {
     if (!m_config.secondaryText.empty()) {
         filter << ",drawtext=" << fontFile
                << "expansion=none:"
-               << "text='" << escapeText(m_config.secondaryText) << "':"
+               << "text='" << ffmpegFilterEscape(m_config.secondaryText) << "':"
                << "fontsize=" << m_config.secondaryFontSize << ":"
                << "fontcolor=" << m_config.secondaryColor << ":"
                << "x=if(lt(mod(t\\," << m_config.intervalSeconds << ")\\,"

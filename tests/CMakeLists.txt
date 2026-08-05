@@ -2,6 +2,16 @@ add_executable(watermarker_integration_tests
     WatermarkerIntegrationTests.cpp
 )
 
+file(TO_CMAKE_PATH
+    "${CMAKE_CURRENT_SOURCE_DIR}/../bin/fonts/arial.ttf"
+    MEGACUSTOM_TEST_FONT_PATH
+)
+
+target_compile_definitions(watermarker_integration_tests
+    PRIVATE
+        MEGACUSTOM_TEST_FONT_PATH="${MEGACUSTOM_TEST_FONT_PATH}"
+)
+
 set_target_properties(watermarker_integration_tests PROPERTIES
     WIN32_EXECUTABLE OFF
 )
