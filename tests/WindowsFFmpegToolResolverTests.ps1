@@ -61,7 +61,31 @@ try {
         throw "Resolver accepted FFmpeg without a neighboring ffprobe.exe."
     }
 
-    Write-Host "PASS: FFmpeg resolver requires and selects a complete toolset."
+    $filterOutput = @"
+Filters:
+ T.C drawtext          V->V       Draw text on top of video frames.
+ TS.C futurefilter     V->V       Example with a wider flag column.
+"@
+    if (!(Find-MegaCustomFFmpegListEntry `
+            -Output $filterOutput -Kind Filter -Name drawtext)) {
+        throw "Capability parser did not recognize the drawtext filter."
+    }
+    if (!(Find-MegaCustomFFmpegListEntry `
+            -Output $filterOutput -Kind Filter -Name futurefilter)) {
+        throw "Capability parser depends on a fixed-width FFmpeg filter flag column."
+    }
+    if (Find-MegaCustomFFmpegListEntry `
+            -Output $filterOutput -Kind Filter -Name text) {
+        throw "Capability parser accepted a partial filter name."
+    }
+
+    $encoderOutput = " V....D libx264              H.264 encoder"
+    if (!(Find-MegaCustomFFmpegListEntry `
+            -Output $encoderOutput -Kind VideoEncoder -Name libx264)) {
+        throw "Capability parser did not recognize the libx264 video encoder."
+    }
+
+    Write-Host "PASS: FFmpeg resolver and capability parser are strict and format-tolerant."
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }

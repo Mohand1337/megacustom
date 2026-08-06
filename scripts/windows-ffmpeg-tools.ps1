@@ -69,3 +69,37 @@ function Resolve-MegaCustomFFmpegToolset {
 
     return $null
 }
+
+function Find-MegaCustomFFmpegListEntry {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$Output,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Filter", "VideoEncoder")]
+        [string]$Kind,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Output)) {
+        return $null
+    }
+
+    $escapedName = [Regex]::Escape($Name)
+    $pattern = if ($Kind -eq "Filter") {
+        "^\s*\S+\s+$escapedName(?:\s|$)"
+    } else {
+        "^\s*V\S*\s+$escapedName(?:\s|$)"
+    }
+
+    foreach ($line in [Regex]::Split($Output, "\r?\n")) {
+        if ($line -match $pattern) {
+            return $line.Trim()
+        }
+    }
+    return $null
+}

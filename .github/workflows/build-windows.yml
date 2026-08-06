@@ -220,16 +220,28 @@ jobs:
         }
 
         $ffmpegFilters = (& $portableFFmpeg -hide_banner -filters 2>&1 | Out-String)
-        if ($LASTEXITCODE -ne 0 -or
-            $ffmpegFilters -notmatch '(?m)^\s*[T.][S.][C.]\s+drawtext\s') {
+        $ffmpegFiltersExitCode = $LASTEXITCODE
+        $drawtextLine = Find-MegaCustomFFmpegListEntry `
+          -Output $ffmpegFilters `
+          -Kind Filter `
+          -Name drawtext
+        if ($ffmpegFiltersExitCode -ne 0 -or !$drawtextLine) {
+          Write-Host $ffmpegFilters
           throw "The packaged ffmpeg.exe does not provide the drawtext watermark filter"
         }
 
         $ffmpegEncoders = (& $portableFFmpeg -hide_banner -encoders 2>&1 | Out-String)
-        if ($LASTEXITCODE -ne 0 -or
-            $ffmpegEncoders -notmatch '(?m)^\s*V\S*\s+libx264\s') {
+        $ffmpegEncodersExitCode = $LASTEXITCODE
+        $libx264Line = Find-MegaCustomFFmpegListEntry `
+          -Output $ffmpegEncoders `
+          -Kind VideoEncoder `
+          -Name libx264
+        if ($ffmpegEncodersExitCode -ne 0 -or !$libx264Line) {
+          Write-Host $ffmpegEncoders
           throw "The packaged ffmpeg.exe does not provide the libx264 video encoder"
         }
+        Write-Host "Verified filter: $drawtextLine"
+        Write-Host "Verified encoder: $libx264Line"
         Write-Host "Copied and verified FFmpeg, FFprobe, drawtext, and libx264 support"
 
         # Create resources directory
